@@ -1,0 +1,34 @@
+# Local app data and personal schedule data
+/data/*.json
+/data/backups/
+/data/import-temp/
+/data/history-import-working/
+/data/*review-packet*
+/data/for-brian-extracted.txt
+/data/template-blank-availability-import-review.json
+manager-notes-data.js
+manager-notes-import.json
+ctuit-entry-list-*.html
+
+# Temporary working files
+/tmp/
+*.tmp
+*.log
+__pycache__/
+*.pyc
+
+# Generated smoke-test screenshots and diagnostics
+smoke*.png
+*smoke*.png
+*check*.png
+baseline-candidate-smoke.png
+layout-scroll-check.png
+rail-centering-check*.png
+side-rails-check*.png
+unavailable-toggle-check.png
+
+# OS/editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

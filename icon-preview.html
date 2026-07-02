@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift Bay Icon Preview</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f4f7fb;
+      color: #1f2937;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+
+    p {
+      margin: 0 0 24px;
+      color: #64748b;
+    }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+
+    .preview-card {
+      display: grid;
+      gap: 18px;
+      padding: 22px;
+      border: 1px solid #d8e1ec;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    .icon-stage {
+      display: grid;
+      place-items: center;
+      min-height: 150px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #eff6ff 0%, #e2e8f0 100%);
+    }
+
+    .label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 800;
+    }
+
+    .label span {
+      color: #64748b;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .note {
+      min-height: 44px;
+      color: #475569;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .bay-icon {
+      --icon-color: #1d4ed8;
+      --icon-fill: #dbeafe;
+      position: relative;
+      display: inline-block;
+      width: 82px;
+      height: 58px;
+      color: var(--icon-color);
+    }
+
+    .bay-icon .bay {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 0;
+      height: 36px;
+      border: 6px solid currentColor;
+      border-top: 0;
+      border-radius: 8px 8px 18px 18px;
+      background: var(--icon-fill);
+    }
+
+    .bay-icon .bay::before {
+      content: "";
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      top: -13px;
+      height: 14px;
+      border: 6px solid currentColor;
+      border-bottom: 0;
+      border-radius: 18px 18px 0 0;
+    }
+
+    .bay-icon .card {
+      position: absolute;
+      bottom: 12px;
+      width: 12px;
+      height: 26px;
+      border-radius: 5px;
+      background: #2563eb;
+      box-shadow: 20px 0 0 #059669, 40px 0 0 #db2777;
+    }
+
+    .bay-icon .card:first-of-type {
+      left: 50%;
+      transform: translateX(-26px);
+    }
+
+    .return-arrow {
+      position: absolute;
+      left: 50%;
+      top: 2px;
+      width: 8px;
+      height: 20px;
+      border-radius: 8px;
+      background: #0f172a;
+      transform: translateX(-50%);
+    }
+
+    .return-arrow::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: -3px;
+      width: 24px;
+      height: 24px;
+      border-left: 8px solid #0f172a;
+      border-top: 8px solid #0f172a;
+      transform: translateX(-50%) rotate(45deg);
+    }
+
+    .option-b .bay {
+      border-radius: 6px 6px 8px 8px;
+    }
+
+    .option-b .bay::before {
+      display: none;
+    }
+
+    .option-b .card:first-of-type {
+      bottom: 14px;
+    }
+
+    .option-c .bay {
+      border-radius: 18px;
+      border-top: 6px solid currentColor;
+    }
+
+    .option-c .bay::before {
+      display: none;
+    }
+
+    .option-c .card:first-of-type {
+      top: 50%;
+      height: 18px;
+      transform: translate(-27px, -50%);
+    }
+
+    .option-c .return-arrow {
+      top: 2px;
+      height: 17px;
+    }
+
+    .option-c .return-arrow::after {
+      top: -3px;
+    }
+
+    .small-context {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #eef4fa;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .small-context .bay-icon {
+      width: 30px;
+      height: 23px;
+    }
+
+    .small-context .bay-icon .bay {
+      left: 3px;
+      right: 3px;
+      height: 14px;
+      border-width: 2px;
+      border-radius: 3px 3px 6px 6px;
+    }
+
+    .small-context .bay-icon .bay::before {
+      left: 4px;
+      right: 4px;
+      top: -5px;
+      height: 5px;
+      border-width: 2px;
+    }
+
+    .small-context .bay-icon .card {
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 6px;
+      border-radius: 2px;
+      box-shadow: 5px 0 0 #059669, 10px 0 0 #db2777;
+      transform: translate(-7.5px, -50%);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Shift Bay Icon Preview</h1>
+    <p>These are CSS-only previews, so they should show directly in Chrome. Pick the direction that feels most like the app.</p>
+
+    <section class="preview-grid">
+      <article class="preview-card">
+        <div class="label">Option A <span>Dock bay</span></div>
+        <div class="icon-stage">
+          <span class="bay-icon option-a">
+            <span class="return-arrow"></span>
+            <span class="bay"></span>
+            <span class="card"></span>
+          </span>
+        </div>
+        <div class="small-context">
+          <span class="bay-icon option-a"><span class="bay"></span><span class="card"></span></span>
+          Shift Bay
+        </div>
+        <div class="note">Most literal: a bay/dock holding colored shift cards. The arrow version means returning a shift to the bay.</div>
+      </article>
+
+      <article class="preview-card">
+        <div class="label">Option B <span>Clean tray</span></div>
+        <div class="icon-stage">
+          <span class="bay-icon option-b">
+            <span class="return-arrow"></span>
+            <span class="bay"></span>
+            <span class="card"></span>
+          </span>
+        </div>
+        <div class="small-context">
+          <span class="bay-icon option-b"><span class="bay"></span><span class="card"></span></span>
+          Shift Bay
+        </div>
+        <div class="note">Simpler and more button-friendly. Less unique, but it will stay clear at small sizes.</div>
+      </article>
+
+      <article class="preview-card">
+        <div class="label">Option C <span>Shift pool</span></div>
+        <div class="icon-stage">
+          <span class="bay-icon option-c">
+            <span class="return-arrow"></span>
+            <span class="bay"></span>
+            <span class="card"></span>
+          </span>
+        </div>
+        <div class="small-context">
+          <span class="bay-icon option-c"><span class="bay"></span><span class="card"></span></span>
+          Shift Bay
+        </div>
+        <div class="note">More like a container/pool of available shifts. This may fit if the bay becomes the app's central workspace.</div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<svg width="640" height="360" viewBox="0 0 640 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="360" rx="28" fill="#F4F7FB"/>
+  <text x="320" y="54" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#334155">Open Shift Bay Icon Concept</text>
+
+  <g transform="translate(178 88)">
+    <rect x="0" y="74" width="284" height="144" rx="22" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="12"/>
+    <path d="M36 74C42 39 65 22 105 22H179C219 22 242 39 248 74" stroke="#1D4ED8" stroke-width="12" stroke-linecap="round"/>
+
+    <rect x="55" y="112" width="42" height="70" rx="11" fill="#2563EB"/>
+    <rect x="121" y="112" width="42" height="70" rx="11" fill="#059669"/>
+    <rect x="187" y="112" width="42" height="70" rx="11" fill="#DB2777"/>
+
+    <path d="M142 14V96" stroke="#0F172A" stroke-width="14" stroke-linecap="round"/>
+    <path d="M106 61L142 97L178 61" stroke="#0F172A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="320" y="332" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#475569">Bay/dock + colored shift cards + arrow returning a shift into the bay</text>
+</svg>

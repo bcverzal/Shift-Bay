@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift Bay</title>
+  <link rel="stylesheet" href="styles.css?v=shiftbay-20260702-floor-note-settings">
+</head>
+<body>
+  <nav class="tabs" aria-label="Main sections">
+    <button class="tab active" type="button" data-tab="schedule">Schedule</button>
+    <button class="tab" type="button" data-tab="monthly">Monthly</button>
+    <button class="tab" type="button" data-tab="employees">Employees</button>
+    <button class="tab" type="button" data-tab="templates">Templates</button>
+    <button class="tab" type="button" data-tab="history">History</button>
+    <button class="tab" type="button" data-tab="roles">Roles</button>
+    <button class="tab" type="button" data-tab="staffing">Staffing</button>
+    <button class="tab" type="button" data-tab="floorplans">Floor Plans</button>
+    <button class="tab" type="button" data-tab="settings">Settings</button>
+    <div class="header-actions">
+      <div class="week-switcher" aria-label="Active schedule week">
+        <button id="prevWeekBtn" class="icon-button week-nav" type="button" title="Previous week" aria-label="Previous week">&#8249;</button>
+        <label class="week-picker-shell">
+          <span class="week-picker-label">Active Week</span>
+          <input id="weekPicker" type="date" aria-label="Pick week date">
+        </label>
+        <button id="nextWeekBtn" class="icon-button week-nav" type="button" title="Next week" aria-label="Next week">&#8250;</button>
+      </div>
+      <button id="storageStatusBtn" class="storage-status storage-status-local" type="button" title="Storage status" aria-label="Storage status">
+        <span class="storage-dot"></span>
+        <span id="storageStatusText">Local</span>
+      </button>
+      <button id="saveNowBtn" class="save-now-button" type="button" title="Save now" aria-label="Save now">Save Now</button>
+      <button id="issueBtn" class="issue-button" type="button" title="No schedule issues" aria-label="Schedule issues" hidden>!<span id="issueCount">0</span></button>
+      <div id="issuePopover" class="issue-popover" hidden></div>
+      <button id="compactViewBtn" class="save-now-button" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
+      <button id="printBtn" class="icon-button" type="button" title="Print" aria-label="Print">&#128424;</button>
+    </div>
+  </nav>
+
+  <main>
+    <section id="schedule" class="panel active">
+      <div class="toolbar">
+        <div class="open-shifts-wrap">
+          <div class="open-shifts-head">
+            <div>
+              <div class="open-shifts-title"><span class="open-bay-icon" aria-hidden="true"></span>Shift Bay</div>
+              <div id="openShiftBaySummary" class="open-shifts-summary">0 bay shifts</div>
+            </div>
+            <div class="open-shifts-actions">
+              <div class="open-shifts-select-stack">
+                <label>Sort
+                  <select id="openShiftBaySort">
+                    <option value="meal">Meal flow</option>
+                    <option value="dayTime">Day / Time</option>
+                    <option value="role">Role</option>
+                    <option value="time">Time</option>
+                  </select>
+                </label>
+                <label>Template
+                  <select id="quickTemplate"></select>
+                </label>
+              </div>
+              <div class="open-shifts-button-stack">
+                <button id="autoAssignCleanBayBtn" class="bay-primary-action" type="button">Auto Assign Clean</button>
+                <div class="bay-action-pair">
+                  <button id="addTemplateToTrayBtn" type="button">Add Weekly Template</button>
+                  <button id="addWeekMissingCoverageBtn" type="button">Add Missing Coverage</button>
+                </div>
+                <div class="bay-action-pair bay-action-pair-utility">
+                  <button id="addOpenShiftBtn" type="button">Add Shift</button>
+                  <button id="clearOpenShiftBayBtn" class="small-button danger" type="button">Clear Bay</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="openShiftRoleJump" class="open-shift-role-jump" hidden></div>
+          <div id="unassignedShiftTray" class="unassigned-shift-tray" aria-label="Shift Bay"></div>
+        </div>
+      </div>
+      <div id="stagedShiftInfo" class="staged-shift-info" hidden></div>
+
+      <div id="printFilters" class="filters"></div>
+      <div id="roleJumpStrip" class="role-jump-strip" hidden></div>
+      <div id="conflictBanner" class="conflict-banner" hidden></div>
+      <div id="appNotice" class="app-notice" hidden role="status" aria-live="polite"></div>
+      <div id="printView" class="print-view" hidden></div>
+      <div id="scheduleGrid" class="schedule-grid" aria-label="Weekly schedule grid"></div>
+      <div id="weeklyRoleSummary" class="weekly-role-summary"></div>
+      <div id="unavailableEmployeesList" class="unavailable-employees-list" hidden></div>
+    </section>
+
+    <section id="monthly" class="panel">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <button id="monthPrevBtn" type="button">Prev Month</button>
+          <h2 id="monthLabel">Month</h2>
+          <button id="monthNextBtn" type="button">Next Month</button>
+        </div>
+      </div>
+      <div id="monthlyGrid" class="monthly-grid"></div>
+    </section>
+
+    <section id="employees" class="panel">
+      <div class="employee-workspace">
+        <div class="employee-lookup">
+          <div>
+            <h2>Employees</h2>
+          </div>
+          <label class="checkbox employee-archive-toggle">
+            <input id="showArchivedEmployees" type="checkbox"> Show archived
+          </label>
+          <button id="newEmployeeBtn" type="button">New Employee</button>
+          <button id="requestOffImportBtn" type="button">Import ROs</button>
+          <button id="printCallWeeklyBtn" type="button">Print Call Weekly Sheet</button>
+          <details class="employee-advanced-tools">
+            <summary>More</summary>
+            <div class="employee-advanced-menu">
+              <button id="pasteEmployeesBtn" type="button">Paste Employees</button>
+              <details class="employee-danger-zone">
+                <summary>Danger Zone</summary>
+                <label class="checkbox">
+                  <input id="revealArchiveAllEmployees" type="checkbox"> Show bulk archive action
+                </label>
+                <button id="archiveAllEmployeesBtn" class="danger" type="button" hidden>Archive All Employees</button>
+              </details>
+            </div>
+          </details>
+        </div>
+        <aside id="employeeRosterPanel" class="employee-roster-panel">
+          <div class="employee-roster-head">
+            <div>
+              <strong>Employee List</strong>
+              <span id="employeeRosterCount">0 employees</span>
+            </div>
+            <button id="toggleEmployeeRosterBtn" class="small-button" type="button">Collapse</button>
+          </div>
+          <label class="employee-roster-search">Search
+            <input id="employeeSearch" placeholder="Name, nickname, phone, note, role">
+          </label>
+          <div id="employeeRosterList" class="employee-roster-list"></div>
+        </aside>
+        <form id="employeeForm" class="editor employee-editor">
+          <h2>Employee Profile</h2>
+          <input id="employeeId" type="hidden">
+          <label>First name <input id="firstName" required></label>
+          <label>Last name <input id="lastName" required></label>
+          <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
+          <label>Birthday <input id="employeeBirthday" type="date"></label>
+          <label>Phone <input id="employeePhone" inputmode="tel"></label>
+          <label>Manager notes <textarea id="employeeManagerNotes" rows="3" placeholder="Imported notes or manual reminders"></textarea></label>
+          <div class="checkbox checkbox-direct"><input id="employeeActive" type="checkbox" checked><span>Active</span></div>
+          <div class="checkbox checkbox-direct"><input id="employeeCanClose" type="checkbox"><span>Trained closer</span></div>
+          <div class="checkbox checkbox-direct"><input id="employeeCanLunchClose" type="checkbox"><span>Lunch closer available</span></div>
+          <div class="checkbox checkbox-direct"><input id="employeeAlwaysPrintEndTime" type="checkbox"><span>Always print end time on floor plans</span></div>
+          <fieldset>
+            <legend>Departments</legend>
+            <div id="employeeDepartmentChecks" class="inline-checks"></div>
+          </fieldset>
+          <div class="checkbox checkbox-direct call-weekly-control">
+            <input id="employeeCallWeekly" type="checkbox"><span>Call weekly for availability</span>
+            <button id="toggleWeeklyAvailabilityBtn" class="small-button" type="button">This Week</button>
+          </div>
+          <fieldset id="regularAvailabilityFieldset" class="employee-availability-panel">
+            <legend>Availability</legend>
+            <div class="availability-actions">
+              <button id="openAllAvailabilityBtn" class="small-button" type="button">Open All</button>
+              <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear All</button>
+            </div>
+            <div id="availabilityEditor"></div>
+          </fieldset>
+          <fieldset id="weeklyAvailabilityFieldset" class="employee-availability-panel" hidden>
+            <legend>Schedule Week Availability</legend>
+            <p class="hint">Use this after you call/text for the schedule week you are building. Blank days are unavailable.</p>
+            <div class="weekly-availability-week">
+              <label>Availability week
+                <input id="weeklyAvailabilityWeek" type="date">
+              </label>
+              <button id="useActiveScheduleWeekBtn" class="small-button" type="button">Use Grid Week</button>
+            </div>
+            <div class="availability-actions">
+              <button id="openAllWeeklyAvailabilityBtn" class="small-button" type="button">Open All</button>
+              <button id="clearAllWeeklyAvailabilityBtn" class="small-button" type="button">Clear All</button>
+            </div>
+            <div id="weeklyAvailabilityEditor"></div>
+          </fieldset>
+          <fieldset id="employeeMealTrainingSection">
+            <legend>Meal Training</legend>
+            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Breakfast"> Breakfast</label>
+            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Lunch"> Lunch</label>
+            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Dinner"> Dinner</label>
+            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Brunch"> Brunch</label>
+          </fieldset>
+          <fieldset id="employeeTrainingSection">
+            <legend>Role Training</legend>
+            <p class="hint">Use Emergency only for roles they can work in a pinch but should not be recommended for. Meal boxes under a role override the broad meal training for that role.</p>
+            <div id="employeeRoleChecks"></div>
+          </fieldset>
+          <fieldset id="trainerRoles">
+            <legend>Trainer Eligibility</legend>
+            <div id="employeeTrainerChecks"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Pay Rates</legend>
+            <p class="hint">Role defaults apply automatically unless an override is checked.</p>
+            <div id="employeePayRates" class="pay-rate-editor"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Weekly Work Rules</legend>
+            <p class="hint">Use these for requests like “needs one weekend day off.” Multiple shifts on one date count as one worked day.</p>
+            <div id="weeklyRuleEditor"></div>
+            <button id="addWeeklyRuleBtn" type="button">Add Rule</button>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit">Save Employee</button>
+            <button id="archiveEmployeeBtn" type="button">Archive</button>
+            <button id="restoreEmployeeBtn" type="button" hidden>Restore</button>
+            <button id="deleteEmployeeBtn" class="danger" type="button">Delete</button>
+          </div>
+        </form>
+        <div id="callWeeklySheet" class="print-view" hidden></div>
+        <div id="employeeSaveToast" class="employee-save-toast" hidden>Employee saved</div>
+        <div class="employee-sticky-actions">
+          <div>
+            <strong>Employee Profile</strong>
+            <span id="stickyEmployeeName">Unsaved employee</span>
+          </div>
+          <button id="stickySaveEmployeeBtn" type="button">Save Employee</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="templates" class="panel">
+      <div class="split">
+        <form id="templateForm" class="editor">
+          <h2>Weekly Template Builder</h2>
+          <p class="hint">Templates are weekly sets of open shifts. Build the regular week here, then send the whole set to the Shift Bay when you are ready to assign people.</p>
+          <input id="templateId" type="hidden">
+          <input id="templateShiftId" type="hidden">
+          <label>Template name <input id="templateName" required></label>
+          <label>Day
+            <select id="templateDay">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </label>
+          <label>Department <select id="templateDepartment"></select></label>
+          <label>Role <select id="templateRole"></select></label>
+          <label>Start <input id="templateStart" placeholder="7a" required></label>
+          <label>End <input id="templateEnd" placeholder="until volume or 4p"></label>
+          <label class="checkbox"><input id="templateUntilVolume" type="checkbox"> Until Volume</label>
+          <label class="checkbox"><input id="templateFlexDouble" type="checkbox"> Flex Double</label>
+          <label class="checkbox"><input id="templateIsCloser" type="checkbox"> Closer shift</label>
+          <label>Color <input id="templateColor" type="color" value="#2563eb"></label>
+          <div class="form-actions">
+            <button type="submit">Save Shift</button>
+            <button id="newTemplateBtn" type="button">New Shift</button>
+            <button id="newWeeklyTemplateBtn" type="button">New Weekly Template</button>
+            <button id="saveCurrentWeekTemplateBtn" type="button">Save Current Week as Template</button>
+            <button id="analyzeTemplateBtn" type="button">Analyze Current Week</button>
+            <button id="addTemplateFromBuilderBtn" type="button">Add Template to Bay</button>
+            <button id="deleteTemplateBtn" class="danger" type="button">Delete Selected Shift</button>
+          </div>
+        </form>
+        <div class="list-panel">
+          <h2>Saved Weekly Templates</h2>
+          <p class="hint">Use the template card as the main control surface. Expand a day, edit or copy a row, then add the full template to the Shift Bay.</p>
+          <div id="templateList" class="entity-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="roles" class="panel">
+      <div class="split">
+        <form id="roleForm" class="editor">
+          <h2>Role</h2>
+          <input id="roleId" type="hidden">
+          <label>Name <input id="roleName" required></label>
+          <label>Department
+            <select id="roleDepartment">
+              <option>FOH</option>
+              <option>BOH</option>
+              <option>Exec</option>
+            </select>
+          </label>
+          <label>Default hourly rate <input id="roleDefaultRate" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Color <input id="roleColor" type="color" value="#2563eb"></label>
+          <div class="form-actions">
+            <button type="submit">Save Role</button>
+            <button id="newRoleBtn" type="button">New</button>
+            <button id="deleteRoleBtn" class="danger" type="button">Delete</button>
+          </div>
+        </form>
+        <div class="list-panel">
+          <h2>Roles</h2>
+          <div id="roleList" class="entity-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="history" class="panel">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <h2>Schedule History</h2>
+          <label class="file-label">Import Ctuit Schedule
+            <input id="scheduleHistoryImportInput" type="file" accept=".csv,.txt,text/csv,text/plain">
+          </label>
+          <button id="applyHistoryTemplateBtn" type="button">Update History Template</button>
+          <button id="applyHistoryCoverageBtn" type="button">Update Coverage Pars</button>
+        </div>
+      </div>
+      <div id="historySummary" class="analysis-summary"></div>
+      <div id="historyPatterns" class="analysis-table"></div>
+    </section>
+
+    <section id="staffing" class="panel">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <h2>Staffing Analysis</h2>
+          <button id="refreshStaffingBtn" type="button">Refresh Analysis</button>
+          <button id="printStaffingBtn" type="button">Print Suggested Hires</button>
+        </div>
+      </div>
+      <div id="staffingSummary" class="analysis-summary"></div>
+      <div id="staffingAnalysis" class="analysis-table"></div>
+    </section>
+
+    <section id="floorplans" class="panel">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <h2>Floor Plans</h2>
+          <label>Date <input id="floorPlanDate" type="date"></label>
+          <label>Plan
+            <select id="floorPlanPeriod">
+              <option value="all">All-Day</option>
+              <option value="am">AM</option>
+              <option value="pm">PM</option>
+              <option value="Breakfast">Breakfast</option>
+              <option value="Lunch">Lunch</option>
+              <option value="Dinner">Dinner</option>
+              <option value="Brunch">Brunch</option>
+            </select>
+          </label>
+          <button id="printFloorPlanBtn" type="button">Print Floor Plan</button>
+          <button id="printFloorPlanWeekBtn" type="button">Print Week</button>
+          <button id="printCompletedWeekBtn" type="button">Print Completed Week</button>
+        </div>
+      </div>
+      <div id="floorPlanSummary" class="floor-plan-summary"></div>
+      <div id="floorPlanSheet" class="floor-plan-sheet">
+        <img src="assets/shed-floor-plan.png?v=shiftbay-20260626-no-bqt-at" alt="Shed floor plan template">
+        <div class="floor-overlay floor-date-line" data-floor-output="date"></div>
+        <div class="floor-overlay floor-day-circles" data-floor-output="day"></div>
+        <div class="floor-overlay floor-meal-circles" data-floor-output="meal"></div>
+        <div class="floor-overlay floor-host" data-floor-output="host"></div>
+        <div class="floor-overlay floor-expo" data-floor-output="expo"></div>
+        <div class="floor-overlay floor-servers" data-floor-output="servers"></div>
+        <div class="floor-overlay floor-busser" data-floor-output="busser"></div>
+        <div class="floor-overlay floor-bartender" data-floor-output="bartender"></div>
+        <div class="floor-overlay floor-banquet" data-floor-output="banquet"></div>
+      </div>
+      <div id="floorPlanWeekPrint" class="floor-plan-week-print" hidden></div>
+    </section>
+
+    <section id="settings" class="panel">
+      <form id="settingsForm" class="editor settings-editor">
+        <div class="settings-page-header">
+          <div>
+            <h2>Global Settings</h2>
+            <p>Control how Shift Bay builds, checks, and prints schedules.</p>
+          </div>
+        </div>
+        <section class="settings-card settings-overview-card">
+          <div class="settings-card-heading">
+            <h3>Schedule Behavior <span class="settings-help" tabindex="0" aria-label="Schedule behavior help" data-help="These defaults affect the main grid, Shift Bay behavior, warnings, and print tools.">?</span></h3>
+            <p>Defaults used across the main grid, Shift Bay, and print tools.</p>
+          </div>
+          <div class="settings-top-grid">
+            <label>Week starts on
+              <select id="weekStart">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </label>
+            <label>Name display
+              <select id="nameDisplay">
+                <option value="full">First Last</option>
+                <option value="first">First</option>
+                <option value="firstInitial">First L.</option>
+              </select>
+            </label>
+            <label title="How many extra trained, available employees you want left unscheduled after the required shifts are covered. For example, if dinner needs 6 servers and this is set to 2, Shift Bay treats 8 available servers as comfortably staffed. This is mainly used for staffing analysis and hiring-gap warnings.">Staffing bench target
+              <input id="staffingBuffer" type="number" min="0" step="1" title="How many extra trained, available employees you want left unscheduled after the required shifts are covered. Use a low number, like 1, until availability data is fully reliable.">
+            </label>
+            <label>Drag scroll speed
+              <input id="dragScrollSpeed" type="range" min="1" max="10" step="1">
+            </label>
+          </div>
+          <div class="settings-department-block">
+            <span>Default visible departments</span>
+            <div id="departmentChecks" class="inline-checks"></div>
+          </div>
+          <p class="hint">This is the number of trained, available employees you want left over beyond the required count for each meal/role.</p>
+          <div class="settings-toggle-grid">
+            <label class="checkbox checkbox-direct"><input id="ignoreWarnings" type="checkbox"><span>Developer testing: allow warning-level changes without asking</span></label>
+            <label class="checkbox checkbox-direct"><input id="showUntilVolumeInShiftEditor" type="checkbox"><span>Show Until Volume in shift editor</span></label>
+            <label class="checkbox checkbox-direct"><input id="showShiftNameFields" type="checkbox"><span>Show shift name field and card labels</span></label>
+          </div>
+        </section>
+        <fieldset>
+          <legend>Role Ordering <span class="settings-help" tabindex="0" aria-label="Role ordering help" data-help="Controls the order roles appear in grouped grid views, Shift Bay role sorting, and role-aware workflow tools.">?</span></legend>
+          <p class="hint">Move roles up or down to choose the order used for grid role sections and Shift Bay role sorting.</p>
+          <div id="scheduleRoleOrderEditor" class="compact-print-role-order"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Meal Hours</legend>
+          <div id="mealHoursEditor" class="settings-grid"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Default Coverage</legend>
+          <p class="hint">These numbers seed a day when that day has no saved coverage requirement. Day buttons can copy the previous week's saved numbers.</p>
+          <div id="defaultCoverageEditor" class="coverage-defaults"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Closer Requirements</legend>
+          <p class="hint">These counts drive the closer indicator in each day header.</p>
+          <div class="settings-toggle-grid">
+            <label class="checkbox checkbox-direct" title="When enabled, checking Closer shift in the shift editor changes that shift's end time to the day's latest meal closing time plus the selected buffer.">
+              <input id="autoSetCloserEndTime" type="checkbox"><span>Auto-set closer end time</span>
+            </label>
+            <label title="How much time Shift Bay adds after that day's Dinner end time when a shift is marked as a closer.">Closer end buffer
+              <select id="closerEndBufferMinutes">
+                <option value="0">At closing time</option>
+                <option value="30">30 minutes after close</option>
+                <option value="60">1 hour after close</option>
+                <option value="90">1.5 hours after close</option>
+                <option value="120">2 hours after close</option>
+              </select>
+            </label>
+            <label title="When Flex Double is checked in the shift editor, Shift Bay changes that shift's end time to this default.">Flex double end
+              <select id="flexDoubleEndTime">
+                <option>3:00 PM</option>
+                <option>3:30 PM</option>
+                <option>4:00 PM</option>
+                <option>4:30 PM</option>
+                <option>5:00 PM</option>
+                <option>5:30 PM</option>
+                <option>6:00 PM</option>
+                <option>6:30 PM</option>
+                <option>7:00 PM</option>
+                <option>7:30 PM</option>
+                <option>8:00 PM</option>
+              </select>
+            </label>
+            <label title="When Lunch closer is checked in the shift editor, Shift Bay changes that shift's end time to this default.">Lunch closer end
+              <select id="lunchCloserEndTime">
+                <option>3:00 PM</option>
+                <option>3:30 PM</option>
+                <option>4:00 PM</option>
+                <option>4:30 PM</option>
+                <option>5:00 PM</option>
+                <option>5:30 PM</option>
+                <option>6:00 PM</option>
+              </select>
+            </label>
+            <label title="Controls whether every closer must be marked trained, or whether one trained closer scheduled that day satisfies the warning rule.">Closer training warning
+              <select id="closerTrainingRule">
+                <option value="onePerDay">One trained closer per day is enough</option>
+                <option value="allClosers">Every closer must be trained</option>
+              </select>
+            </label>
+          </div>
+          <div id="closerRequirementsEditor" class="coverage-defaults"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Projection Staffing Rules</legend>
+          <p class="hint">Daily sales projections use these rules to suggest required staffing. Leave a field blank until you know the right number.</p>
+          <div id="projectionRulesEditor" class="coverage-defaults"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Weekly Floor Plan Print <span class="settings-help" tabindex="0" aria-label="Weekly floor plan print help" data-help="Choose which floor plan sheets print for each day, and choose which roles show short notes when an employee is also working another role that day.">?</span></legend>
+          <p class="hint">Choose which floor plan sheets print when using Print Week.</p>
+          <div id="floorPlanPrintRulesEditor" class="coverage-defaults"></div>
+          <div class="floor-plan-note-settings">
+            <div class="settings-subheading">
+              <strong>Floor Plan Notes</strong>
+              <span class="settings-help" tabindex="0" aria-label="Floor plan notes help" data-help="Turn on cross-role notes for roles that need reminders on printed floor plans. Example: a server working banquet later can show / BQT. Turn a role off when the note creates clutter or the role is predictable, like Expo.">?</span>
+            </div>
+            <p class="hint">Show short cross-role notes on printed floor plans for these roles.</p>
+            <div id="floorPlanNoteSettingsEditor" class="settings-toggle-grid floor-plan-note-toggle-grid"></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Training Settings</legend>
+          <p class="hint">Set required training shifts by role. Required shift labels help the plan builder prioritize specific training shifts.</p>
+          <div id="trainingSettingsEditor" class="coverage-defaults"></div>
+        </fieldset>
+        <fieldset>
+          <legend>Schedule Utilities</legend>
+          <p class="hint">Less common actions live here so the schedule builder stays clean.</p>
+          <div class="settings-actions">
+            <button id="problemFocusBtn" type="button">Focus Problems</button>
+            <button id="duplicatePrevWeekBtn" type="button">Copy Last Week to Bay</button>
+            <button id="clearSelectedDayBtn" type="button">Clear Selected Day</button>
+            <button id="clearSelectedEmployeeBtn" type="button">Clear Selected Employee</button>
+            <button id="trainingPlanBtn" type="button">Training Plan</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Imports & Data</legend>
+          <p class="hint">These are here for setup, backups, and occasional imports.</p>
+          <div class="settings-actions">
+            <label class="file-label">Labor Needs
+              <input id="laborImportInput" type="file" accept=".csv,text/csv">
+            </label>
+            <label class="file-label">Employees
+              <input id="employeeImportInput" type="file" accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf">
+            </label>
+            <label class="file-label">Request Offs
+              <input id="timeOffImportInput" type="file" multiple accept=".pdf,.txt,.csv,.tsv,.tab,.xls,.xlsx,application/pdf,text/plain,text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream">
+            </label>
+            <label class="file-label">Manager Notes
+              <input id="managerNotesImportInput" type="file" accept=".json,application/json">
+            </label>
+            <button id="applyManagerNotesBtn" type="button">Apply Manager Notes</button>
+            <button id="exportCsvBtn" type="button">Export CSV</button>
+            <button id="backupBtn" type="button">Backup</button>
+            <button id="storageInfoBtn" type="button">Storage Info</button>
+            <label class="file-label">Restore
+              <input id="restoreInput" type="file" accept="application/json">
+            </label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Recently Dismissed Notifications</legend>
+          <p class="hint">Restore a schedule notification if it was marked read by accident.</p>
+          <div id="dismissedIssuesEditor" class="dismissed-issues-editor"></div>
+        </fieldset>
+        <div hidden>
+          <button id="undoBtn" type="button">Undo</button>
+          <button id="copyBtn" type="button">Copy Shift</button>
+          <button id="pasteBtn" type="button">Paste Shift</button>
+        </div>
+        <button type="submit">Save Settings</button>
+      </form>
+      <div class="settings-sticky-actions">
+        <div>
+          <strong>Global Settings</strong>
+          <span>Save changes without scrolling</span>
+        </div>
+        <button id="stickySaveSettingsBtn" type="button">Save Settings</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="zoomControls" class="zoom-controls" aria-label="Schedule zoom controls">
+    <button id="toggleUnavailablePanelBtn" class="zoom-side-toggle" type="button" title="Show unavailable this week">Unavailable</button>
+    <button id="zoomOutBtn" type="button" title="Zoom out">-</button>
+    <span id="zoomLabel">100%</span>
+    <button id="zoomInBtn" type="button" title="Zoom in">+</button>
+  </div>
+
+  <dialog id="shiftDialog">
+    <form id="shiftForm" method="dialog" class="editor modal-editor">
+      <h2 id="shiftDialogTitle">Edit Shift</h2>
+      <div id="shiftDialogContext" class="shift-dialog-context">No date selected</div>
+      <input id="shiftDialogMode" type="hidden" value="assigned">
+      <input id="shiftId" type="hidden">
+      <input id="shiftDate" type="hidden">
+      <input id="shiftEmployeeId" type="hidden">
+      <div class="shift-dialog-grid">
+        <section class="shift-dialog-card shift-dialog-main">
+          <h3>Shift</h3>
+          <label id="stagedShiftDateLabel" hidden>Date <input id="stagedShiftDate" type="date"></label>
+          <label id="shiftEmployeeLabel">Employee <select id="shiftEmployee"></select></label>
+          <label id="shiftLabelControl">Shift name <input id="shiftLabel" placeholder="Dinner, Fish Fry, Brunch"></label>
+          <label>Department <select id="shiftDepartment"></select></label>
+          <label>Role <select id="shiftRole"></select></label>
+          <div class="shift-dialog-time-row">
+            <label>Start <input id="shiftStart" placeholder="7a" required></label>
+            <label>End <input id="shiftEnd" placeholder="until volume or 4p"></label>
+          </div>
+          <div class="shift-dialog-checks">
+            <div class="checkbox checkbox-direct" id="shiftUntilVolumeControl"><input id="shiftUntilVolume" type="checkbox"><span>Until Volume</span></div>
+            <div class="checkbox checkbox-direct"><input id="shiftIsLunchCloser" type="checkbox"><span>Lunch closer</span></div>
+            <div class="checkbox checkbox-direct"><input id="shiftFlexDouble" type="checkbox"><span>Flex Double</span></div>
+            <div class="checkbox checkbox-direct"><input id="shiftIsCloser" type="checkbox"><span>Closer shift</span></div>
+          </div>
+        </section>
+        <section class="shift-dialog-card shift-dialog-side">
+          <fieldset>
+            <legend>Training</legend>
+            <div class="checkbox checkbox-direct"><input id="shiftIsTraining" type="checkbox"><span>Training shift</span></div>
+            <label>Trainee <select id="shiftTrainee"></select></label>
+            <label>Trainer <select id="shiftTrainer"></select></label>
+            <label>Training ends <input id="shiftTrainingSegmentEnd" placeholder="2p"></label>
+            <label>Training day override <input id="shiftTrainingDayOverride" type="number" min="1" step="1" placeholder="Auto"></label>
+          </fieldset>
+          <label>Notes <textarea id="shiftNotes" rows="3"></textarea></label>
+        </section>
+      </div>
+      <div id="shiftWarnings" class="warnings"></div>
+      <div class="form-actions">
+        <button id="saveShiftBtn" type="submit">Save</button>
+        <button id="requestOffShiftBtn" type="button">Add RO</button>
+        <button id="dayBlockShiftBtn" type="button">Add Block</button>
+        <button id="unassignShiftBtn" type="button">Unassign</button>
+        <button id="deleteShiftBtn" class="danger" type="button">Delete</button>
+        <button id="cancelShiftBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+
+  <dialog id="dayBlockDialog">
+    <form id="dayBlockForm" method="dialog" class="editor modal-editor">
+      <h2 id="dayBlockTitle">Add Day Block</h2>
+      <input id="dayBlockEmployeeId" type="hidden">
+      <input id="dayBlockDate" type="hidden">
+      <div class="form-grid">
+        <label>Type
+          <select id="dayBlockType">
+            <option>Off-site Event</option>
+            <option>BOH Shift</option>
+            <option>Training/Class</option>
+            <option>Manager Hold</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <div class="checkbox checkbox-direct"><input id="dayBlockAllDay" type="checkbox" checked><span>All day</span></div>
+        <label>Start <input id="dayBlockStart" placeholder="9a"></label>
+        <label>End <input id="dayBlockEnd" placeholder="5p"></label>
+        <label class="full-width">Note <textarea id="dayBlockNote" rows="3" placeholder="Wedding off-site, company event, etc."></textarea></label>
+      </div>
+      <div class="form-actions">
+        <button id="saveDayBlockBtn" type="submit">Save Block</button>
+        <button id="cancelDayBlockBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="warningConfirmDialog" class="app-confirm-dialog">
+    <form method="dialog" class="editor modal-editor app-confirm">
+      <div class="app-confirm-icon" aria-hidden="true">!</div>
+      <div>
+        <h2 id="warningConfirmTitle">Warning</h2>
+        <p id="warningConfirmMessage" class="app-confirm-message"></p>
+        <div id="warningConfirmList" class="app-confirm-list"></div>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="warningConfirmCancelBtn" type="button">Cancel</button>
+        <button id="warningConfirmProceedBtn" class="primary" type="button">Continue Anyway</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="appAlertDialog" class="app-alert-dialog">
+    <form method="dialog" class="editor modal-editor app-confirm app-alert">
+      <div id="appAlertIcon" class="app-confirm-icon" aria-hidden="true">i</div>
+      <div>
+        <h2 id="appAlertTitle">Notice</h2>
+        <p id="appAlertMessage" class="app-confirm-message"></p>
+        <div id="appAlertList" class="app-confirm-list"></div>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="appAlertCloseBtn" class="primary" type="button">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="coverageDialog">
+    <form id="coverageForm" method="dialog" class="editor modal-editor coverage-editor">
+      <h2 id="coverageDialogTitle">Day Coverage</h2>
+      <input id="coverageDate" type="hidden">
+      <div id="coverageEditor"></div>
+      <div id="coverageSummary" class="warnings"></div>
+      <div class="form-actions">
+        <button id="saveCoverageBtn" type="submit">Save Coverage</button>
+        <button id="defaultCoverageBtn" type="button">Set To Default</button>
+        <button id="projectionCoverageBtn" type="button">Use Projection</button>
+        <button id="previousCoverageBtn" type="button">Use Previous Week</button>
+        <button id="addMissingCoverageBtn" type="button">Add Missing to Shift Bay</button>
+        <button id="cancelCoverageBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="trainingPlanDialog">
+    <form id="trainingPlanForm" method="dialog" class="editor modal-editor coverage-editor">
+      <h2>Build Training Plan</h2>
+      <label>Trainee <select id="planTrainee"></select></label>
+      <label>Role <select id="planRole"></select></label>
+      <label>Start date <input id="planStartDate" type="date"></label>
+      <div id="trainingPlanResults" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="generateTrainingPlanBtn" type="button">Find Shifts</button>
+        <button id="addTrainingPlanBtn" type="button">Add Suggested Training Shifts</button>
+        <button id="cancelTrainingPlanBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="templateSuggestionsDialog">
+    <form method="dialog" class="editor modal-editor coverage-editor">
+      <h2>Template Suggestions</h2>
+      <p class="hint">Suggestions compare the selected template against assigned and open shifts in the current week.</p>
+      <div id="templateSuggestionsResults" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="applyAllTemplateSuggestionsBtn" type="button">Apply All</button>
+        <button id="closeTemplateSuggestionsBtn" type="button">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="printDialog">
+    <form id="printForm" method="dialog" class="editor modal-editor">
+      <h2>Print Options</h2>
+      <label>Print layout
+        <select id="printLayout">
+          <option value="grid">Current schedule grid</option>
+          <option value="simpleRole">Compact weekly grid by role</option>
+          <option value="simpleEmployee">Compact weekly grid by employee</option>
+          <option value="simpleRoleWithBay">Compact grid + open shift boxes</option>
+          <option value="ctuitEntry">Ctuit entry list</option>
+        </select>
+      </label>
+      <label>Sort by
+        <select id="printSort">
+          <option value="role">Role</option>
+          <option value="shift">Shift name</option>
+          <option value="name">Employee name</option>
+          <option value="time">Start time</option>
+        </select>
+      </label>
+      <details id="compactPrintAdvanced" class="print-advanced-options">
+        <summary>Advanced</summary>
+        <label>Shift order inside cells
+          <select id="compactPrintShiftOrder">
+            <option value="time">Start time</option>
+            <option value="endTime">End time</option>
+            <option value="role">Role</option>
+            <option value="shift">Shift name</option>
+            <option value="employee">Employee name</option>
+            <option value="longest">Longest shift first</option>
+            <option value="shortest">Shortest shift first</option>
+          </select>
+        </label>
+        <div class="compact-print-role-order">
+          <strong>Role print order</strong>
+          <p class="hint">Move roles up or down to choose how compact role reports print.</p>
+          <div id="compactPrintRoleOrderEditor"></div>
+        </div>
+      </details>
+      <div id="printWarningChecklist" class="print-warning-checklist"></div>
+      <div class="form-actions">
+        <button id="runPrintBtn" type="submit">Print</button>
+        <button id="cancelPrintBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="storageInfoDialog">
+    <form method="dialog" class="editor modal-editor">
+      <h2>Storage Info</h2>
+      <div id="storageInfoBody" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="closeStorageInfoBtn" type="button">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pasteEmployeesDialog">
+    <form id="pasteEmployeesForm" method="dialog" class="editor modal-editor">
+      <h2>Paste Employees</h2>
+      <p class="hint">Paste one employee per line. Phone numbers are optional, but lines with phone numbers parse best.</p>
+      <textarea id="pasteEmployeesText" rows="12" placeholder="Jane Smith 555-123-4567&#10;John Doe 555-234-5678"></textarea>
+      <div id="pasteEmployeesPreview" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="previewPastedEmployeesBtn" type="button">Preview</button>
+        <button id="importPastedEmployeesBtn" type="submit">Import</button>
+        <button id="cancelPasteEmployeesBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="manager-notes-data.js?v=shiftbay-20260615-employeeadvanced"></script>
+  <script src="app.js?v=shiftbay-20260702-floor-note-settings"></script>
+</body>
+</html>
+
+
