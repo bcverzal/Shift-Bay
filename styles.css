@@ -7628,7 +7628,18 @@ select {
 }
 
 .tab-development {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 5px;
+  flex: 1.25 1 112px;
+  max-width: 168px;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.tab-development .dev-badge {
+  flex: 0 0 auto;
 }
 
 .prototype-note {
@@ -7660,3 +7671,4 @@ select {
   font-weight: 650;
   line-height: 1.35;
 }
+
