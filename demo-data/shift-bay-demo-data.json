@@ -1,0 +1,2636 @@
+{
+  "app": "restaurant-scheduler",
+  "schemaVersion": 2,
+  "exportedAt": "2026-07-02T21:30:00.000Z",
+  "exportedByDeviceId": "demo_device",
+  "data": {
+    "meta": {
+      "schemaVersion": 2,
+      "documentId": "demo_shift_bay_document",
+      "deviceId": "demo_device",
+      "createdAt": "2026-07-02T21:30:00.000Z",
+      "updatedAt": "2026-07-02T21:30:00.000Z"
+    },
+    "settings": {
+      "weekStart": 2,
+      "nameDisplay": "full",
+      "visibleDepartments": [
+        "FOH"
+      ],
+      "visibleRoleIds": [],
+      "groupEmployeesByRole": true,
+      "hideUnavailableEmployees": true,
+      "showUnavailablePanel": false,
+      "hideDefaultAvailabilityBlocks": false,
+      "employeeRosterCollapsed": false,
+      "openShiftBaySort": "dayTime",
+      "scheduleRoleOrder": [
+        "role_server",
+        null,
+        "role_bartender",
+        "role_busser",
+        "role_host",
+        "role_expo"
+      ],
+      "printRoleOrder": [
+        "role_server",
+        null,
+        "role_bartender",
+        "role_busser",
+        "role_host",
+        "role_expo"
+      ],
+      "problemFocusMode": false,
+      "ignoreWarnings": false,
+      "showUntilVolumeInShiftEditor": false,
+      "showShiftNameFields": false,
+      "autoSetCloserEndTime": true,
+      "closerEndBufferMinutes": 60,
+      "flexDoubleEndTime": "7:00 PM",
+      "lunchCloserEndTime": "5:00 PM",
+      "closerTrainingRule": "onePerDay",
+      "scheduleZoom": 1,
+      "dragScrollSpeed": 5,
+      "staffingBuffer": 1,
+      "mealPeriods": {
+        "0": [
+          {
+            "name": "Brunch",
+            "start": "8:00 AM",
+            "end": "1:30 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "10:00 PM"
+          }
+        ],
+        "1": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "10:00 PM"
+          }
+        ],
+        "2": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "10:00 PM"
+          }
+        ],
+        "3": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "10:00 PM"
+          }
+        ],
+        "4": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "10:00 PM"
+          }
+        ],
+        "5": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "11:00 PM"
+          }
+        ],
+        "6": [
+          {
+            "name": "Breakfast",
+            "start": "7:00 AM",
+            "end": "10:30 AM"
+          },
+          {
+            "name": "Lunch",
+            "start": "10:30 AM",
+            "end": "4:00 PM"
+          },
+          {
+            "name": "Dinner",
+            "start": "4:00 PM",
+            "end": "11:00 PM"
+          }
+        ]
+      },
+      "defaultCoverage": {
+        "0": {
+          "Brunch": {
+            "role_server": 4,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "1": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "2": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "3": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "4": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "5": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        },
+        "6": {
+          "Breakfast": {
+            "role_server": 2,
+            "role_host": 1
+          },
+          "Lunch": {
+            "role_server": 2,
+            "role_busser": 1
+          },
+          "Dinner": {
+            "role_server": 2,
+            "role_host": 1,
+            "role_busser": 1,
+            "role_bartender": 1
+          }
+        }
+      },
+      "closerRequirements": {
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 2,
+        "6": 2
+      },
+      "projectionRules": {
+        "Breakfast": {
+          "role_server": {
+            "minimum": 1,
+            "dollarsPerStaff": 1800
+          }
+        },
+        "Lunch": {
+          "role_server": {
+            "minimum": 2,
+            "dollarsPerStaff": 2200
+          }
+        },
+        "Dinner": {
+          "role_server": {
+            "minimum": 2,
+            "dollarsPerStaff": 2500
+          },
+          "role_bartender": {
+            "minimum": 1,
+            "dollarsPerStaff": 5000
+          }
+        }
+      },
+      "floorPlanPrintRules": {
+        "0": [
+          "am",
+          "pm"
+        ],
+        "1": [
+          "all"
+        ],
+        "2": [
+          "all"
+        ],
+        "3": [
+          "all"
+        ],
+        "4": [
+          "all"
+        ],
+        "5": [
+          "am",
+          "pm"
+        ],
+        "6": [
+          "am",
+          "pm"
+        ]
+      },
+      "floorPlanCrossRoleNotes": {
+        "role_server": true,
+        "undefined": true,
+        "role_bartender": true,
+        "role_busser": true,
+        "role_host": true,
+        "role_expo": false
+      },
+      "trainingRequirements": {
+        "role_server": {
+          "days": 4,
+          "requiredShifts": [
+            {
+              "name": "Friday Dinner",
+              "dayIndex": 5
+            },
+            {
+              "name": "Sunday Brunch",
+              "dayIndex": 0
+            }
+          ]
+        }
+      }
+    },
+    "roles": [
+      {
+        "id": "role_server",
+        "name": "Server",
+        "department": "FOH",
+        "color": "#2563eb",
+        "defaultRate": 2.33
+      },
+      {
+        "id": "role_banquet",
+        "name": "Banquet Server",
+        "department": "FOH",
+        "color": "#0891b2",
+        "defaultRate": 12
+      },
+      {
+        "id": "role_bartender",
+        "name": "Bartender",
+        "department": "FOH",
+        "color": "#db2777",
+        "defaultRate": 5
+      },
+      {
+        "id": "role_busser",
+        "name": "Busser",
+        "department": "FOH",
+        "color": "#7c3aed",
+        "defaultRate": 10
+      },
+      {
+        "id": "role_host",
+        "name": "Host",
+        "department": "FOH",
+        "color": "#059669",
+        "defaultRate": 11
+      },
+      {
+        "id": "role_expo",
+        "name": "Expo",
+        "department": "FOH",
+        "color": "#ea580c",
+        "defaultRate": 13
+      },
+      {
+        "id": "role_boh_block",
+        "name": "BOH Block",
+        "department": "BOH",
+        "color": "#64748b",
+        "defaultRate": 0
+      },
+      {
+        "id": "role_manager",
+        "name": "Manager",
+        "department": "Exec",
+        "color": "#b45309",
+        "defaultRate": 0
+      }
+    ],
+    "employees": [
+      {
+        "id": "emp_alex",
+        "firstName": "Alex",
+        "lastName": "Morgan",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": true,
+        "canLunchClose": true,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_server",
+          "role_bartender"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [
+          "role_server"
+        ],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "Strong dinner server; good training lead.",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_brooke",
+        "firstName": "Brooke",
+        "lastName": "Taylor",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": true,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_server"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [
+          "role_server"
+        ],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_casey",
+        "firstName": "Casey",
+        "lastName": "Reed",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": true,
+        "alwaysPrintFloorEndTime": true,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_server",
+          null
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_dana",
+        "firstName": "Dana",
+        "lastName": "Parker",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_server",
+          "role_host"
+        ],
+        "emergencyOnlyRoles": [
+          "role_host"
+        ],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "8:00 AM",
+              "end": "4:00 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "8:00 AM",
+              "end": "3:00 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_elliot",
+        "firstName": "Elliot",
+        "lastName": "Stone",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": true,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_bartender",
+          "role_server"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_fiona",
+        "firstName": "Fiona",
+        "lastName": "Lake",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_host"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "8:00 AM",
+              "end": "5:00 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_gray",
+        "firstName": "Gray",
+        "lastName": "Holland",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_busser"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [],
+          "1": [],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_harper",
+        "firstName": "Harper",
+        "lastName": "Quinn",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": true,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_busser",
+          "role_host"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_indigo",
+        "firstName": "Indigo",
+        "lastName": "Blake",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          "role_expo",
+          "role_host"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "9:00 AM",
+              "end": "8:00 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "9:00 AM",
+              "end": "8:00 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "9:00 AM",
+              "end": "8:00 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_jules",
+        "firstName": "Jules",
+        "lastName": "Rivera",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": true,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch",
+          "Dinner",
+          "Brunch"
+        ],
+        "roleTraining": [
+          null,
+          "role_server"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [],
+          "1": [],
+          "2": [],
+          "3": [],
+          "4": [
+            {
+              "start": "5:00 PM",
+              "end": "11:00 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "5:00 PM",
+              "end": "11:00 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "5:00 PM",
+              "end": "11:00 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_kai",
+        "firstName": "Kai",
+        "lastName": "Bennett",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": false,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Dinner"
+        ],
+        "roleTraining": [
+          "role_server"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "4:00 PM",
+              "end": "10:00 PM"
+            }
+          ],
+          "1": [],
+          "2": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ],
+          "6": [
+            {
+              "start": "4:00 PM",
+              "end": "11:59 PM"
+            }
+          ]
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "emp_logan",
+        "firstName": "Logan",
+        "lastName": "Wells",
+        "nickname": "",
+        "birthday": "",
+        "phone": "(555) 010-0000",
+        "active": true,
+        "canClose": false,
+        "canLunchClose": true,
+        "alwaysPrintFloorEndTime": false,
+        "departments": [
+          "FOH"
+        ],
+        "callWeekly": false,
+        "mealTraining": [
+          "Breakfast",
+          "Lunch"
+        ],
+        "roleTraining": [
+          "role_server"
+        ],
+        "emergencyOnlyRoles": [],
+        "roleMealTraining": {},
+        "trainerRoles": [],
+        "weeklyRules": [],
+        "weeklyAvailability": {},
+        "availability": {
+          "0": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "1": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "2": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "3": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "4": [
+            {
+              "start": "12:00 AM",
+              "end": "11:59 PM"
+            }
+          ],
+          "5": [],
+          "6": []
+        },
+        "defaultRates": {},
+        "manualRates": {},
+        "managerNotes": "",
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      }
+    ],
+    "templates": [
+      {
+        "id": "template_foh_regular_demo",
+        "name": "FOH Demo Regular Week",
+        "shifts": [
+          {
+            "id": "tpl_tue_server_am",
+            "dayIndex": 2,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "6:30 AM",
+            "end": "11:00 AM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_tue_server_lunch",
+            "dayIndex": 2,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "11:00 AM",
+            "end": "3:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_tue_bar",
+            "dayIndex": 2,
+            "department": "FOH",
+            "roleId": "role_bartender",
+            "start": "5:00 PM",
+            "end": "10:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#db2777",
+            "notes": ""
+          },
+          {
+            "id": "tpl_wed_server_am",
+            "dayIndex": 3,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "6:45 AM",
+            "end": "11:00 AM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_wed_host",
+            "dayIndex": 3,
+            "department": "FOH",
+            "roleId": "role_host",
+            "start": "10:00 AM",
+            "end": "2:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#059669",
+            "notes": ""
+          },
+          {
+            "id": "tpl_wed_server_pm",
+            "dayIndex": 3,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "5:00 PM",
+            "end": "9:30 PM",
+            "untilVolume": false,
+            "isCloser": true,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_thu_flex",
+            "dayIndex": 4,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "9:00 AM",
+            "end": "7:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": true,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_thu_bus",
+            "dayIndex": 4,
+            "department": "FOH",
+            "roleId": "role_busser",
+            "start": "10:30 AM",
+            "end": "3:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#7c3aed",
+            "notes": ""
+          },
+          {
+            "id": "tpl_thu_server_pm",
+            "dayIndex": 4,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "5:00 PM",
+            "end": "10:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_fri_server_am",
+            "dayIndex": 5,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "6:30 AM",
+            "end": "11:00 AM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_fri_expo",
+            "dayIndex": 5,
+            "department": "FOH",
+            "roleId": "role_expo",
+            "start": "4:00 PM",
+            "end": "8:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#ea580c",
+            "notes": ""
+          },
+          {
+            "id": "tpl_fri_bar",
+            "dayIndex": 5,
+            "department": "FOH",
+            "roleId": "role_bartender",
+            "start": "4:00 PM",
+            "end": "11:00 PM",
+            "untilVolume": false,
+            "isCloser": true,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#db2777",
+            "notes": ""
+          },
+          {
+            "id": "tpl_fri_server_pm",
+            "dayIndex": 5,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "5:00 PM",
+            "end": "11:00 PM",
+            "untilVolume": false,
+            "isCloser": true,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sat_host",
+            "dayIndex": 6,
+            "department": "FOH",
+            "roleId": "role_host",
+            "start": "9:00 AM",
+            "end": "4:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#059669",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sat_expo",
+            "dayIndex": 6,
+            "department": "FOH",
+            "roleId": "role_expo",
+            "start": "4:00 PM",
+            "end": "8:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#ea580c",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sat_server_pm",
+            "dayIndex": 6,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "5:00 PM",
+            "end": "11:00 PM",
+            "untilVolume": false,
+            "isCloser": true,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sun_brunch_1",
+            "dayIndex": 0,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "8:00 AM",
+            "end": "2:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sun_brunch_2",
+            "dayIndex": 0,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "9:00 AM",
+            "end": "2:00 PM",
+            "untilVolume": false,
+            "isCloser": false,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          },
+          {
+            "id": "tpl_sun_server_pm",
+            "dayIndex": 0,
+            "department": "FOH",
+            "roleId": "role_server",
+            "start": "4:00 PM",
+            "end": "9:30 PM",
+            "untilVolume": false,
+            "isCloser": true,
+            "isLunchCloser": false,
+            "isFlexDouble": false,
+            "color": "#2563eb",
+            "notes": ""
+          }
+        ]
+      }
+    ],
+    "shifts": [
+      {
+        "id": "shift_tue_alex_am",
+        "employeeId": "emp_alex",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "6:30 AM",
+        "end": "11:00 AM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_logan_lunch",
+        "employeeId": "emp_logan",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "11:00 AM",
+        "end": "5:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": true,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_fiona_host",
+        "employeeId": "emp_fiona",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_host",
+        "start": "9:00 AM",
+        "end": "3:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#059669",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_gray_bus",
+        "employeeId": "emp_gray",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_busser",
+        "start": "11:00 AM",
+        "end": "3:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#7c3aed",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_elliot_bar",
+        "employeeId": "emp_elliot",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_bartender",
+        "start": "5:00 PM",
+        "end": "10:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#db2777",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_brooke_train",
+        "employeeId": "emp_brooke",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "9:30 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": true,
+          "traineeId": "emp_brooke",
+          "trainerId": "emp_alex",
+          "segmentEnd": "7:30 PM",
+          "dayOverride": 2
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_tue_alex_train_link",
+        "employeeId": "emp_alex",
+        "date": "2026-07-07",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "9:30 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_wed_casey_am",
+        "employeeId": "emp_casey",
+        "date": "2026-07-08",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "6:45 AM",
+        "end": "11:00 AM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_wed_dana_host",
+        "employeeId": "emp_dana",
+        "date": "2026-07-08",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_host",
+        "start": "10:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#059669",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_wed_brooke_din",
+        "employeeId": "emp_brooke",
+        "date": "2026-07-08",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "4:30 PM",
+        "end": "9:30 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_wed_elliot_bar",
+        "employeeId": "emp_elliot",
+        "date": "2026-07-08",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_bartender",
+        "start": "5:00 PM",
+        "end": "10:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#db2777",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_thu_alex_flex",
+        "employeeId": "emp_alex",
+        "date": "2026-07-09",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "9:00 AM",
+        "end": "7:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": true,
+        "meals": [],
+        "notes": "Flex double test note",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_thu_harper_bus",
+        "employeeId": "emp_harper",
+        "date": "2026-07-09",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_busser",
+        "start": "10:30 AM",
+        "end": "3:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#7c3aed",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_thu_kai_din",
+        "employeeId": "emp_kai",
+        "date": "2026-07-09",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "10:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_fri_brooke_am",
+        "employeeId": "emp_brooke",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "6:30 AM",
+        "end": "11:00 AM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_fri_casey_bqt",
+        "employeeId": "emp_casey",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_banquet",
+        "start": "4:30 PM",
+        "end": "9:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "Off-site wedding room",
+        "color": "#0891b2",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_fri_indigo_expo",
+        "employeeId": "emp_indigo",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_expo",
+        "start": "4:00 PM",
+        "end": "8:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#ea580c",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_fri_elliot_bar",
+        "employeeId": "emp_elliot",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_bartender",
+        "start": "4:00 PM",
+        "end": "11:00 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#db2777",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_fri_kai_close",
+        "employeeId": "emp_kai",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "11:00 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sat_alex_bar",
+        "employeeId": "emp_alex",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_bartender",
+        "start": "9:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#db2777",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sat_indigo_host_expo",
+        "employeeId": "emp_indigo",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_host",
+        "start": "9:00 AM",
+        "end": "4:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#059669",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sat_indigo_expo",
+        "employeeId": "emp_indigo",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_expo",
+        "start": "4:00 PM",
+        "end": "8:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#ea580c",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sat_brooke_close",
+        "employeeId": "emp_brooke",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "11:00 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sat_harper_bus",
+        "employeeId": "emp_harper",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_busser",
+        "start": "5:00 PM",
+        "end": "10:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#7c3aed",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sun_logan_brunch",
+        "employeeId": "emp_logan",
+        "date": "2026-07-12",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "8:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sun_casey_brunch",
+        "employeeId": "emp_casey",
+        "date": "2026-07-12",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "9:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sun_gray_bus",
+        "employeeId": "emp_gray",
+        "date": "2026-07-12",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_busser",
+        "start": "9:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#7c3aed",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "shift_sun_kai_din",
+        "employeeId": "emp_kai",
+        "date": "2026-07-12",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "4:00 PM",
+        "end": "9:30 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      }
+    ],
+    "unassignedShifts": [
+      {
+        "id": "bay_fri_server",
+        "employeeId": "",
+        "date": "2026-07-10",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "5:00 PM",
+        "end": "11:00 PM",
+        "untilVolume": false,
+        "isCloser": true,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "bay_sat_banquet",
+        "employeeId": "",
+        "date": "2026-07-11",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_banquet",
+        "start": "5:00 PM",
+        "end": "9:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "Demo banquet coverage",
+        "color": "#0891b2",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "bay_sun_host",
+        "employeeId": "",
+        "date": "2026-07-12",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_host",
+        "start": "9:00 AM",
+        "end": "2:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#059669",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      },
+      {
+        "id": "bay_mon_server",
+        "employeeId": "",
+        "date": "2026-07-13",
+        "shiftLabel": "",
+        "department": "FOH",
+        "roleId": "role_server",
+        "start": "11:00 AM",
+        "end": "3:00 PM",
+        "untilVolume": false,
+        "isCloser": false,
+        "isLunchCloser": false,
+        "isFlexDouble": false,
+        "meals": [],
+        "notes": "",
+        "color": "#2563eb",
+        "training": {
+          "isTraining": false,
+          "traineeId": "",
+          "trainerId": "",
+          "segmentEnd": "",
+          "dayOverride": null
+        },
+        "createdAt": "2026-07-02T21:30:00.000Z",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      }
+    ],
+    "salesProjections": {
+      "2026-07-07": {
+        "Breakfast": 3800,
+        "Lunch": 6200,
+        "Dinner": 9800
+      },
+      "2026-07-08": {
+        "Breakfast": 4050,
+        "Lunch": 6600,
+        "Dinner": 10500
+      },
+      "2026-07-09": {
+        "Breakfast": 4300,
+        "Lunch": 7000,
+        "Dinner": 11200
+      },
+      "2026-07-10": {
+        "Breakfast": 4550,
+        "Lunch": 7400,
+        "Dinner": 11900
+      },
+      "2026-07-11": {
+        "Breakfast": 4800,
+        "Lunch": 7800,
+        "Dinner": 12600
+      },
+      "2026-07-12": {
+        "Brunch": 12500,
+        "Dinner": 8500
+      },
+      "2026-07-13": {
+        "Breakfast": 5300,
+        "Lunch": 8600,
+        "Dinner": 14000
+      }
+    },
+    "timeOffRequests": [
+      {
+        "id": "ro_dana_fri",
+        "employeeId": "emp_dana",
+        "date": "2026-07-10",
+        "daypart": "All day",
+        "note": "Demo vacation day",
+        "source": "Demo"
+      },
+      {
+        "id": "ro_harper_sat_partial",
+        "employeeId": "emp_harper",
+        "date": "2026-07-11",
+        "daypart": "Partial day",
+        "start": "8:00 AM",
+        "end": "2:00 PM",
+        "note": "Appointment",
+        "source": "Demo"
+      },
+      {
+        "id": "block_jules_sat",
+        "employeeId": "emp_jules",
+        "date": "2026-07-11",
+        "kind": "block",
+        "source": "Day Block",
+        "blockType": "Off-site Event",
+        "daypart": "All day",
+        "allDay": true,
+        "start": "",
+        "end": "",
+        "note": "Demo block"
+      }
+    ],
+    "coverageRequirements": {
+      "2026-07-07": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-08": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-09": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-10": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-11": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-12": {
+        "Brunch": {
+          "role_server": 4,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      },
+      "2026-07-13": {
+        "Breakfast": {
+          "role_server": 2,
+          "role_host": 1
+        },
+        "Lunch": {
+          "role_server": 2,
+          "role_busser": 1
+        },
+        "Dinner": {
+          "role_server": 2,
+          "role_host": 1,
+          "role_busser": 1,
+          "role_bartender": 1
+        }
+      }
+    },
+    "scheduleHistory": [],
+    "localPreferences": {
+      "demo_device": {
+        "activeWeek": "2026-07-07",
+        "updatedAt": "2026-07-02T21:30:00.000Z"
+      }
+    }
+  }
+}

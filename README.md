@@ -12,6 +12,17 @@ C:\Users\bcver\Desktop\Monthly Group Calendar\restaurant-scheduler\index.html
 
 No server or install step is required.
 
+
+## Demo Data
+
+A sanitized fake schedule is included for code review and product feedback:
+
+```text
+restaurant-scheduler/demo-data/shift-bay-demo-data.json
+```
+
+Load it from **Settings > Imports & Data > Restore**. It contains fake employees, availability, assigned shifts, open Shift Bay shifts, request-offs, a day block, training notes, closers, projections, coverage requirements, templates, and floor-plan settings. Back up real data before restoring demo data in a working environment.
+
 ## Current Features
 
 - Weekly schedule builder with employees as rows and days as columns.
@@ -106,3 +117,4 @@ If the script says `pypdf` is missing, install it with:
 ```text
 python -m pip install pypdf
 ```
+
