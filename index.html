@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay</title>
-  <link rel="stylesheet" href="styles.css?v=shiftbay-20260702-floor-note-settings">
+  <link rel="stylesheet" href="styles.css?v=shiftbay-20260702-prototype-status">
 </head>
 <body>
   <nav class="tabs" aria-label="Main sections">
@@ -12,9 +12,9 @@
     <button class="tab" type="button" data-tab="monthly">Monthly</button>
     <button class="tab" type="button" data-tab="employees">Employees</button>
     <button class="tab" type="button" data-tab="templates">Templates</button>
-    <button class="tab" type="button" data-tab="history">History</button>
+    <button class="tab tab-development" type="button" data-tab="history">History <span class="dev-badge">In Development</span></button>
     <button class="tab" type="button" data-tab="roles">Roles</button>
-    <button class="tab" type="button" data-tab="staffing">Staffing</button>
+    <button class="tab tab-development" type="button" data-tab="staffing">Staffing <span class="dev-badge">In Development</span></button>
     <button class="tab" type="button" data-tab="floorplans">Floor Plans</button>
     <button class="tab" type="button" data-tab="settings">Settings</button>
     <div class="header-actions">
@@ -304,6 +304,10 @@
     </section>
 
     <section id="history" class="panel">
+      <div class="prototype-note">
+        <strong>In Development</strong>
+        <span>History imports and pattern tools are experimental. Use this area for directional review only; the final scheduling and database logic is still being shaped.</span>
+      </div>
       <div class="toolbar">
         <div class="toolbar-group">
           <h2>Schedule History</h2>
@@ -319,6 +323,10 @@
     </section>
 
     <section id="staffing" class="panel">
+      <div class="prototype-note">
+        <strong>In Development</strong>
+        <span>Staffing analysis is an early prototype. Current output is useful for discussing direction, but should not be treated as final hiring or scheduling logic yet.</span>
+      </div>
       <div class="toolbar">
         <div class="toolbar-group">
           <h2>Staffing Analysis</h2>
@@ -793,8 +801,12 @@
   </dialog>
 
   <script src="manager-notes-data.js?v=shiftbay-20260615-employeeadvanced"></script>
-  <script src="app.js?v=shiftbay-20260702-floor-note-settings"></script>
+  <script src="app.js?v=shiftbay-20260702-prototype-status"></script>
 </body>
 </html>
+
+
+
+
 
 

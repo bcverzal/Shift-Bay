@@ -13,6 +13,13 @@ C:\Users\bcver\Desktop\Monthly Group Calendar\restaurant-scheduler\index.html
 No server or install step is required.
 
 
+
+## Prototype Status
+
+Shift Bay is an active prototype. The current review focus is the core schedule grid, Shift Bay workflow, employee setup, templates, floor plans, compact prints, and backup/restore flow.
+
+The **History** and **Staffing** sections are marked **In Development** in the app. They are useful for reviewing future direction and database architecture, but their output should be treated as experimental rather than final scheduling or hiring logic.
+
 ## Demo Data
 
 A sanitized fake schedule is included for code review and product feedback:
@@ -117,4 +124,5 @@ If the script says `pypdf` is missing, install it with:
 ```text
 python -m pip install pypdf
 ```
+
 
