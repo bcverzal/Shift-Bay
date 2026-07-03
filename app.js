@@ -4603,7 +4603,7 @@ function renderDayHeader(date) {
       </span>
     </div>
   `);
-  div.title = "Double-click this day header to focus Breakfast, Lunch, and Dinner for this date.";
+  div.dataset.tooltip = "Double-click to focus this day.";
   wireProjectionPopover(div, dateKey);
   div.ondblclick = (event) => {
     if (event.target.closest("button, input, select, .projection-popover")) return;
@@ -10720,7 +10720,4 @@ if (!SERVER_STORAGE_ENABLED) {
 }
 hydrateStateFromServer();
 window.addEventListener("beforeunload", flushServerSaveOnClose);
-
-
-
 
