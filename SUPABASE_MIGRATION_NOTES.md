@@ -30,6 +30,7 @@ Add entries here when a local-active change affects saved data or future table s
 | Date | Local Change | Supabase Impact |
 | --- | --- | --- |
 | 2026-07-03 | Branch workflow created | Establish separate migration lane before schema work begins. |
+| 2026-07-03 | Server storage adapter scaffold | Keep `/api/state` stable while swapping local JSON storage for Supabase document storage first. |
 
 ## Likely Core Tables
 
@@ -58,3 +59,40 @@ Add entries here when a local-active change affects saved data or future table s
 - Should settings be per restaurant, per user, or both?
 - How should local backups work once Supabase is primary?
 - Which actions need an audit trail before other managers use the app?
+
+## Migration Strategy
+
+The first Supabase pass should not rewrite every scheduling screen at once.
+
+1. Keep the browser app talking to `/api/state`.
+2. Let the Node server choose a storage provider.
+3. Default to local JSON so the branch can run without credentials.
+4. Add Supabase as a server-side storage provider for the whole scheduler state document.
+5. Once shared cloud state works, gradually move heavily-used records into normalized tables.
+
+This creates a safer bridge:
+
+- current app behavior stays familiar
+- laptop and office PC can share a cloud-backed document earlier
+- normalized tables can be introduced without blocking the first cloud test
+- the long-term schema still exists as the target
+
+## Storage Modes
+
+Local JSON mode:
+
+```text
+SHIFT_BAY_STORAGE_MODE=local-json
+```
+
+Supabase state-document mode:
+
+```text
+SHIFT_BAY_STORAGE_MODE=supabase
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SHIFT_BAY_LOCATION_ID=...
+SHIFT_BAY_DOCUMENT_KEY=primary
+```
+
+The service-role key is server-side only. Do not put it in browser code or commit it to Git.

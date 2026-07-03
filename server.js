@@ -3,13 +3,17 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
+const { loadEnvFile } = require("./config/load-env");
+const { createSchedulerStore } = require("./storage");
 
 const ROOT = __dirname;
+loadEnvFile(ROOT);
 const DATA_DIR = path.join(ROOT, "data");
 const BACKUP_DIR = path.join(DATA_DIR, "backups");
 const DATA_FILE = path.join(DATA_DIR, "restaurant-scheduler-data.json");
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
+const schedulerStore = createSchedulerStore({ root: ROOT, dataDir: DATA_DIR, backupDir: BACKUP_DIR, dataFile: DATA_FILE });
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -434,43 +438,32 @@ function serveStatic(request, response) {
 async function handleApi(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === "/api/status") {
-    const exists = fs.existsSync(DATA_FILE);
-    sendJson(response, 200, {
-      ok: true,
-      dataFile: DATA_FILE,
-      exists,
-      updatedAt: exists ? fs.statSync(DATA_FILE).mtime.toISOString() : null
-    });
+    sendJson(response, 200, await schedulerStore.status());
     return;
   }
   if (url.pathname === "/api/state" && request.method === "GET") {
-    if (!fs.existsSync(DATA_FILE)) {
+    const result = await schedulerStore.loadState();
+    if (!result.exists) {
       sendJson(response, 404, { error: "No scheduler data file has been created yet." });
       return;
     }
-    response.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store"
-    });
-    fs.createReadStream(DATA_FILE).pipe(response);
+    sendJson(response, 200, result.payload);
     return;
   }
   if (url.pathname === "/api/state" && (request.method === "PUT" || request.method === "POST")) {
     try {
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody);
-      const incomingTime = dataUpdatedAt(parsed);
-      const existingTime = existingDataUpdatedAt();
-      if (incomingTime && existingTime && incomingTime < existingTime - 1000) {
+      const result = await schedulerStore.saveState(parsed);
+      if (result.stale) {
         sendJson(response, 409, {
           error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
-          incomingUpdatedAt: new Date(incomingTime).toISOString(),
-          existingUpdatedAt: new Date(existingTime).toISOString()
+          incomingUpdatedAt: result.incomingUpdatedAt,
+          existingUpdatedAt: result.existingUpdatedAt
         });
         return;
       }
-      saveDataFile(parsed);
-      sendJson(response, 200, { ok: true, savedAt: new Date().toISOString() });
+      sendJson(response, 200, { ok: true, savedAt: result.savedAt || new Date().toISOString() });
     } catch (error) {
       sendJson(response, 400, { error: error.message || "Could not save scheduler data." });
     }
