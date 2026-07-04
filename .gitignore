@@ -16,6 +16,7 @@ ctuit-entry-list-*.html
 # Temporary working files
 /tmp/
 /tools/supabase-cli/
+/supabase/.temp/
 *.tmp
 *.log
 __pycache__/
