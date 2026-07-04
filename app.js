@@ -9262,23 +9262,23 @@ function renderManagerAccessList(managers = []) {
     return;
   }
   target.innerHTML = `
-    <table>
-      <thead><tr><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
-      <tbody>
-        ${managers.map((manager) => `
-          <tr data-manager-user-id="${escapeHtml(manager.userId)}">
-            <td><strong>${escapeHtml(manager.email || manager.userId)}</strong><br><small>${escapeHtml(manager.userId)}</small></td>
-            <td>
-              <select class="manager-access-role-select" data-manager-role>
-                ${["owner", "manager", "viewer"].map((role) => `<option value="${role}" ${role === manager.role ? "selected" : ""}>${managerRoleLabel(role)}</option>`).join("")}
-              </select>
-            </td>
-            <td>${manager.createdAt ? escapeHtml(new Date(manager.createdAt).toLocaleDateString()) : ""}</td>
-            <td class="manager-access-actions"><button type="button" data-manager-remove ${manager.userId === currentUser?.id ? "disabled" : ""}>Remove</button></td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
+    <div class="manager-access-list">
+      ${managers.map((manager) => `
+        <section class="manager-access-card" data-manager-user-id="${escapeHtml(manager.userId)}">
+          <div class="manager-access-person">
+            <strong>${escapeHtml(manager.email || manager.userId)}</strong>
+            <small>${escapeHtml(manager.userId)}</small>
+          </div>
+          <label>Role
+            <select class="manager-access-role-select" data-manager-role>
+              ${["owner", "manager", "viewer"].map((role) => `<option value="${role}" ${role === manager.role ? "selected" : ""}>${managerRoleLabel(role)}</option>`).join("")}
+            </select>
+          </label>
+          <span class="manager-access-added">${manager.createdAt ? escapeHtml(new Date(manager.createdAt).toLocaleDateString()) : ""}</span>
+          <button type="button" data-manager-remove ${manager.userId === currentUser?.id ? "disabled" : ""}>Remove</button>
+        </section>
+      `).join("")}
+    </div>
   `;
   target.querySelectorAll("[data-manager-role]").forEach((select) => {
     select.addEventListener("change", async (event) => {
@@ -9293,7 +9293,6 @@ function renderManagerAccessList(managers = []) {
     });
   });
 }
-
 async function loadManagerAccess() {
   setManagerAccessMessage("Loading manager access...");
   try {

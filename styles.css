@@ -428,7 +428,7 @@ summary:focus-visible {
 }
 
 .manager-access-editor {
-  width: min(880px, calc(100vw - 28px));
+  width: min(720px, calc(100vw - 28px));
   max-height: min(720px, calc(100vh - 34px));
   overflow: auto;
 }
@@ -476,38 +476,49 @@ summary:focus-visible {
 }
 
 #managerAccessDialog .analysis-table {
-  overflow-x: hidden;
+  overflow: visible;
 }
 
-#managerAccessDialog .analysis-table table {
-  table-layout: fixed;
-  width: 100%;
+.manager-access-list {
+  display: grid;
+  gap: 8px;
 }
 
-#managerAccessDialog .analysis-table th:first-child,
-#managerAccessDialog .analysis-table td:first-child {
-  width: 58%;
+.manager-access-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 78px 92px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #c7d7ea;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8fe 100%);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
-#managerAccessDialog .analysis-table th:nth-child(2),
-#managerAccessDialog .analysis-table td:nth-child(2) {
-  width: 160px;
+.manager-access-person {
+  min-width: 0;
 }
 
-#managerAccessDialog .analysis-table th:nth-child(3),
-#managerAccessDialog .analysis-table td:nth-child(3) {
-  width: 92px;
-}
-
-#managerAccessDialog .analysis-table th:nth-child(4),
-#managerAccessDialog .analysis-table td:nth-child(4) {
-  width: 105px;
-}
-
-#managerAccessDialog .analysis-table small {
+.manager-access-person strong,
+.manager-access-person small {
   display: block;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.manager-access-person small,
+.manager-access-added {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (max-width: 680px) {
+  .manager-access-card {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 720px) {
