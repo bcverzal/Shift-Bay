@@ -428,9 +428,14 @@ summary:focus-visible {
 }
 
 .manager-access-editor {
-  width: min(720px, calc(100vw - 28px));
+  width: 100%;
   max-height: min(720px, calc(100vh - 34px));
   overflow: auto;
+}
+
+#managerAccessDialog .manager-access-editor > :not(h2):not(.form-actions) {
+  margin-left: 18px;
+  margin-right: 18px;
 }
 
 .modal-close-button {
@@ -449,7 +454,7 @@ summary:focus-visible {
 
 .manager-invite-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 150px auto;
+  grid-template-columns: minmax(0, 1fr) 140px 112px;
   gap: 10px;
   align-items: end;
 }
@@ -6822,6 +6827,11 @@ dialog {
 #storageInfoDialog,
 #pasteEmployeesDialog {
   width: min(780px, calc(100vw - 28px));
+  max-height: calc(100vh - 24px);
+}
+
+#managerAccessDialog {
+  width: min(720px, calc(100vw - 28px));
   max-height: calc(100vh - 24px);
 }
 
