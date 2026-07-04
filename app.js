@@ -10605,7 +10605,6 @@ function wireEvents() {
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
   $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
   $("closeManagerAccessBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
-  $("closeManagerAccessTopBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
   $("managerInviteForm")?.addEventListener("submit", sendManagerInvite);
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
