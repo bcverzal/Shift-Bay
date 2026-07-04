@@ -95,8 +95,18 @@ function createSupabaseStore() {
     async saveState(payload, user = null) {
       const state = payload?.data || payload?.state || payload;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
+      const baseServerSavedAt = payload?.baseServerSavedAt || state?.meta?.serverSavedAt || "";
       const incomingTime = dataUpdatedAt(payload);
       const existingRow = await loadDocumentRow("state,saved_at,updated_at");
+      const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
+      if (baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
+        return {
+          ok: false,
+          stale: true,
+          incomingUpdatedAt: baseServerSavedAt,
+          existingUpdatedAt: existingSavedAt
+        };
+      }
       const existingTime = dataUpdatedAt(existingRow?.state || { savedAt: existingRow?.saved_at || existingRow?.updated_at });
       if (incomingTime && existingTime && incomingTime < existingTime - 1000) {
         return {

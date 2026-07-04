@@ -36,6 +36,7 @@ let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let lastKnownServerSavedAt = "";
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : "Using this browser's local storage.";
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
@@ -728,6 +729,7 @@ function serverEnvelope() {
     schemaVersion: DATA_SCHEMA_VERSION,
     savedAt: nowIso(),
     savedByDeviceId: getDeviceId(),
+    baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     data: state
   };
 }
@@ -753,12 +755,22 @@ async function persistStateToServer() {
       body: JSON.stringify(serverEnvelope())
     });
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); throw new Error("Cloud login is required."); }
+    if (response.status === 409) {
+      const conflict = await response.json().catch(() => ({}));
+      throw new Error(conflict.error || "This window is behind the latest cloud version. Refresh before saving.");
+    }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    const result = await response.json().catch(() => ({}));
+    if (result.savedAt) {
+      lastKnownServerSavedAt = result.savedAt;
+      state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    }
     setStorageStatus("saved", "Connected to the shared scheduler data file.");
     saved = true;
-  } catch {
-    setStorageStatus("error", "Could not save to the shared scheduler file. Browser backup is still saved locally.");
-    showConflict("Could not save to the shared scheduler file. Your browser copy is still saved locally.");
+  } catch (error) {
+    setStorageStatus("error", error?.message || "Could not save to the shared scheduler file. Browser backup is still saved locally.");
+    showConflict(error?.message || "Could not save to the shared scheduler file. Your browser copy is still saved locally.");
   } finally {
     serverSaveInFlight = false;
     if (serverSavePending) {
@@ -1000,6 +1012,8 @@ async function hydrateStateFromServer() {
     if (response.ok) {
       const envelope = await response.json();
       const serverState = normalizeLoadedState(envelope.data || envelope);
+      lastKnownServerSavedAt = envelope.savedAt || envelope.updatedAt || "";
+      serverState.meta = { ...(serverState.meta || {}), serverSavedAt: lastKnownServerSavedAt };
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
@@ -1015,6 +1029,7 @@ async function hydrateStateFromServer() {
     }
     if (response.status === 404) {
       serverStorageReady = true;
+      lastKnownServerSavedAt = "";
       setStorageStatus("saving", "Creating the first shared scheduler data file...");
       await persistStateToServer();
       return;
