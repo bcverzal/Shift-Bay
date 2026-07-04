@@ -13,6 +13,7 @@ const BACKUP_DIR = path.join(DATA_DIR, "backups");
 const DATA_FILE = path.join(DATA_DIR, "restaurant-scheduler-data.json");
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
+const STORAGE_MODE = (process.env.SHIFT_BAY_STORAGE_MODE || "local-json").trim().toLowerCase();
 const schedulerStore = createSchedulerStore({ root: ROOT, dataDir: DATA_DIR, backupDir: BACKUP_DIR, dataFile: DATA_FILE });
 
 const MIME_TYPES = {
@@ -40,6 +41,129 @@ function sendJson(response, status, body) {
     "Cache-Control": "no-store"
   });
   response.end(JSON.stringify(body, null, 2));
+}
+
+function supabaseServerConfig() {
+  return {
+    url: (process.env.SUPABASE_URL || "").replace(/\/$/, ""),
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+    anonKey: process.env.SUPABASE_ANON_KEY || "",
+    locationId: process.env.SHIFT_BAY_LOCATION_ID || ""
+  };
+}
+
+function authConfigPayload() {
+  const config = supabaseServerConfig();
+  return {
+    enabled: Boolean(config.url && config.anonKey),
+    supabaseUrl: config.url,
+    anonKey: config.anonKey,
+    locationId: config.locationId,
+    missing: [
+      !config.url ? "SUPABASE_URL" : "",
+      !config.anonKey ? "SUPABASE_ANON_KEY" : "",
+      !config.locationId ? "SHIFT_BAY_LOCATION_ID" : ""
+    ].filter(Boolean)
+  };
+}
+
+async function supabaseJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    const message = body?.message || body?.error_description || body?.details || `Supabase request failed with ${response.status}.`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function bearerToken(request) {
+  const match = String(request.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : "";
+}
+
+async function validateSupabaseSession(request) {
+  const config = supabaseServerConfig();
+  const token = bearerToken(request);
+  if (!config.url || !config.serviceRoleKey || !config.locationId) {
+    const missing = [];
+    if (!config.url) missing.push("SUPABASE_URL");
+    if (!config.serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+    if (!config.locationId) missing.push("SHIFT_BAY_LOCATION_ID");
+    return { ok: false, status: 503, error: `Cloud login is not fully configured. Missing ${missing.join(", ")}.` };
+  }
+  if (!token) return { ok: false, status: 401, error: "No login token was provided." };
+
+  const user = await supabaseJson(`${config.url}/auth/v1/user`, {
+    headers: {
+      apikey: config.anonKey || config.serviceRoleKey,
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const memberships = await supabaseJson(
+    `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(config.locationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=role`,
+    {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`
+      }
+    }
+  );
+  const membership = Array.isArray(memberships) ? memberships[0] : null;
+  if (!membership) return { ok: false, status: 403, error: "This account is not linked to this Shift Bay location." };
+  return {
+    ok: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      role: membership.role || "manager",
+      locationId: config.locationId
+    }
+  };
+}
+
+async function requireCloudUser(request, response) {
+  if (STORAGE_MODE !== "supabase") return true;
+  try {
+    const result = await validateSupabaseSession(request);
+    if (!result.ok) {
+      sendJson(response, result.status || 401, { ok: false, error: result.error });
+      return false;
+    }
+    request.shiftBayUser = result.user;
+    return true;
+  } catch (error) {
+    sendJson(response, error.status || 401, { ok: false, error: error.message || "Cloud login is required." });
+    return false;
+  }
+}
+
+async function signInWithSupabasePassword(email, password) {
+  const config = supabaseServerConfig();
+  if (!config.url || !config.anonKey) {
+    const missing = [];
+    if (!config.url) missing.push("SUPABASE_URL");
+    if (!config.anonKey) missing.push("SUPABASE_ANON_KEY");
+    const error = new Error(`Cloud login is not configured. Missing ${missing.join(", ")}.`);
+    error.status = 503;
+    throw error;
+  }
+  if (!email || !password) {
+    const error = new Error("Email and password are required.");
+    error.status = 400;
+    throw error;
+  }
+  return supabaseJson(`${config.url}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: {
+      apikey: config.anonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ email, password })
+  });
 }
 
 function readRequestBody(request) {
@@ -437,11 +561,48 @@ function serveStatic(request, response) {
 
 async function handleApi(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
+  if (url.pathname === "/api/auth/config") {
+    sendJson(response, 200, authConfigPayload());
+    return;
+  }
+  if (url.pathname === "/api/auth/login" && request.method === "POST") {
+    try {
+      const rawBody = await readRequestBody(request);
+      const parsed = JSON.parse(rawBody || "{}");
+      const session = await signInWithSupabasePassword(String(parsed.email || "").trim(), String(parsed.password || ""));
+      const fakeRequest = {
+        headers: { authorization: `Bearer ${session.access_token}` }
+      };
+      const validated = await validateSupabaseSession(fakeRequest);
+      if (!validated.ok) {
+        sendJson(response, validated.status || 401, { ok: false, error: validated.error });
+        return;
+      }
+      sendJson(response, 200, { ok: true, session, user: validated.user });
+    } catch (error) {
+      sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not sign in." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/auth/session") {
+    try {
+      const result = await validateSupabaseSession(request);
+      if (!result.ok) {
+        sendJson(response, result.status || 401, { ok: false, error: result.error });
+        return;
+      }
+      sendJson(response, 200, result);
+    } catch (error) {
+      sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not verify login." });
+    }
+    return;
+  }
   if (url.pathname === "/api/status") {
     sendJson(response, 200, await schedulerStore.status());
     return;
   }
   if (url.pathname === "/api/state" && request.method === "GET") {
+    if (!(await requireCloudUser(request, response))) return;
     const result = await schedulerStore.loadState();
     if (!result.exists) {
       sendJson(response, 404, { error: "No scheduler data file has been created yet." });
@@ -451,6 +612,7 @@ async function handleApi(request, response) {
     return;
   }
   if (url.pathname === "/api/state" && (request.method === "PUT" || request.method === "POST")) {
+    if (!(await requireCloudUser(request, response))) return;
     try {
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody);

@@ -61,6 +61,7 @@ In `restaurant-scheduler-supabase`, create a `.env` file from `.env.example`:
 ```text
 SHIFT_BAY_STORAGE_MODE=supabase
 SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-public-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SHIFT_BAY_LOCATION_ID=your-location-id
 SHIFT_BAY_DOCUMENT_KEY=primary

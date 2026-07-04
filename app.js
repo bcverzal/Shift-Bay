@@ -2,6 +2,7 @@ const STORE_KEY = "restaurantScheduler.v1";
 const STAFF_RESET_KEY = "restaurantScheduler.staffReset.20260611";
 const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
+const AUTH_SESSION_KEY = "shiftBay.supabaseSession.v1";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -19,6 +20,10 @@ const FLOOR_PLAN_NOTE_LIMIT = 30;
 const FLOOR_PLAN_NOTE_EXTRA_LIMIT = 28;
 
 let state = loadState();
+let authConfig = null;
+let authRequired = false;
+let authSession = loadAuthSession();
+let currentUser = null;
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
@@ -736,9 +741,10 @@ async function persistStateToServer() {
   try {
     const response = await fetch("/api/state", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(serverEnvelope())
     });
+    if (response.status === 401 || response.status === 403) { handleAuthRequired(); throw new Error("Cloud login is required."); }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
     setStorageStatus("saved", "Connected to the shared scheduler data file.");
     saved = true;
@@ -759,17 +765,17 @@ async function saveNow() {
   const button = $("saveNowBtn");
   if (button) {
     button.disabled = true;
-    button.className = "save-now-button saving";
+    button.className = "account-menu-action saving";
     button.textContent = "Saving...";
   }
   const saved = SERVER_STORAGE_ENABLED ? await saveState({ immediate: true }) : (saveState(), true);
   if (button) {
     button.disabled = false;
-    button.className = `save-now-button ${saved || !SERVER_STORAGE_ENABLED ? "saved" : "error"}`;
+    button.className = `account-menu-action ${saved || !SERVER_STORAGE_ENABLED ? "saved" : "error"}`;
     button.textContent = saved || !SERVER_STORAGE_ENABLED ? "Saved" : "Save Issue";
     setTimeout(() => {
-      button.className = "save-now-button";
-      button.textContent = "Save Now";
+      button.className = "account-menu-action";
+      button.textContent = "Sync now";
     }, 1800);
   }
   showConflict(SERVER_STORAGE_ENABLED
@@ -789,11 +795,190 @@ function flushServerSaveOnClose() {
   }
 }
 
+function loadAuthSession() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_SESSION_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveAuthSession(session) {
+  authSession = session;
+  try {
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Login still works for the current window if local storage is unavailable.
+  }
+}
+
+function clearAuthSession() {
+  authSession = null;
+  currentUser = null;
+  try {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+  } catch {
+    // Nothing else to do.
+  }
+}
+
+function shortAccountName(email = "") {
+  return String(email || "").split("@")[0] || "Account";
+}
+
+function accountInitial(email = "") {
+  return shortAccountName(email).slice(0, 1).toUpperCase() || "?";
+}
+
+function setLoginMessage(message = "", detail = "") {
+  const messageEl = $("loginMessage");
+  const diagnostics = $("loginDiagnostics");
+  if (messageEl) messageEl.textContent = message;
+  if (diagnostics) diagnostics.textContent = detail || message || "";
+}
+
+function showLoginOverlay(message = "") {
+  const overlay = $("loginOverlay");
+  if (overlay) overlay.hidden = false;
+  if (message) setLoginMessage(message);
+  window.setTimeout(() => $("loginEmail")?.focus(), 50);
+}
+
+function hideLoginOverlay() {
+  const overlay = $("loginOverlay");
+  if (overlay) overlay.hidden = true;
+  setLoginMessage("");
+}
+
+function updateAccountUi() {
+  const avatar = $("accountAvatar");
+  const title = $("accountMenuTitle");
+  const status = $("accountMenuStatus");
+  const signIn = $("signInMenuBtn");
+  const signOut = $("signOutBtn");
+  const sync = $("saveNowBtn");
+  if (currentUser) {
+    if (avatar) avatar.textContent = accountInitial(currentUser.email);
+    if (title) title.textContent = shortAccountName(currentUser.email);
+    if (status) status.textContent = `${currentUser.role || "manager"} | Cloud location connected`;
+    if (signIn) signIn.hidden = true;
+    if (signOut) signOut.hidden = false;
+    if (sync) sync.hidden = false;
+    return;
+  }
+  if (avatar) avatar.textContent = authRequired ? "?" : "L";
+  if (title) title.textContent = authRequired ? "Shift Bay Account" : "Local Mode";
+  if (status) status.textContent = authRequired ? "Sign in to load cloud schedule data." : "Using this device or local server.";
+  if (signIn) signIn.hidden = !authRequired;
+  if (signOut) signOut.hidden = true;
+  if (sync) sync.hidden = authRequired;
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(body?.error_description || body?.error || body?.message || `Request failed with ${response.status}.`);
+  }
+  return body;
+}
+
+function authRequestHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (authSession?.access_token) headers.Authorization = `Bearer ${authSession.access_token}`;
+  return headers;
+}
+
+function handleAuthRequired(message = "Your cloud session expired. Sign in again to continue.") {
+  clearAuthSession();
+  currentUser = null;
+  updateAccountUi();
+  showLoginOverlay(message);
+}
+
+async function validateAuthSession(session = authSession) {
+  if (!session?.access_token) throw new Error("No saved login session.");
+  const result = await fetchJson("/api/auth/session", {
+    headers: { Authorization: `Bearer ${session.access_token}` }
+  });
+  currentUser = result.user;
+  updateAccountUi();
+  return result.user;
+}
+
+async function signInWithPassword(email, password) {
+  if (!authConfig?.enabled) throw new Error("Cloud login is missing the Supabase anon key setup.");
+  const result = await fetchJson("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ email, password })
+  });
+  const session = result.session;
+  if (!session?.access_token) throw new Error("Supabase did not return a login session.");
+  saveAuthSession({
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600),
+    email: session.user?.email || email
+  });
+  currentUser = result.user || null;
+  if (!currentUser) await validateAuthSession(authSession);
+  updateAccountUi();
+}
+
+async function initializeAuth() {
+  try {
+    const [config, status] = await Promise.all([
+      fetchJson("/api/auth/config"),
+      fetchJson("/api/status")
+    ]);
+    authConfig = config;
+    authRequired = status?.mode === "supabase";
+    if (!authRequired) {
+      hideLoginOverlay();
+      updateAccountUi();
+      return true;
+    }
+    if (!authConfig.enabled) {
+      clearAuthSession();
+      updateAccountUi();
+      showLoginOverlay(`Cloud login needs setup: ${authConfig.missing.join(", ")}.`);
+      return false;
+    }
+    if (authSession?.access_token) {
+      try {
+        await validateAuthSession(authSession);
+        hideLoginOverlay();
+        return true;
+      } catch {
+        clearAuthSession();
+      }
+    }
+    updateAccountUi();
+    showLoginOverlay("Sign in to open the cloud scheduler.");
+    return false;
+  } catch (error) {
+    authRequired = true;
+    clearAuthSession();
+    updateAccountUi();
+    if (window.location.protocol === "file:") {
+      showLoginOverlay("Open Shift Bay through the local server link.");
+      setLoginMessage("Open Shift Bay through the local server link.", "Use http://localhost:8798/ for this cloud-login test. The file version cannot reach the app server.");
+    } else {
+      showLoginOverlay("Could not check cloud login status.");
+      setLoginMessage("Could not check cloud login status.", error.message);
+    }
+    return false;
+  }
+}
 async function hydrateStateFromServer() {
   if (!SERVER_STORAGE_ENABLED) return;
   setStorageStatus("connecting", "Connecting to the shared scheduler data file...");
   try {
-    const response = await fetch("/api/state", { cache: "no-store" });
+    const response = await fetch("/api/state", { cache: "no-store", headers: authRequestHeaders() });
     if (response.ok) {
       const envelope = await response.json();
       const serverState = normalizeLoadedState(envelope.data || envelope);
@@ -816,6 +1001,7 @@ async function hydrateStateFromServer() {
       await persistStateToServer();
       return;
     }
+    if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
     throw new Error(`Load failed: ${response.status}`);
   } catch {
     serverStorageReady = false;
@@ -9446,7 +9632,7 @@ async function parseRequestOffPdfFiles(files) {
   }
   const response = await fetch("/api/parse-time-off-pdf", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authRequestHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ files: payloadFiles })
   });
   const parsed = await response.json().catch(() => ({}));
@@ -10129,7 +10315,7 @@ function wireEvents() {
   }, true);
   $("zoomOutBtn").onclick = () => adjustScheduleZoom(-0.05);
   $("zoomInBtn").onclick = () => adjustScheduleZoom(0.05);
-  $("toggleUnavailablePanelBtn").onclick = () => {
+  if ($("toggleUnavailablePanelBtn")) $("toggleUnavailablePanelBtn").onclick = () => {
     state.settings.showUnavailablePanel = !state.settings.showUnavailablePanel;
     saveState();
     renderSchedule();
@@ -10190,6 +10376,29 @@ function wireEvents() {
   $("storageInfoBtn").onclick = openStorageInfo;
   $("storageStatusBtn").onclick = openStorageInfo;
   $("saveNowBtn").onclick = saveNow;
+  $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));
+  $("signOutBtn")?.addEventListener("click", () => {
+    clearAuthSession();
+    updateAccountUi();
+    showLoginOverlay("Signed out. Sign in to open the cloud scheduler.");
+  });
+  $("loginForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("loginSubmitBtn");
+    if (button) { button.disabled = true; button.textContent = "Signing in..."; }
+    try {
+      setLoginMessage("Checking account...");
+      await signInWithPassword($("loginEmail").value.trim(), $("loginPassword").value);
+      hideLoginOverlay();
+      await hydrateStateFromServer();
+    } catch (error) {
+      clearAuthSession();
+      updateAccountUi();
+      setLoginMessage("Sign in failed. Check the email and password, then try again.", error.message);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "Sign In"; }
+    }
+  });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
@@ -10718,6 +10927,8 @@ updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
   showConflict("This window is in local file mode. Use http://localhost:8787 or the Shift Bay desktop shortcut so employees save to the shared file.");
 }
-hydrateStateFromServer();
+initializeAuth().then((canLoad) => {
+  if (canLoad) hydrateStateFromServer();
+});
 window.addEventListener("beforeunload", flushServerSaveOnClose);
 

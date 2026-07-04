@@ -1,3 +1,5 @@
+const { dataUpdatedAt } = require("./local-json-store");
+
 function requireSupabaseConfig() {
   const url = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -36,25 +38,30 @@ function createSupabaseStore() {
   const config = requireSupabaseConfig();
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
 
+  async function loadDocumentRow(select = "*") {
+    const rows = await supabaseFetch(
+      config,
+      `/scheduler_state_documents?location_id=eq.${encodeURIComponent(config.locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=${select}`
+    );
+    return Array.isArray(rows) ? rows[0] : null;
+  }
+
   return {
     mode: "supabase",
 
     async status() {
+      const row = await loadDocumentRow("saved_at,updated_at");
       return {
         ok: true,
         mode: "supabase",
         locationId: config.locationId,
         documentKey,
-        updatedAt: null
+        updatedAt: row?.updated_at || row?.saved_at || null
       };
     },
 
     async loadState() {
-      const rows = await supabaseFetch(
-        config,
-        `/scheduler_state_documents?location_id=eq.${encodeURIComponent(config.locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=*`
-      );
-      const row = Array.isArray(rows) ? rows[0] : null;
+      const row = await loadDocumentRow("*");
       if (!row) return { exists: false };
       return {
         exists: true,
@@ -71,6 +78,17 @@ function createSupabaseStore() {
     async saveState(payload) {
       const state = payload?.data || payload?.state || payload;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
+      const incomingTime = dataUpdatedAt(payload);
+      const existingRow = await loadDocumentRow("state,saved_at,updated_at");
+      const existingTime = dataUpdatedAt(existingRow?.state || { savedAt: existingRow?.saved_at || existingRow?.updated_at });
+      if (incomingTime && existingTime && incomingTime < existingTime - 1000) {
+        return {
+          ok: false,
+          stale: true,
+          incomingUpdatedAt: new Date(incomingTime).toISOString(),
+          existingUpdatedAt: new Date(existingTime).toISOString()
+        };
+      }
       const body = [{
         location_id: config.locationId,
         document_key: documentKey,
