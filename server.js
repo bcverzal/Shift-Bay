@@ -12,7 +12,7 @@ const DATA_DIR = path.join(ROOT, "data");
 const BACKUP_DIR = path.join(DATA_DIR, "backups");
 const DATA_FILE = path.join(DATA_DIR, "restaurant-scheduler-data.json");
 const PORT = Number(process.env.PORT || 8787);
-const HOST = process.env.HOST || "0.0.0.0";
+const HOST = process.env.HOST || "127.0.0.1";
 const STORAGE_MODE = (process.env.SHIFT_BAY_STORAGE_MODE || "local-json").trim().toLowerCase();
 const schedulerStore = createSchedulerStore({ root: ROOT, dataDir: DATA_DIR, backupDir: BACKUP_DIR, dataFile: DATA_FILE });
 
@@ -655,6 +655,7 @@ const server = http.createServer((request, response) => {
 
 ensureDataFolders();
 server.listen(PORT, HOST, () => {
-  console.log(`Restaurant Scheduler is running at http://localhost:${PORT}`);
+  console.log(`Shift Bay is running at http://localhost:${PORT}`);
+  console.log(`Listening on ${HOST}. Set HOST=0.0.0.0 only when another computer must connect to this server directly.`);
   console.log(`Data file: ${DATA_FILE}`);
 });

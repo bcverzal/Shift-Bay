@@ -41,6 +41,7 @@ if (-not $nodeCommand) {
 
 if (-not (Test-ShiftBayServer)) {
   $env:PORT = "$port"
+  $env:HOST = "127.0.0.1"
   $nodePath = if ($nodeCommand.FullName) { $nodeCommand.FullName } else { $nodeCommand.Source }
   Start-Process -WindowStyle Hidden -FilePath $nodePath -ArgumentList "server.js" -WorkingDirectory $appDir
   Start-Sleep -Seconds 2

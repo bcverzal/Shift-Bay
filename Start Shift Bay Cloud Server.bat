@@ -1,6 +1,7 @@
 @echo off
 cd /d "%~dp0"
 set PORT=8798
+set HOST=127.0.0.1
 set NODE_EXE=%~dp0runtime\node\node.exe
 if not exist "%NODE_EXE%" set NODE_EXE=node
 echo Starting Shift Bay cloud server...

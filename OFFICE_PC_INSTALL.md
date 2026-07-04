@@ -29,6 +29,7 @@ The office PC needs a real `.env` file in the Shift Bay folder. Use `.env.exampl
 ```text
 SHIFT_BAY_STORAGE_MODE=supabase
 PORT=8798
+HOST=127.0.0.1
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
@@ -73,6 +74,18 @@ http://localhost:8798/
 3. Account menu should show `Cloud location connected`.
 4. The schedule should load the same employees, shifts, templates, and request offs as the laptop.
 5. Make a harmless test change, use `Sync now`, refresh the laptop, and confirm the change appears.
+
+## Firewall Prompt
+
+If Windows Firewall asks whether to allow Node.js, click **Cancel**. Shift Bay only needs the browser on this same PC to connect to `127.0.0.1`, and it reaches Supabase using outbound HTTPS.
+
+The app should not need inbound network access unless you deliberately set:
+
+```text
+HOST=0.0.0.0
+```
+
+Do not use that setting on the office PC unless you specifically want other devices to connect directly to that PC.
 
 ## Likely Blockers
 
