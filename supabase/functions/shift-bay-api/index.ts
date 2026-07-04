@@ -131,6 +131,23 @@ async function loadDocumentRow(select = "*") {
   return Array.isArray(rows) ? rows[0] : null;
 }
 
+async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}) {
+  const cfg = config();
+  await supabaseJson("/audit_events", {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "return=minimal" }),
+    body: JSON.stringify([{
+      location_id: cfg.locationId,
+      user_id: userId,
+      event_type: eventType,
+      entity_type: "scheduler_state_document",
+      details
+    }])
+  }).catch((error) => {
+    console.warn("Audit event was not saved:", error?.message || error);
+  });
+}
+
 async function handleAuthConfig() {
   const cfg = config();
   return json(200, {
@@ -229,7 +246,23 @@ async function handleSaveState(request: Request) {
     headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
     body: JSON.stringify(body)
   });
+  await logAuditEvent("scheduler_state_saved", (validated.user as any).id, {
+    documentKey: cfg.documentKey,
+    savedAt,
+    savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
+    schemaVersion: body[0].schema_version
+  });
   return json(200, { ok: true, savedAt });
+}
+
+async function handleRecentAudit(request: Request) {
+  const validated = await validateSession(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const url = `/audit_events?location_id=eq.${encodeURIComponent(cfg.locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=50`;
+  const events = await supabaseJson(url, { headers: serviceHeaders() });
+  return json(200, { ok: true, events });
 }
 
 Deno.serve(async (request) => {
@@ -245,6 +278,7 @@ Deno.serve(async (request) => {
     if (path === "/status" && request.method === "GET") return await handleStatus();
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);
+    if (path === "/audit/recent" && request.method === "GET") return await handleRecentAudit(request);
     if (path === "/parse-time-off-pdf") return json(501, { error: "PDF request-off imports still require the local Shift Bay server for now." });
     return json(404, { error: `Unknown Shift Bay API route: ${path}` });
   } catch (error) {

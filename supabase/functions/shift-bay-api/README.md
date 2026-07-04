@@ -22,9 +22,12 @@ GET  /status
 GET  /state
 PUT  /state
 POST /state
+GET  /audit/recent
 ```
 
 The browser app maps local `/api/...` calls to these routes when `SHIFT_BAY_CONFIG.apiBase` is set.
+
+`POST /state` and `PUT /state` write a basic `scheduler_state_saved` audit event. This is intentionally coarse for the first hosted version. Detailed per-shift history should be added after shifts move into normalized tables.
 
 ## Required Secrets
 
