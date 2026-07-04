@@ -9,7 +9,15 @@ const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v
 const DISMISSED_ISSUES_KEY = "restaurantScheduler.dismissedIssues.v1";
 const COLLAPSED_SETTINGS_SECTIONS_KEY = "restaurantScheduler.collapsedSettingsSections.v1";
 const DATA_SCHEMA_VERSION = 2;
+const PUBLIC_CONFIG = window.SHIFT_BAY_CONFIG || {};
+const HOSTED_API_BASE = String(PUBLIC_CONFIG.apiBase || "").replace(/\/$/, "");
 const SERVER_STORAGE_ENABLED = location.protocol === "http:" || location.protocol === "https:";
+
+function apiUrl(path) {
+  if (/^https?:\/\//i.test(path)) return path;
+  if (HOSTED_API_BASE && path.startsWith("/api/")) return `${HOSTED_API_BASE}${path.slice(4)}`;
+  return path;
+}
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MEALS = ["Breakfast", "Lunch", "Dinner", "Brunch"];
 const DEPARTMENTS = ["FOH", "BOH", "Exec"];
@@ -739,7 +747,7 @@ async function persistStateToServer() {
   serverSaveInFlight = true;
   let saved = false;
   try {
-    const response = await fetch("/api/state", {
+    const response = await fetch(apiUrl("/api/state"), {
       method: "PUT",
       headers: authRequestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(serverEnvelope())
@@ -787,8 +795,15 @@ function flushServerSaveOnClose() {
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return;
   try {
     const payload = JSON.stringify(serverEnvelope());
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon("/api/state", new Blob([payload], { type: "application/json" }));
+    if (HOSTED_API_BASE) {
+      fetch(apiUrl("/api/state"), {
+        method: "POST",
+        headers: authRequestHeaders({ "Content-Type": "application/json" }),
+        body: payload,
+        keepalive: true
+      });
+    } else if (navigator.sendBeacon) {
+      navigator.sendBeacon(apiUrl("/api/state"), new Blob([payload], { type: "application/json" }));
     }
   } catch {
     // Normal saves still protect the browser copy; this is only a close-window flush.
@@ -875,7 +890,7 @@ function updateAccountUi() {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const response = await fetch(apiUrl(url), options);
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
@@ -978,7 +993,7 @@ async function hydrateStateFromServer() {
   if (!SERVER_STORAGE_ENABLED) return;
   setStorageStatus("connecting", "Connecting to the shared scheduler data file...");
   try {
-    const response = await fetch("/api/state", { cache: "no-store", headers: authRequestHeaders() });
+    const response = await fetch(apiUrl("/api/state"), { cache: "no-store", headers: authRequestHeaders() });
     if (response.ok) {
       const envelope = await response.json();
       const serverState = normalizeLoadedState(envelope.data || envelope);
@@ -9630,7 +9645,7 @@ async function parseRequestOffPdfFiles(files) {
       dataBase64: arrayBufferToBase64(buffer)
     });
   }
-  const response = await fetch("/api/parse-time-off-pdf", {
+  const response = await fetch(apiUrl("/api/parse-time-off-pdf"), {
     method: "POST",
     headers: authRequestHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ files: payloadFiles })
