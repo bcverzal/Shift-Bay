@@ -24,8 +24,12 @@ $excludeDirs = @(
 
 $excludeFiles = @(
   ".env",
+  ".env.example",
+  "server.js",
   "server-*.log",
   "*.err.log",
+  "Start Restaurant Scheduler Server.bat",
+  "Launch Restaurant Scheduler.ps1",
   "Launch Shift Bay Cloud.ps1",
   "Start Shift Bay Cloud Server.bat"
 )
