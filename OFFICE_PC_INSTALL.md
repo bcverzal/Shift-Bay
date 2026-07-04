@@ -40,6 +40,14 @@ Never put the service-role key into GitHub, screenshots, or chat. It belongs onl
 
 ## Start It
 
+If the `.bat` says `node is not recognized`, use the newer office install bundle that includes:
+
+```text
+runtime\node\node.exe
+```
+
+That avoids installing Node.js on the office PC.
+
 Preferred:
 
 ```text
@@ -68,7 +76,7 @@ http://localhost:8798/
 
 ## Likely Blockers
 
-- **Node.js missing**: install Node.js LTS or use a packaged desktop build later.
+- **Node.js missing**: use the office bundle with `runtime\node\node.exe`.
 - **PowerShell blocked**: use the `.bat` launcher.
 - **Chrome unavailable**: open `http://localhost:8798/` manually in the available browser.
 - **Supabase blocked by firewall**: the app may load but login or sync will fail. Test with a hotspot or ask IT to allow the Supabase project URL.

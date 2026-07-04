@@ -1,5 +1,6 @@
 param(
-  [string]$OutputRoot = ""
+  [string]$OutputRoot = "",
+  [string]$PortableNodePath = "C:\Users\bcver\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +27,14 @@ Get-ChildItem -Path $appRoot -Force | ForEach-Object {
   } else {
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
   }
+}
+
+if (Test-Path $PortableNodePath) {
+  $runtimeDir = Join-Path $OutputRoot "runtime\node"
+  New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+  Copy-Item -LiteralPath $PortableNodePath -Destination (Join-Path $runtimeDir "node.exe") -Force
+} else {
+  Write-Warning "Portable node.exe was not found at $PortableNodePath. The bundle will require Node.js on the target PC."
 }
 
 $zipPath = "$OutputRoot.zip"

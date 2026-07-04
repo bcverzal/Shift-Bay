@@ -3,7 +3,13 @@ $ErrorActionPreference = "SilentlyContinue"
 $appDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $port = 8798
 $envFile = Join-Path $appDir ".env"
-$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+$portableNode = Join-Path $appDir "runtime\node\node.exe"
+$nodeCommand = $null
+if (Test-Path $portableNode) {
+  $nodeCommand = Get-Item $portableNode
+} else {
+  $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+}
 $url = "http://localhost:$port/"
 $chromePaths = @(
   "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
@@ -29,13 +35,14 @@ if (-not (Test-Path $envFile)) {
 
 if (-not $nodeCommand) {
   Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show("Node.js is not available on this PC. Install Node.js LTS or use a packaged Shift Bay build.", "Shift Bay Setup Needed", "OK", "Warning") | Out-Null
+  [System.Windows.MessageBox]::Show("Shift Bay cannot find Node.js. Use the office install bundle that includes runtime\node\node.exe.", "Shift Bay Setup Needed", "OK", "Warning") | Out-Null
   exit 1
 }
 
 if (-not (Test-ShiftBayServer)) {
   $env:PORT = "$port"
-  Start-Process -WindowStyle Hidden -FilePath $nodeCommand.Source -ArgumentList "server.js" -WorkingDirectory $appDir
+  $nodePath = if ($nodeCommand.FullName) { $nodeCommand.FullName } else { $nodeCommand.Source }
+  Start-Process -WindowStyle Hidden -FilePath $nodePath -ArgumentList "server.js" -WorkingDirectory $appDir
   Start-Sleep -Seconds 2
 }
 
