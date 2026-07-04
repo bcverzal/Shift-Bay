@@ -46,6 +46,23 @@ function createSupabaseStore() {
     return Array.isArray(rows) ? rows[0] : null;
   }
 
+  async function logAuditEvent(eventType, user, details = {}) {
+    if (!user?.id) return;
+    await supabaseFetch(config, "/audit_events", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify([{
+        location_id: config.locationId,
+        user_id: user.id,
+        event_type: eventType,
+        entity_type: "scheduler_state_document",
+        details
+      }])
+    }).catch((error) => {
+      console.warn("Audit event was not saved:", error?.message || error);
+    });
+  }
+
   return {
     mode: "supabase",
 
@@ -75,7 +92,7 @@ function createSupabaseStore() {
       };
     },
 
-    async saveState(payload) {
+    async saveState(payload, user = null) {
       const state = payload?.data || payload?.state || payload;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
       const incomingTime = dataUpdatedAt(payload);
@@ -103,7 +120,20 @@ function createSupabaseStore() {
         headers: { Prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify(body)
       });
+      await logAuditEvent("scheduler_state_saved", user, {
+        documentKey,
+        savedAt: body[0].saved_at,
+        savedByDeviceId,
+        schemaVersion: body[0].schema_version
+      });
       return { ok: true, savedAt: body[0].saved_at };
+    },
+
+    async recentAuditEvents(limit = 50) {
+      return supabaseFetch(
+        config,
+        `/audit_events?location_id=eq.${encodeURIComponent(config.locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=${Number(limit) || 50}`
+      );
     }
   };
 }

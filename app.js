@@ -872,6 +872,7 @@ function updateAccountUi() {
   const signIn = $("signInMenuBtn");
   const signOut = $("signOutBtn");
   const sync = $("saveNowBtn");
+  const recent = $("recentActivityBtn");
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
@@ -879,6 +880,7 @@ function updateAccountUi() {
     if (signIn) signIn.hidden = true;
     if (signOut) signOut.hidden = false;
     if (sync) sync.hidden = false;
+    if (recent) recent.hidden = false;
     return;
   }
   if (avatar) avatar.textContent = authRequired ? "?" : "L";
@@ -887,6 +889,7 @@ function updateAccountUi() {
   if (signIn) signIn.hidden = !authRequired;
   if (signOut) signOut.hidden = true;
   if (sync) sync.hidden = authRequired;
+  if (recent) recent.hidden = authRequired;
 }
 
 async function fetchJson(url, options = {}) {
@@ -9186,6 +9189,43 @@ function openStorageInfo() {
   $("storageInfoDialog").showModal();
 }
 
+function formatAuditEvent(event) {
+  const details = event.details || {};
+  const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "";
+  const device = details.savedByDeviceId ? String(details.savedByDeviceId).slice(0, 8) : "";
+  const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity");
+  const detailText = [
+    details.schemaVersion ? `schema ${details.schemaVersion}` : "",
+    device ? `device ${device}` : ""
+  ].filter(Boolean).join(" | ");
+  return `<tr><th>${escapeHtml(when)}</th><td><strong>${escapeHtml(label)}</strong>${detailText ? `<br><small>${escapeHtml(detailText)}</small>` : ""}</td></tr>`;
+}
+
+async function openRecentActivity() {
+  const body = $("recentActivityBody");
+  if (body) body.innerHTML = `<p class="hint">Loading recent cloud activity...</p>`;
+  $("recentActivityDialog")?.showModal();
+  try {
+    const result = await fetchJson("/api/audit/recent", {
+      cache: "no-store",
+      headers: authRequestHeaders()
+    });
+    const events = Array.isArray(result.events) ? result.events : [];
+    if (!events.length) {
+      if (body) body.innerHTML = `<p class="hint">No recent cloud activity has been recorded yet.</p>`;
+      return;
+    }
+    if (body) {
+      body.innerHTML = `
+        <table>
+          <tbody>${events.map(formatAuditEvent).join("")}</tbody>
+        </table>
+      `;
+    }
+  } catch {
+    if (body) body.innerHTML = `<p class="hint">Recent cloud activity is not available in this version yet.</p>`;
+  }
+}
 async function importEmployeesFromFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -10391,6 +10431,7 @@ function wireEvents() {
   $("storageInfoBtn").onclick = openStorageInfo;
   $("storageStatusBtn").onclick = openStorageInfo;
   $("saveNowBtn").onclick = saveNow;
+  $("recentActivityBtn")?.addEventListener("click", openRecentActivity);
   $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));
   $("signOutBtn")?.addEventListener("click", () => {
     clearAuthSession();
@@ -10415,6 +10456,7 @@ function wireEvents() {
     }
   });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
+  $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
     $("archiveAllEmployeesBtn").hidden = !$("revealArchiveAllEmployees").checked;

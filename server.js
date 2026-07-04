@@ -616,7 +616,7 @@ async function handleApi(request, response) {
     try {
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody);
-      const result = await schedulerStore.saveState(parsed);
+      const result = await schedulerStore.saveState(parsed, request.shiftBayUser || null);
       if (result.stale) {
         sendJson(response, 409, {
           error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
@@ -628,6 +628,20 @@ async function handleApi(request, response) {
       sendJson(response, 200, { ok: true, savedAt: result.savedAt || new Date().toISOString() });
     } catch (error) {
       sendJson(response, 400, { error: error.message || "Could not save scheduler data." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/audit/recent" && request.method === "GET") {
+    if (!(await requireCloudUser(request, response))) return;
+    if (typeof schedulerStore.recentAuditEvents !== "function") {
+      sendJson(response, 404, { error: "Recent cloud activity is not available in local JSON mode." });
+      return;
+    }
+    try {
+      const events = await schedulerStore.recentAuditEvents(50);
+      sendJson(response, 200, { ok: true, events });
+    } catch (error) {
+      sendJson(response, error.status || 400, { error: error.message || "Could not load recent cloud activity." });
     }
     return;
   }
