@@ -224,6 +224,8 @@ summary:focus-visible {
 .storage-status {
   position: relative;
   min-height: 38px;
+  min-width: 124px;
+  justify-content: center;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -233,6 +235,8 @@ summary:focus-visible {
   box-shadow: none;
   font-size: 13px;
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .storage-status::after {
@@ -261,6 +265,26 @@ summary:focus-visible {
 
 .storage-status-saving {
   animation: savePulse 1s ease-in-out infinite;
+}
+
+.storage-status-saved {
+  border-color: rgba(34, 197, 94, 0.42);
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(187, 247, 208, 0.88));
+  color: #065f46;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 16px rgba(22, 101, 52, 0.12);
+}
+
+.storage-status-local {
+  border-color: rgba(234, 88, 12, 0.58);
+  background: linear-gradient(180deg, #fff7ed, #fed7aa);
+  color: #9a3412;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 16px rgba(154, 52, 18, 0.15);
+}
+
+.storage-status-error {
+  border-color: rgba(220, 38, 38, 0.6);
+  background: linear-gradient(180deg, #fef2f2, #fecaca);
+  color: #991b1b;
 }
 
 @keyframes savePulse {

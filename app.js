@@ -685,21 +685,21 @@ function setStorageStatus(status, detail = "") {
 
 function storageStatusLabel(status) {
   const labels = {
-    connecting: "Connecting",
-    saving: "Saving",
-    saved: "Shared saved",
-    error: "Save issue",
-    local: "Local only"
+    connecting: "Cloud connecting",
+    saving: "Cloud saving",
+    saved: "Cloud saved",
+    error: "Cloud save issue",
+    local: "LOCAL MODE"
   };
   return labels[status] || "Storage";
 }
 
 function storageStatusTitle() {
   if (storageStatusDetail) return storageStatusDetail;
-  if (storageStatus === "saved") return "Connected to the shared scheduler data file.";
-  if (storageStatus === "saving") return "Saving to the shared scheduler data file.";
-  if (storageStatus === "local") return "Using this browser's local storage.";
-  if (storageStatus === "error") return "Shared storage is not available. Browser backup is still saved locally.";
+  if (storageStatus === "saved") return "Cloud connected. Schedule data is saving to Supabase.";
+  if (storageStatus === "saving") return "Saving schedule changes to Supabase.";
+  if (storageStatus === "local") return "LOCAL MODE: changes are only on this computer and will not sync.";
+  if (storageStatus === "error") return "Cloud storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
 
