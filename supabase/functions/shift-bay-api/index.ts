@@ -79,6 +79,16 @@ function serviceHeaders(extra: HeadersInit = {}) {
   };
 }
 
+function authAdminHeaders(extra: HeadersInit = {}) {
+  const cfg = config();
+  return {
+    apikey: cfg.serviceRoleKey,
+    Authorization: `Bearer ${cfg.serviceRoleKey}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+
 function dataUpdatedAt(payload: any) {
   const value = payload?.data?.meta?.updatedAt || payload?.state?.meta?.updatedAt || payload?.meta?.updatedAt || payload?.savedAt || "";
   const time = Date.parse(value);
@@ -120,6 +130,42 @@ async function validateSession(request: Request) {
       locationId: cfg.locationId
     }
   };
+}
+
+async function requireOwner(request: Request) {
+  const validated = await validateSession(request);
+  if (!validated.ok) return validated;
+  if ((validated.user as any).role !== "owner") {
+    return { ok: false, status: 403, error: "Only an owner can manage Shift Bay manager access." };
+  }
+  return validated;
+}
+
+async function authAdminJson(path: string, options: RequestInit = {}) {
+  const cfg = config();
+  const response = await fetch(`${cfg.supabaseUrl}/auth/v1${path}`, {
+    ...options,
+    headers: {
+      ...authAdminHeaders(),
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    const message = body?.msg || body?.message || body?.error_description || body?.error || `Supabase Auth request failed with ${response.status}.`;
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+  return body;
+}
+
+async function userEmailById(userId: string) {
+  try {
+    const user = await authAdminJson(`/admin/users/${encodeURIComponent(userId)}`, { method: "GET" });
+    return user?.email || "";
+  } catch {
+    return "";
+  }
 }
 
 async function loadDocumentRow(select = "*") {
@@ -274,6 +320,105 @@ async function handleRecentAudit(request: Request) {
   return json(200, { ok: true, events });
 }
 
+async function handleListManagers(request: Request) {
+  const validated = await requireOwner(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const rows = await supabaseJson(
+    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&select=user_id,role,created_at&order=created_at.asc`,
+    { headers: serviceHeaders() }
+  );
+  const managers = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => ({
+    userId: row.user_id,
+    email: await userEmailById(row.user_id),
+    role: row.role,
+    createdAt: row.created_at
+  })));
+  return json(200, { ok: true, managers });
+}
+
+async function handleInviteManager(request: Request) {
+  const validated = await requireOwner(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const body = await request.json().catch(() => ({}));
+  const email = String(body.email || "").trim().toLowerCase();
+  const role = String(body.role || "manager").trim().toLowerCase();
+  if (!email || !email.includes("@")) return json(400, { ok: false, error: "Enter a valid email address." });
+  if (!["owner", "manager", "viewer"].includes(role)) return json(400, { ok: false, error: "Choose owner, manager, or viewer." });
+
+  const invitedUser = await authAdminJson("/invite", {
+    method: "POST",
+    body: JSON.stringify({
+      email,
+      data: {
+        shift_bay_location_id: cfg.locationId,
+        shift_bay_role: role
+      }
+    })
+  });
+  const userId = invitedUser?.id || invitedUser?.user?.id;
+  if (!userId) return json(502, { ok: false, error: "Supabase sent the invite but did not return a user ID to link." });
+
+  await supabaseJson("/location_users?on_conflict=location_id,user_id", {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+    body: JSON.stringify([{
+      location_id: cfg.locationId,
+      user_id: userId,
+      role
+    }])
+  });
+  await logAuditEvent("manager_invited", (validated.user as any).id, { email, role, userId });
+  return json(200, { ok: true, manager: { userId, email, role } });
+}
+
+async function handleUpdateManager(request: Request) {
+  const validated = await requireOwner(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const body = await request.json().catch(() => ({}));
+  const userId = String(body.userId || "").trim();
+  const role = String(body.role || "").trim().toLowerCase();
+  if (!userId) return json(400, { ok: false, error: "Manager user ID is required." });
+  if (!["owner", "manager", "viewer"].includes(role)) return json(400, { ok: false, error: "Choose owner, manager, or viewer." });
+
+  await supabaseJson(
+    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({ role })
+    }
+  );
+  await logAuditEvent("manager_role_updated", (validated.user as any).id, { userId, role });
+  return json(200, { ok: true });
+}
+
+async function handleRemoveManager(request: Request) {
+  const validated = await requireOwner(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const body = await request.json().catch(() => ({}));
+  const userId = String(body.userId || "").trim();
+  if (!userId) return json(400, { ok: false, error: "Manager user ID is required." });
+  if (userId === (validated.user as any).id) return json(400, { ok: false, error: "You cannot remove your own owner access here." });
+
+  await supabaseJson(
+    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
+    {
+      method: "DELETE",
+      headers: serviceHeaders({ Prefer: "return=minimal" })
+    }
+  );
+  await logAuditEvent("manager_access_removed", (validated.user as any).id, { userId });
+  return json(200, { ok: true });
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
@@ -288,6 +433,10 @@ Deno.serve(async (request) => {
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);
     if (path === "/audit/recent" && request.method === "GET") return await handleRecentAudit(request);
+    if (path === "/managers" && request.method === "GET") return await handleListManagers(request);
+    if (path === "/managers/invite" && request.method === "POST") return await handleInviteManager(request);
+    if (path === "/managers/role" && request.method === "POST") return await handleUpdateManager(request);
+    if (path === "/managers/remove" && request.method === "POST") return await handleRemoveManager(request);
     if (path === "/parse-time-off-pdf") return json(501, { error: "PDF request-off imports still require the local Shift Bay server for now." });
     return json(404, { error: `Unknown Shift Bay API route: ${path}` });
   } catch (error) {

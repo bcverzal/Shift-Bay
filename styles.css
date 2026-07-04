@@ -427,6 +427,44 @@ summary:focus-visible {
   color: #64748b;
 }
 
+.manager-access-editor {
+  width: min(760px, calc(100vw - 28px));
+}
+
+.manager-invite-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.manager-invite-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.manager-invite-grid input,
+.manager-invite-grid select {
+  min-height: 38px;
+}
+
+.manager-access-role-select {
+  min-width: 110px;
+  min-height: 32px;
+}
+
+.manager-access-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .manager-invite-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .login-overlay {
   position: fixed;
   inset: 0;

@@ -885,6 +885,7 @@ function updateAccountUi() {
   const signOut = $("signOutBtn");
   const sync = $("saveNowBtn");
   const recent = $("recentActivityBtn");
+  const managers = $("manageManagersBtn");
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
@@ -893,6 +894,7 @@ function updateAccountUi() {
     if (signOut) signOut.hidden = false;
     if (sync) sync.hidden = false;
     if (recent) recent.hidden = false;
+    if (managers) managers.hidden = currentUser.role !== "owner";
     return;
   }
   if (avatar) avatar.textContent = authRequired ? "?" : "L";
@@ -902,6 +904,7 @@ function updateAccountUi() {
   if (signOut) signOut.hidden = true;
   if (sync) sync.hidden = authRequired;
   if (recent) recent.hidden = authRequired;
+  if (managers) managers.hidden = true;
 }
 
 async function fetchJson(url, options = {}) {
@@ -9241,6 +9244,135 @@ async function openRecentActivity() {
     if (body) body.innerHTML = `<p class="hint">Recent cloud activity is not available in this version yet.</p>`;
   }
 }
+function managerRoleLabel(role = "") {
+  const labels = { owner: "Owner", manager: "Manager", viewer: "Viewer" };
+  return labels[String(role).toLowerCase()] || role || "Manager";
+}
+
+function setManagerAccessMessage(message = "") {
+  const target = $("managerAccessMessage");
+  if (target) target.textContent = message;
+}
+
+function renderManagerAccessList(managers = []) {
+  const target = $("managerAccessList");
+  if (!target) return;
+  if (!managers.length) {
+    target.innerHTML = `<p class="hint">No managers are linked yet.</p>`;
+    return;
+  }
+  target.innerHTML = `
+    <table>
+      <thead><tr><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <tbody>
+        ${managers.map((manager) => `
+          <tr data-manager-user-id="${escapeHtml(manager.userId)}">
+            <td><strong>${escapeHtml(manager.email || manager.userId)}</strong><br><small>${escapeHtml(manager.userId)}</small></td>
+            <td>
+              <select class="manager-access-role-select" data-manager-role>
+                ${["owner", "manager", "viewer"].map((role) => `<option value="${role}" ${role === manager.role ? "selected" : ""}>${managerRoleLabel(role)}</option>`).join("")}
+              </select>
+            </td>
+            <td>${manager.createdAt ? escapeHtml(new Date(manager.createdAt).toLocaleDateString()) : ""}</td>
+            <td class="manager-access-actions"><button type="button" data-manager-remove ${manager.userId === currentUser?.id ? "disabled" : ""}>Remove</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  target.querySelectorAll("[data-manager-role]").forEach((select) => {
+    select.addEventListener("change", async (event) => {
+      const row = event.target.closest("[data-manager-user-id]");
+      await updateManagerRole(row?.dataset.managerUserId, event.target.value);
+    });
+  });
+  target.querySelectorAll("[data-manager-remove]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const row = event.target.closest("[data-manager-user-id]");
+      await removeManagerAccess(row?.dataset.managerUserId);
+    });
+  });
+}
+
+async function loadManagerAccess() {
+  setManagerAccessMessage("Loading manager access...");
+  try {
+    const result = await fetchJson("/api/managers", {
+      cache: "no-store",
+      headers: authRequestHeaders()
+    });
+    renderManagerAccessList(Array.isArray(result.managers) ? result.managers : []);
+    setManagerAccessMessage("Owner-only manager access controls.");
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not load manager access.");
+    renderManagerAccessList([]);
+  }
+}
+
+async function openManagerAccess() {
+  if (currentUser?.role !== "owner") return;
+  $("managerAccessDialog")?.showModal();
+  await loadManagerAccess();
+}
+
+async function sendManagerInvite(event) {
+  event.preventDefault();
+  const button = $("sendManagerInviteBtn");
+  const email = $("managerInviteEmail")?.value.trim();
+  const role = $("managerInviteRole")?.value || "manager";
+  if (!email) {
+    setManagerAccessMessage("Enter an email address first.");
+    return;
+  }
+  if (button) { button.disabled = true; button.textContent = "Sending..."; }
+  try {
+    await fetchJson("/api/managers/invite", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ email, role })
+    });
+    $("managerInviteEmail").value = "";
+    setManagerAccessMessage(`Invite sent to ${email}.`);
+    await loadManagerAccess();
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not send invite.");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "Send Invite"; }
+  }
+}
+
+async function updateManagerRole(userId, role) {
+  if (!userId || !role) return;
+  setManagerAccessMessage("Updating role...");
+  try {
+    await fetchJson("/api/managers/role", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ userId, role })
+    });
+    setManagerAccessMessage("Manager role updated.");
+    await loadManagerAccess();
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not update role.");
+    await loadManagerAccess();
+  }
+}
+
+async function removeManagerAccess(userId) {
+  if (!userId) return;
+  setManagerAccessMessage("Removing access...");
+  try {
+    await fetchJson("/api/managers/remove", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ userId })
+    });
+    setManagerAccessMessage("Manager access removed.");
+    await loadManagerAccess();
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not remove manager access.");
+  }
+}
 async function importEmployeesFromFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -10447,6 +10579,7 @@ function wireEvents() {
   $("storageStatusBtn").onclick = openStorageInfo;
   $("saveNowBtn").onclick = saveNow;
   $("recentActivityBtn")?.addEventListener("click", openRecentActivity);
+  $("manageManagersBtn")?.addEventListener("click", openManagerAccess);
   $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));
   $("signOutBtn")?.addEventListener("click", () => {
     clearAuthSession();
@@ -10472,6 +10605,8 @@ function wireEvents() {
   });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
   $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
+  $("closeManagerAccessBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
+  $("managerInviteForm")?.addEventListener("submit", sendManagerInvite);
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
     $("archiveAllEmployeesBtn").hidden = !$("revealArchiveAllEmployees").checked;
