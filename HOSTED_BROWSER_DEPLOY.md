@@ -36,6 +36,32 @@ SHIFT_BAY_DOCUMENT_KEY=primary
 
 Never place the service-role key in any browser file.
 
+## Deploy Order
+
+1. Deploy the Supabase Edge Function.
+2. Add the required Edge Function secrets.
+3. Open the Edge Function status URL:
+
+```text
+https://aynvsocycljrhmjtyjib.supabase.co/functions/v1/shift-bay-api/status
+```
+
+Expected result:
+
+```json
+{
+  "ok": true,
+  "mode": "supabase"
+}
+```
+
+4. Build the hosted static zip.
+5. Upload the extracted zip contents to the static host.
+6. Open the hosted Shift Bay URL and sign in.
+7. Confirm the status badge says `Cloud saved`, not `LOCAL MODE`.
+
+If login works but data does not load, check the Edge Function secrets first.
+
 ## Hosted Browser Config
 
 The hosted static site needs a public `shift-bay-config.js` file:
@@ -60,6 +86,35 @@ From this folder:
 
 The script writes a zip under `tmp/hosted-static/`. Upload the extracted contents to the static host.
 
+The generated static zip excludes:
+
+- real `.env` secrets
+- local scheduler JSON data
+- temp folders
+- Git files
+- portable Node runtime
+- local server logs
+
+## What Changes After Hosting
+
+- We no longer need to copy the app to the office PC for ordinary updates.
+- The office PC can use the hosted web address directly if the firewall allows it.
+- The local laptop/office-PC version can remain as a fallback while the hosted version is tested.
+- Manager invites and change history should be the next cloud features before wider rollout.
+
 ## Current Limitation
 
 Request-off PDF imports still require the local Shift Bay server. The hosted API currently returns a clear message for that route instead of silently failing.
+
+## Smoke Test Checklist
+
+Use this before considering the hosted version ready for the restaurant:
+
+- Sign in from two browser windows.
+- Create a harmless test shift in one window.
+- Refresh the other window and confirm the shift appears.
+- Delete the test shift and confirm the deletion syncs.
+- Confirm the browser does not show `LOCAL MODE`.
+- Confirm compact schedule print opens.
+- Confirm floor plan print opens.
+- Confirm request-off PDF import shows the local-server-only message instead of silently failing.
