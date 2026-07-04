@@ -428,7 +428,23 @@ summary:focus-visible {
 }
 
 .manager-access-editor {
-  width: min(760px, calc(100vw - 28px));
+  width: min(880px, calc(100vw - 28px));
+  max-height: min(720px, calc(100vh - 34px));
+  overflow: auto;
+}
+
+.modal-close-button {
+  position: absolute;
+  top: 13px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .manager-invite-grid {
@@ -457,6 +473,41 @@ summary:focus-visible {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+#managerAccessDialog .analysis-table {
+  overflow-x: hidden;
+}
+
+#managerAccessDialog .analysis-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#managerAccessDialog .analysis-table th:first-child,
+#managerAccessDialog .analysis-table td:first-child {
+  width: 58%;
+}
+
+#managerAccessDialog .analysis-table th:nth-child(2),
+#managerAccessDialog .analysis-table td:nth-child(2) {
+  width: 160px;
+}
+
+#managerAccessDialog .analysis-table th:nth-child(3),
+#managerAccessDialog .analysis-table td:nth-child(3) {
+  width: 92px;
+}
+
+#managerAccessDialog .analysis-table th:nth-child(4),
+#managerAccessDialog .analysis-table td:nth-child(4) {
+  width: 105px;
+}
+
+#managerAccessDialog .analysis-table small {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {

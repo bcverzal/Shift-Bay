@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay</title>
-  <link rel="stylesheet" href="styles.css?v=shiftbay-20260704-manager-access">
+  <link rel="stylesheet" href="styles.css?v=shiftbay-20260704-manager-access-close">
 </head>
 <body>
   <nav class="tabs" aria-label="Main sections">
@@ -825,7 +825,7 @@
 
   <dialog id="managerAccessDialog">
     <form id="managerInviteForm" method="dialog" class="editor modal-editor manager-access-editor">
-      <h2>Manager Access</h2>
+      <h2>Manager Access <button id="closeManagerAccessTopBtn" class="modal-close-button" type="button" aria-label="Close manager access">×</button></h2>
       <div class="manager-invite-grid">
         <label>Email
           <input id="managerInviteEmail" type="email" placeholder="manager@example.com" autocomplete="off">
@@ -863,7 +863,7 @@
 
   <script src="shift-bay-config.js?v=shiftbay-public-config"></script>
   <script src="manager-notes-data.js?v=shiftbay-20260615-employeeadvanced"></script>
-  <script src="app.js?v=shiftbay-20260704-manager-access"></script>
+  <script src="app.js?v=shiftbay-20260704-manager-access-close"></script>
 </body>
 </html>
 
