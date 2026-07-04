@@ -27,7 +27,7 @@ Use this before the Supabase-backed version is trusted for real restaurant sched
 - [x] Office PC can load the same data.
 - [x] Saving from office PC persists after refresh.
 - [x] Laptop can reload office PC changes.
-- [ ] A stale save warning appears instead of silently overwriting newer data.
+- [x] A stale save warning appears instead of silently overwriting newer data.
 - [ ] Browser local backup still exists as a fallback.
 
 ## Print Outputs
@@ -46,18 +46,18 @@ Use this before the Supabase-backed version is trusted for real restaurant sched
 - [ ] In-development areas are labeled inside their tabs.
 - [ ] Save status is visible and understandable.
 - [ ] Last saved time/device/user is visible or planned before wider use.
-- [ ] Recent activity works after server restart and Edge Function deployment.
-- [ ] Manager invite workflow is implemented and tested.
-- [ ] Non-owner managers cannot invite or remove other managers.
+- [x] Recent activity works after server restart and Edge Function deployment.
+- [ ] Manager invite workflow is implemented and tested with a real invite.
+- [x] Non-owner managers cannot invite or remove other managers.
 - [ ] Viewer role can view/print but cannot save schedule changes.
 
 ## Hosted Browser
 
-- [ ] Supabase Edge Function `shift-bay-api` is deployed.
-- [ ] Edge Function secrets are set.
-- [ ] Hosted static site opens from a normal web address.
-- [ ] Hosted site shows `Cloud saved`, not `LOCAL MODE`.
-- [ ] Hosted site passes the smoke checklist in `HOSTED_BROWSER_DEPLOY.md`.
+- [x] Supabase Edge Function `shift-bay-api` is deployed.
+- [x] Edge Function secrets are set.
+- [x] Hosted static site opens from a normal web address: `https://shift-bay.netlify.app`.
+- [x] Hosted site shows `Cloud saved`, not `LOCAL MODE`.
+- [x] Hosted site passes the basic save/load smoke checklist in `HOSTED_BROWSER_DEPLOY.md`.
 - [ ] Office-PC local bridge remains available as fallback until hosted site is trusted.
 
 ## Rollback Plan

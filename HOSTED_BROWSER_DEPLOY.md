@@ -10,6 +10,12 @@ This is the path for running Shift Bay from a normal web address instead of copy
 
 The local laptop and office PC setup can keep working while this hosted version is prepared.
 
+Production hosted URL:
+
+```text
+https://shift-bay.netlify.app
+```
+
 ## Supabase Edge Function
 
 Deploy the function in:
@@ -55,9 +61,9 @@ Expected result:
 }
 ```
 
-4. Build the hosted static zip.
-5. Upload the extracted zip contents to the static host.
-6. Open the hosted Shift Bay URL and sign in.
+4. Push approved changes to GitHub branch `supabase-migration`.
+5. Let Netlify deploy the branch automatically.
+6. Open `https://shift-bay.netlify.app` and sign in.
 7. Confirm the status badge says `Cloud saved`, not `LOCAL MODE`.
 
 If login works but data does not load, check the Edge Function secrets first.
@@ -76,7 +82,28 @@ window.SHIFT_BAY_CONFIG = {
 
 This file is safe to publish because it only contains public browser configuration.
 
-## Build A Static Zip
+## Netlify Auto Deploy
+
+Netlify is connected to GitHub branch:
+
+```text
+supabase-migration
+```
+
+Netlify settings:
+
+```text
+Base directory: blank
+Build command: blank, or echo "static"
+Publish directory: .
+Functions directory: blank
+```
+
+The `netlify.toml` file keeps the static deploy simple and disables caching for the main app files.
+
+Only push when the change is ready to deploy. Netlify free credits are spent by production deploys, so batch small fixes together when possible.
+
+## Manual Static Zip Fallback
 
 From this folder:
 
@@ -84,7 +111,7 @@ From this folder:
 .\tools\create_hosted_static_bundle.ps1
 ```
 
-The script writes a zip under `tmp/hosted-static/`. Upload the extracted contents to the static host.
+The script writes a zip under `tmp/hosted-static/`. Upload the extracted contents to the static host only if the GitHub-Netlify deploy path is unavailable.
 
 The generated static zip excludes:
 
