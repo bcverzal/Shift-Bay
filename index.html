@@ -152,6 +152,13 @@
         <form id="employeeForm" class="editor employee-editor">
           <h2>Employee Profile</h2>
           <input id="employeeId" type="hidden">
+          <div class="employee-profile-tabs" role="tablist" aria-label="Employee profile sections">
+            <button type="button" class="active" data-employee-profile-tab="profile">Profile</button>
+            <button type="button" data-employee-profile-tab="availability">Availability</button>
+            <button type="button" data-employee-profile-tab="training">Training</button>
+            <button type="button" data-employee-profile-tab="pay">Pay & Rules</button>
+          </div>
+          <div class="employee-profile-panel employee-profile-basics" data-employee-profile-panel="profile">
           <label>First name <input id="firstName" required></label>
           <label>Last name <input id="lastName" required></label>
           <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
@@ -166,6 +173,8 @@
             <legend>Departments</legend>
             <div id="employeeDepartmentChecks" class="inline-checks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-availability" data-employee-profile-panel="availability" hidden>
           <div class="checkbox checkbox-direct call-weekly-control">
             <input id="employeeCallWeekly" type="checkbox"><span>Call weekly for availability</span>
             <button id="toggleWeeklyAvailabilityBtn" class="small-button" type="button">This Week</button>
@@ -193,6 +202,8 @@
             </div>
             <div id="weeklyAvailabilityEditor"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-training" data-employee-profile-panel="training" hidden>
           <fieldset id="employeeMealTrainingSection">
             <legend>Meal Training</legend>
             <label class="checkbox"><input type="checkbox" name="mealTraining" value="Breakfast"> Breakfast</label>
@@ -209,6 +220,8 @@
             <legend>Trainer Eligibility</legend>
             <div id="employeeTrainerChecks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-pay" data-employee-profile-panel="pay" hidden>
           <fieldset>
             <legend>Pay Rates</legend>
             <p class="hint">Role defaults apply automatically unless an override is checked.</p>
@@ -220,6 +233,7 @@
             <div id="weeklyRuleEditor"></div>
             <button id="addWeeklyRuleBtn" type="button">Add Rule</button>
           </fieldset>
+          </div>
           <div class="form-actions">
             <button type="submit">Save Employee</button>
             <button id="archiveEmployeeBtn" type="button">Archive</button>

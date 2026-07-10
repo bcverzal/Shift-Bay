@@ -5041,6 +5041,79 @@ body.problem-focus .shift-card.has-issue {
   margin-bottom: 0;
 }
 
+.employee-profile-tabs {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid rgba(147, 197, 253, 0.8);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(30, 64, 175, 0.08);
+}
+
+.employee-profile-tabs button {
+  min-height: 34px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border-color: rgba(147, 197, 253, 0.8);
+  background: rgba(255, 255, 255, 0.78);
+  color: #1e3a8a;
+  box-shadow: none;
+}
+
+.employee-profile-tabs button.active {
+  border-color: #2563eb;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(30, 64, 175, 0.32);
+  box-shadow: var(--button-shadow);
+}
+
+.employee-profile-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.employee-profile-panel[hidden] {
+  display: none;
+}
+
+.employee-profile-panel > * {
+  min-width: 0;
+}
+
+.employee-profile-panel fieldset {
+  min-width: 0;
+}
+
+.employee-profile-basics label:has(#employeeManagerNotes),
+.employee-profile-basics fieldset {
+  grid-column: span 2;
+}
+
+.employee-profile-availability {
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.employee-profile-availability .call-weekly-control {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.employee-profile-training {
+  grid-template-columns: minmax(220px, 0.8fr) minmax(360px, 1.5fr) minmax(260px, 1fr);
+}
+
+.employee-profile-pay {
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+}
+
 .employee-editor > .form-actions {
   grid-column: 1 / -1;
 }
@@ -5260,6 +5333,12 @@ fieldset .checkbox {
   .employee-editor {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
+
+  .employee-profile-panel,
+  .employee-profile-training,
+  .employee-profile-pay {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -5274,6 +5353,25 @@ fieldset .checkbox {
   .employee-editor > #employeeTrainingSection,
   .employee-editor > fieldset:has(#employeeTrainerChecks),
   .employee-editor > fieldset:has(#employeePayRates) {
+    grid-column: 1 / -1;
+  }
+
+  .employee-profile-tabs {
+    border-radius: 14px;
+    flex-wrap: wrap;
+  }
+
+  .employee-profile-tabs button {
+    flex: 1 1 120px;
+  }
+
+  .employee-profile-panel,
+  .employee-profile-availability,
+  .employee-profile-training,
+  .employee-profile-pay,
+  .employee-profile-basics label:has(#employeeManagerNotes),
+  .employee-profile-basics fieldset {
+    grid-template-columns: 1fr;
     grid-column: 1 / -1;
   }
 }

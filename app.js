@@ -2043,7 +2043,15 @@ function captureScheduleReturnContext(issue = {}) {
   };
 }
 
+function employeeProfileTabForTarget(targetId = "") {
+  if (["availabilityEditor", "weeklyAvailabilityEditor", "employeeCallWeekly", "weeklyAvailabilityFieldset", "regularAvailabilityFieldset"].includes(targetId)) return "availability";
+  if (["employeeTrainingSection", "trainerRoles", "employeeRoleChecks", "employeeTrainerChecks"].includes(targetId)) return "training";
+  if (["employeePayRates", "weeklyRuleEditor"].includes(targetId)) return "pay";
+  return "profile";
+}
+
 function focusEmployeeProfileTarget(targetId) {
+  activateEmployeeProfileTab(employeeProfileTabForTarget(targetId));
   const target = targetId ? $(targetId) : $("employeeForm");
   const focusTarget = target?.matches?.("input, select, textarea, button") ? target : target?.querySelector?.("input, select, textarea, button");
   target?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -6779,6 +6787,20 @@ function updateStickyEmployeeName() {
   label.textContent = employee ? fullEmployeeName(employee) : typedName || "Unsaved employee";
 }
 
+function activateEmployeeProfileTab(tabName = "profile") {
+  const tabs = Array.from(document.querySelectorAll("[data-employee-profile-tab]"));
+  const panels = Array.from(document.querySelectorAll("[data-employee-profile-panel]"));
+  const target = panels.some((panel) => panel.dataset.employeeProfilePanel === tabName) ? tabName : "profile";
+  tabs.forEach((tab) => {
+    const active = tab.dataset.employeeProfileTab === target;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  panels.forEach((panel) => {
+    panel.hidden = panel.dataset.employeeProfilePanel !== target;
+  });
+}
+
 function resetEmployeeForm() {
   $("employeeForm").reset();
   $("employeeId").value = "";
@@ -6798,6 +6820,7 @@ function resetEmployeeForm() {
   renderWeeklyRuleEditor();
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
+  activateEmployeeProfileTab("profile");
 }
 
 function renderTemplates() {
@@ -10890,6 +10913,9 @@ function wireEvents() {
     renderEmployees();
   };
   $("stickySaveEmployeeBtn").onclick = () => $("employeeForm").requestSubmit();
+  document.querySelectorAll("[data-employee-profile-tab]").forEach((button) => {
+    button.onclick = () => activateEmployeeProfileTab(button.dataset.employeeProfileTab);
+  });
   ["firstName", "lastName"].forEach((id) => {
     $(id).addEventListener("input", updateStickyEmployeeName);
   });
