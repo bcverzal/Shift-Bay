@@ -10063,12 +10063,16 @@ async function parseRequestOffPdfFilesInBrowser(files) {
       const data = new Uint8Array(await file.arrayBuffer());
       const document = await pdfjs.getDocument({ data }).promise;
       const requests = [];
+      const pageText = [];
       for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
-        requests.push(...roPdfParsePageItems(content.items || [], fileName));
+        const items = content.items || [];
+        requests.push(...roPdfParsePageItems(items, fileName));
+        pageText.push(items.map((item) => cleanCell(item.str)).filter(Boolean).join("\n"));
       }
-      results.push({ fileName, pages: document.numPages, requests });
+      const fallbackRequests = parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName);
+      results.push({ fileName, pages: document.numPages, requests: [...requests, ...fallbackRequests] });
     } catch (error) {
       errors.push({ fileName, error: error.message || "Could not parse PDF." });
     }
@@ -10090,6 +10094,55 @@ async function parseRequestOffPdfFilesInBrowser(files) {
     });
   });
   return { requests, source: "Ctuit RO PDF", diagnostics: { files: results, errors, duplicates } };
+}
+function parseCtuitAvailabilityTimeOffText(text, fileName = "Ctuit RO PDF") {
+  const lines = text.split(/\r?\n/).map((line) => cleanCell(line)).filter(Boolean);
+  const requests = [];
+  const datePattern = /\b\d{1,2}\/\d{1,2}\/\d{4}\b/g;
+  const dayNames = new Set(DAYS.map((day) => day.toLowerCase()));
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const nameMatch = line.match(/^([A-Z][A-Za-z' -]+),\s*$/) || line.match(/^([A-Z][A-Za-z' -]+),\s*(?:Disallow|Approve|All Day|\d|Manager\b|$)/i);
+    if (!nameMatch) continue;
+    const lastName = cleanCell(nameMatch[1]);
+    const previous = lines[index - 1] || "";
+    const next = lines[index + 1] || "";
+    const combined = [lines[index - 3], lines[index - 2], previous, line, next, lines[index + 2], lines[index + 3], lines[index + 4]].filter(Boolean).join(" ");
+    const firstNameMatch = combined.match(new RegExp(`${lastName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},\\s*(?:Disallow\\s+)?([A-Z][A-Za-z' -]+?)(?:\\s+All\\s+Day|\\s+Manager\\b|\\s+Disallow|\\s+Approve|\\s+\\d|$)`, "i"));
+    const firstName = cleanCell(firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
+    if (!firstName || dayNames.has(firstName.toLowerCase())) continue;
+    const dateMatches = [...combined.matchAll(datePattern)].map((match) => normalizeImportDate(match[0])).filter(Boolean);
+    const requestDate = dateMatches.find((dateKey) => {
+      const year = Number(dateKey.slice(0, 4));
+      return year >= 2020;
+    });
+    if (!requestDate) continue;
+    const daypart = /\bAll\s+Day\b/i.test(combined) ? "All Day" : normalizeRequestDaypart(combined);
+    const notePieces = [];
+    for (let look = index + 1; look <= Math.min(lines.length - 1, index + 8); look++) {
+      const noteLine = lines[look];
+      if (/^Approve$/i.test(noteLine) || /Manager Note:/i.test(noteLine) || /^(Disallow|All Day)$/i.test(noteLine)) continue;
+      if (datePattern.test(noteLine) || /^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(noteLine)) continue;
+      if (/^[A-Z][A-Za-z' -]+,\s*$/i.test(noteLine)) break;
+      if (DAYS.some((day) => new RegExp(`^${day}$`, "i").test(noteLine))) break;
+      if (noteLine.length > 2 && !dayNames.has(noteLine.toLowerCase())) notePieces.push(noteLine);
+    }
+    requests.push({
+      firstName,
+      lastName,
+      date: requestDate,
+      daypart: daypart || "All Day",
+      note: notePieces.join(" ").slice(0, 180),
+      source: `Ctuit RO PDF: ${fileName}`
+    });
+  }
+  const seen = new Set();
+  return requests.filter((request) => {
+    const key = [request.firstName, request.lastName, request.date, request.daypart].map((value) => cleanCell(value).toLowerCase()).join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 function pdfParserUrl() {
   if (!SERVER_STORAGE_ENABLED) return "";
