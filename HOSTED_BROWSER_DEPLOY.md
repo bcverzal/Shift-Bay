@@ -129,9 +129,9 @@ The generated static zip excludes:
 - The local laptop/office-PC version can remain as a fallback while the hosted version is tested.
 - Manager invites and change history should be the next cloud features before wider rollout.
 
-## Current Limitation
+## Hosted Request-Off Imports
 
-Request-off PDF imports still require the local Shift Bay server. The hosted API currently returns a clear message for that route instead of silently failing.
+Request-off PDF imports are handled by the hosted Netlify function. The local Shift Bay Cloud launcher still supports the same import through its local API, but the production hosted site no longer needs the laptop or office PC server for RO PDFs.
 
 ## Smoke Test Checklist
 
@@ -144,4 +144,4 @@ Use this before considering the hosted version ready for the restaurant:
 - Confirm the browser does not show `LOCAL MODE`.
 - Confirm compact schedule print opens.
 - Confirm floor plan print opens.
-- Confirm request-off PDF import shows the local-server-only message instead of silently failing.
+- Confirm request-off PDF import parses a known Ctuit request-off PDF and reports the expected number of RO entries.

@@ -11253,7 +11253,7 @@ renderAll();
 updateZoomVisibility();
 updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
-  showConflict("This window is in local file mode. Use http://localhost:8787 or the Shift Bay desktop shortcut so employees save to the shared file.");
+  showConflict("This window is in local file mode. Use https://shift-bay.netlify.app or the Shift Bay Cloud launcher so employees save to the cloud schedule.");
 }
 initializeAuth().then((canLoad) => {
   if (canLoad) hydrateStateFromServer();
