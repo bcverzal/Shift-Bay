@@ -24,7 +24,7 @@ async function loadPdfJs() {
   ensurePdfPolyfills();
   if (!pdfjsPromise) {
     pdfjsPromise = Promise.resolve().then(async () => {
-      const workerUrl = pathToFileURL(path.join(__dirname, "pdf.worker.mjs")).href;
+      const workerUrl = pathToFileURL(path.join(process.cwd(), "assets", "vendor", "pdf.worker.mjs")).href;
       globalThis.pdfjsWorker = await import(workerUrl);
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;

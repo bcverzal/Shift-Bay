@@ -10094,7 +10094,7 @@ async function parseRequestOffPdfFilesInBrowser(files) {
 function pdfParserUrl() {
   if (!SERVER_STORAGE_ENABLED) return "";
   if (["localhost", "127.0.0.1"].includes(location.hostname)) return "/api/parse-time-off-pdf";
-  return "/.netlify/functions/parse-time-off-pdf";
+  return "/.netlify/functions/parseTimeOffPdf";
 }
 
 async function parseRequestOffPdfFiles(files) {
