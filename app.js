@@ -142,7 +142,8 @@ function saveLocalActiveWeek(options = {}) {
   state.localPreferences[getDeviceId()] = {
     ...(state.localPreferences[getDeviceId()] || {}),
     activeWeek: formatDateKey(currentDate),
-    updatedAt: nowIso()
+    updatedAt: nowIso(),
+    updatedBy: currentSaveActor()
   };
   if (options.shared && SERVER_STORAGE_ENABLED && serverStorageReady) {
     saveState();
@@ -666,12 +667,42 @@ function normalizeTemplates(templates) {
   });
 }
 
+function currentAccessRole() {
+  if (!authRequired) return "owner";
+  return String(currentUser?.role || "").trim().toLowerCase();
+}
+
+function canEditScheduler() {
+  return ["owner", "manager"].includes(currentAccessRole());
+}
+
+function readOnlyMessage() {
+  return "This account has view-only access. You can view and print schedules, but changes will not be saved.";
+}
+
+function showReadOnlyNotice() {
+  showConflict(readOnlyMessage());
+}
+
+function currentSaveActor() {
+  return currentUser ? {
+    id: currentUser.id || "",
+    email: currentUser.email || "",
+    role: currentAccessRole() || "manager"
+  } : null;
+}
 function saveState(options = {}) {
+  if (!canEditScheduler()) {
+    if (options.immediate || options.notice) showReadOnlyNotice();
+    setStorageStatus("saved", readOnlyMessage());
+    return Promise.resolve(false);
+  }
   state.meta = {
     ...(state.meta || {}),
     schemaVersion: DATA_SCHEMA_VERSION,
     deviceId: getDeviceId(),
-    updatedAt: nowIso()
+    updatedAt: nowIso(),
+    updatedBy: currentSaveActor()
   };
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -729,6 +760,7 @@ function serverEnvelope() {
     schemaVersion: DATA_SCHEMA_VERSION,
     savedAt: nowIso(),
     savedByDeviceId: getDeviceId(),
+    savedBy: currentSaveActor(),
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     data: state
   };
@@ -741,6 +773,11 @@ function queueServerSave() {
 }
 
 async function persistStateToServer() {
+  if (!canEditScheduler()) {
+    setStorageStatus("saved", readOnlyMessage());
+    showReadOnlyNotice();
+    return false;
+  }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
   if (serverSaveInFlight) {
     serverSavePending = true;
@@ -754,7 +791,11 @@ async function persistStateToServer() {
       headers: authRequestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(serverEnvelope())
     });
-    if (response.status === 401 || response.status === 403) { handleAuthRequired(); throw new Error("Cloud login is required."); }
+    if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
+    if (response.status === 403) {
+      const forbidden = await response.json().catch(() => ({}));
+      throw new Error(forbidden.error || readOnlyMessage());
+    }
     if (response.status === 409) {
       const conflict = await response.json().catch(() => ({}));
       throw new Error(conflict.error || "This window is behind the latest cloud version. Refresh before saving.");
@@ -782,6 +823,10 @@ async function persistStateToServer() {
 }
 
 async function saveNow() {
+  if (!canEditScheduler()) {
+    showReadOnlyNotice();
+    return false;
+  }
   const button = $("saveNowBtn");
   if (button) {
     button.disabled = true;
@@ -804,6 +849,7 @@ async function saveNow() {
 }
 
 function flushServerSaveOnClose() {
+  if (!canEditScheduler()) return;
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return;
   try {
     const payload = JSON.stringify(serverEnvelope());
@@ -878,6 +924,7 @@ function hideLoginOverlay() {
 }
 
 function updateAccountUi() {
+  document.body.classList.toggle("viewer-read-only", currentAccessRole() === "viewer");
   const avatar = $("accountAvatar");
   const title = $("accountMenuTitle");
   const status = $("accountMenuStatus");
@@ -889,14 +936,21 @@ function updateAccountUi() {
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
-    if (status) status.textContent = `${currentUser.role || "manager"} | Cloud location connected`;
+    const role = currentAccessRole() || "manager";
+    if (status) status.textContent = role === "viewer" ? "viewer | View and print only" : `${role} | Cloud location connected`;
     if (signIn) signIn.hidden = true;
     if (signOut) signOut.hidden = false;
-    if (sync) sync.hidden = false;
+    if (sync) {
+      sync.hidden = false;
+      sync.disabled = role === "viewer";
+      sync.textContent = role === "viewer" ? "View only" : "Sync now";
+      sync.title = role === "viewer" ? readOnlyMessage() : "Save this device's latest changes to the cloud.";
+    }
     if (recent) recent.hidden = false;
     if (managers) managers.hidden = currentUser.role !== "owner";
     return;
   }
+  document.body.classList.remove("viewer-read-only");
   if (avatar) avatar.textContent = authRequired ? "?" : "L";
   if (title) title.textContent = authRequired ? "Shift Bay Account" : "Local Mode";
   if (status) status.textContent = authRequired ? "Sign in to load cloud schedule data." : "Using this device or local server.";
@@ -8104,7 +8158,8 @@ function cloneCopiedShiftForCell(sourceShift, targetCell) {
     employeeId: targetCell.employeeId,
     date: targetCell.date,
     createdAt: nowIso(),
-    updatedAt: nowIso()
+    updatedAt: nowIso(),
+    updatedBy: currentSaveActor()
   };
 }
 

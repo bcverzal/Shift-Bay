@@ -86,6 +86,7 @@ function createSupabaseStore() {
           app: "restaurant-scheduler",
           schemaVersion: row.schema_version,
           savedAt: row.saved_at,
+          savedBy: row.saved_by || null,
           savedByDeviceId: row.saved_by_device_id,
           data: row.state
         }
@@ -94,6 +95,7 @@ function createSupabaseStore() {
 
     async saveState(payload, user = null) {
       const state = payload?.data || payload?.state || payload;
+      const savedBy = user?.id || payload?.savedBy?.id || null;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
       const baseServerSavedAt = payload?.baseServerSavedAt || state?.meta?.serverSavedAt || "";
       const incomingTime = dataUpdatedAt(payload);
@@ -121,6 +123,7 @@ function createSupabaseStore() {
         document_key: documentKey,
         schema_version: Number(payload?.schemaVersion || state?.meta?.schemaVersion || 1),
         state,
+        saved_by: savedBy,
         saved_by_device_id: savedByDeviceId,
         saved_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -133,10 +136,13 @@ function createSupabaseStore() {
       await logAuditEvent("scheduler_state_saved", user, {
         documentKey,
         savedAt: body[0].saved_at,
+        savedBy,
+        savedByEmail: user?.email || payload?.savedBy?.email || "",
+        savedByRole: user?.role || payload?.savedBy?.role || "",
         savedByDeviceId,
         schemaVersion: body[0].schema_version
       });
-      return { ok: true, savedAt: body[0].saved_at };
+      return { ok: true, savedAt: body[0].saved_at, savedBy };
     },
 
     async recentAuditEvents(limit = 50) {

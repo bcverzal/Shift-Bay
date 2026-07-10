@@ -141,6 +141,20 @@ async function requireOwner(request: Request) {
   return validated;
 }
 
+async function requireEditor(request: Request) {
+  const validated = await validateSession(request);
+  if (!validated.ok) return validated;
+  const role = String((validated.user as any).role || "").toLowerCase();
+  if (!["owner", "manager"].includes(role)) {
+    return {
+      ok: false,
+      status: 403,
+      error: "This account has view-only access. You can view and print schedules, but changes will not be saved."
+    };
+  }
+  return validated;
+}
+
 async function authAdminJson(path: string, options: RequestInit = {}) {
   const cfg = config();
   const response = await fetch(`${cfg.supabaseUrl}/auth/v1${path}`, {
@@ -253,13 +267,14 @@ async function handleLoadState(request: Request) {
     app: "restaurant-scheduler",
     schemaVersion: row.schema_version,
     savedAt: row.saved_at,
+    savedBy: row.saved_by || null,
     savedByDeviceId: row.saved_by_device_id,
     data: row.state
   });
 }
 
 async function handleSaveState(request: Request) {
-  const validated = await validateSession(request);
+  const validated = await requireEditor(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
   const cfg = config();
@@ -304,6 +319,8 @@ async function handleSaveState(request: Request) {
   await logAuditEvent("scheduler_state_saved", (validated.user as any).id, {
     documentKey: cfg.documentKey,
     savedAt,
+    savedByEmail: (validated.user as any).email || "",
+    savedByRole: (validated.user as any).role || "",
     savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
     schemaVersion: body[0].schema_version
   });

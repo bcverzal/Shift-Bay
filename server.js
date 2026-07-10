@@ -141,6 +141,16 @@ async function requireCloudUser(request, response) {
   }
 }
 
+async function requireCloudEditor(request, response) {
+  if (!(await requireCloudUser(request, response))) return false;
+  const role = String(request.shiftBayUser?.role || "").toLowerCase();
+  if (!["owner", "manager"].includes(role)) {
+    sendJson(response, 403, { ok: false, error: "This account has view-only access. You can view and print schedules, but changes will not be saved." });
+    return false;
+  }
+  return true;
+}
+
 async function signInWithSupabasePassword(email, password) {
   const config = supabaseServerConfig();
   if (!config.url || !config.anonKey) {
@@ -612,7 +622,7 @@ async function handleApi(request, response) {
     return;
   }
   if (url.pathname === "/api/state" && (request.method === "PUT" || request.method === "POST")) {
-    if (!(await requireCloudUser(request, response))) return;
+    if (!(await requireCloudEditor(request, response))) return;
     try {
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody);

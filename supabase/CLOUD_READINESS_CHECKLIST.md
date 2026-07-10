@@ -45,11 +45,11 @@ Use this before the Supabase-backed version is trusted for real restaurant sched
 - [ ] Dangerous bulk actions are hidden, moved, or clearly protected.
 - [ ] In-development areas are labeled inside their tabs.
 - [ ] Save status is visible and understandable.
-- [ ] Last saved time/device/user is visible or planned before wider use.
+- [x] Last saved time/device/user is tagged in saved state and audit events before wider use.
 - [x] Recent activity works after server restart and Edge Function deployment.
 - [ ] Manager invite workflow is implemented and tested with a real invite.
 - [x] Non-owner managers cannot invite or remove other managers.
-- [ ] Viewer role can view/print but cannot save schedule changes.
+- [x] Viewer role can view/print but cannot save schedule changes.
 
 ## Hosted Browser
 
