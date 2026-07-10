@@ -92,7 +92,7 @@ function columnForX(x) {
   if (x < 122) return "submitted";
   if (x < 150) return "recurring";
   if (x < 205) return "employee";
-  if (x < 248) return "date";
+  if (x < 245) return "date";
   if (x < 295) return "info";
   if (x < 340) return "note";
   if (x < 452) return "approvedBy";

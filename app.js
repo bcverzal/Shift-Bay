@@ -9976,7 +9976,7 @@ function roPdfColumnForX(x) {
   if (x < 122) return "submitted";
   if (x < 150) return "recurring";
   if (x < 205) return "employee";
-  if (x < 248) return "date";
+  if (x < 245) return "date";
   if (x < 295) return "info";
   if (x < 340) return "note";
   if (x < 452) return "approvedBy";
@@ -10031,7 +10031,7 @@ function roPdfParsePageItems(items, fileName) {
     .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
     .filter((item) => item.text);
   const anchors = textItems
-    .filter((item) => /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(item.text) && item.x >= 205 && item.x < 248)
+    .filter((item) => /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(item.text) && item.x >= 205 && item.x < 245)
     .sort((a, b) => b.y - a.y);
   const requests = [];
   anchors.forEach((anchor, index) => {
@@ -10082,7 +10082,7 @@ async function parseRequestOffPdfFilesInBrowser(files) {
   let duplicates = 0;
   results.forEach((result) => {
     result.requests.forEach((request) => {
-      const key = [request.firstName, request.lastName, request.date, request.daypart, request.note]
+      const key = [request.firstName, request.lastName, request.date, request.daypart]
         .map((value) => cleanCell(value).toLowerCase())
         .join("|");
       if (seen.has(key)) {
