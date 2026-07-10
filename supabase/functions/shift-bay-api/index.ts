@@ -333,7 +333,17 @@ async function handleRecentAudit(request: Request) {
 
   const cfg = config();
   const url = `/audit_events?location_id=eq.${encodeURIComponent(cfg.locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=50`;
-  const events = await supabaseJson(url, { headers: serviceHeaders() });
+  const rows = await supabaseJson(url, { headers: serviceHeaders() });
+  const emailCache = new Map<string, string>();
+  const events = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => {
+    const details = row.details || {};
+    let email = details.savedByEmail || "";
+    if (!email && row.user_id) {
+      if (!emailCache.has(row.user_id)) emailCache.set(row.user_id, await userEmailById(row.user_id));
+      email = emailCache.get(row.user_id) || "";
+    }
+    return { ...row, user_email: email };
+  }));
   return json(200, { ok: true, events });
 }
 

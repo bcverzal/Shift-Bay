@@ -9315,10 +9315,9 @@ function formatAuditEvent(event) {
   const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Unknown time";
   const device = details.savedByDeviceId ? String(details.savedByDeviceId).slice(0, 8) : "";
   const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity").replaceAll("_", " ");
-  const user = details.savedByEmail || event.user_email || "";
+  const user = details.savedByEmail || event.user_email || (event.user_id ? `User ${String(event.user_id).slice(0, 8)}` : "Unknown user");
   const role = details.savedByRole || "";
   const meta = [
-    user ? `User: ${user}` : "",
     role ? `Role: ${role}` : "",
     details.schemaVersion ? `Schema: ${details.schemaVersion}` : "",
     device ? `Device: ${device}` : ""
@@ -9329,6 +9328,7 @@ function formatAuditEvent(event) {
         <strong>${escapeHtml(label)}</strong>
         <span>${escapeHtml(when)}</span>
       </div>
+      <div class="recent-activity-user">Saved by ${escapeHtml(user)}</div>
       ${meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     </article>
   `;

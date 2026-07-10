@@ -176,6 +176,22 @@ async function signInWithSupabasePassword(email, password) {
   });
 }
 
+async function userEmailById(userId) {
+  const config = supabaseServerConfig();
+  if (!config.url || !config.serviceRoleKey || !userId) return "";
+  try {
+    const user = await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`
+      }
+    });
+    return user?.email || "";
+  } catch {
+    return "";
+  }
+}
+
 function readRequestBody(request) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -648,7 +664,17 @@ async function handleApi(request, response) {
       return;
     }
     try {
-      const events = await schedulerStore.recentAuditEvents(50);
+      const rows = await schedulerStore.recentAuditEvents(50);
+      const emailCache = new Map();
+      const events = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row) => {
+        const details = row.details || {};
+        let email = details.savedByEmail || "";
+        if (!email && row.user_id) {
+          if (!emailCache.has(row.user_id)) emailCache.set(row.user_id, await userEmailById(row.user_id));
+          email = emailCache.get(row.user_id) || "";
+        }
+        return { ...row, user_email: email };
+      }));
       sendJson(response, 200, { ok: true, events });
     } catch (error) {
       sendJson(response, error.status || 400, { error: error.message || "Could not load recent cloud activity." });

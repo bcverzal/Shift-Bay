@@ -6977,6 +6977,19 @@ dialog {
   white-space: nowrap;
 }
 
+.recent-activity-user {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 5px 9px;
+  border: 1px solid rgba(147, 197, 253, 0.82);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .recent-activity-meta {
   display: flex;
   flex-wrap: wrap;
