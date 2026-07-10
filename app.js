@@ -238,6 +238,7 @@ function defaultState() {
       groupEmployeesByRole: false,
       hideUnavailableEmployees: false,
       showUnavailablePanel: false,
+      showWeeklyRoleSummary: true,
       hideDefaultAvailabilityBlocks: false,
       employeeRosterCollapsed: false,
       openShiftBaySort: "meal",
@@ -459,6 +460,7 @@ function migrateState(loadedState, parsed = {}) {
     departments: normalizeEmployeeDepartments(employee, loadedState.roles),
     canClose: Boolean(employee.canClose),
     canLunchClose: Boolean(employee.canLunchClose),
+    noDoubles: Boolean(employee.noDoubles),
     alwaysPrintFloorEndTime: Boolean(employee.alwaysPrintFloorEndTime),
     emergencyRoleIds: Array.isArray(employee.emergencyRoleIds) ? employee.emergencyRoleIds : [],
     roleMealTraining: employee.roleMealTraining && typeof employee.roleMealTraining === "object" ? employee.roleMealTraining : {}
@@ -1702,6 +1704,9 @@ function validateShift(shift, options = {}) {
   if (employee && !rangeInsideAvailability(employee, shift.date, shift)) {
     warnings.push(`${displayName(employee)} is outside normal availability.`);
   }
+  if (employee?.noDoubles && employeeHasAnyShiftOnDate(employee.id, shift.date, shift.id)) {
+    warnings.push(`${displayName(employee)} is marked No Doubles and is already scheduled that day.`);
+  }
   if (employee) warnings.push(...timeOffWarnings(employee, shift));
   if (shift.training?.isTraining) {
     const trainee = employeeById(shift.training.traineeId);
@@ -2005,6 +2010,7 @@ function issueEmployeeShortcut(issue) {
   const message = issue.message || "";
   if (/trained to close/i.test(message)) return { label: "Fix Profile", targetId: "employeeCanClose" };
   if (/available for lunch closing|lunch closer/i.test(message)) return { label: "Fix Profile", targetId: "employeeCanLunchClose" };
+  if (/no doubles|already scheduled that day/i.test(message)) return { label: "Fix Profile", targetId: "employeeNoDoubles" };
   if (/normal availability|outside normal availability/i.test(message)) return { label: "Fix Profile", targetId: "availabilityEditor" };
   if (/not marked for|not trained as|not trained for/i.test(message)) return { label: "Fix Profile", targetId: "employeeTrainingSection" };
   if (/trainer for|No trainer/i.test(message)) return { label: "Fix Profile", targetId: "trainerRoles" };
@@ -4747,9 +4753,25 @@ function renderEmployeeDayCell(employee, date, groupRole = null) {
   return dayCell;
 }
 
+function updateRoleSummaryToggle() {
+  const button = $("toggleRoleSummaryBtn");
+  if (!button) return;
+  const shown = state.settings.showWeeklyRoleSummary !== false;
+  button.classList.toggle("active", shown);
+  button.textContent = shown ? "Hide Roles" : "Show Roles";
+  button.title = shown ? "Hide role summary bubbles" : "Show role summary bubbles";
+}
+
 function renderWeeklyRoleSummary() {
   const target = $("weeklyRoleSummary");
   if (!target) return;
+  const shown = state.settings.showWeeklyRoleSummary !== false;
+  target.hidden = !shown;
+  updateRoleSummaryToggle();
+  if (!shown) {
+    target.innerHTML = "";
+    return;
+  }
   const dates = new Set(weekDates().map(formatDateKey));
   const groups = new Map();
   state.shifts
@@ -5975,8 +5997,12 @@ function autoAssignCleanOpenShiftBay() {
   showConflict(`${assignedText}${skippedText}`);
 }
 
-function employeeHasShiftOnDate(employeeId, dateKey) {
-  return (state.shifts || []).some((shift) => shift.employeeId === employeeId && shift.date === dateKey && visibleShift(shift));
+function employeeHasShiftOnDate(employeeId, dateKey, excludeShiftId = "") {
+  return (state.shifts || []).some((shift) => shift.id !== excludeShiftId && shift.employeeId === employeeId && shift.date === dateKey && visibleShift(shift));
+}
+
+function employeeHasAnyShiftOnDate(employeeId, dateKey, excludeShiftId = "") {
+  return (state.shifts || []).some((shift) => shift.id !== excludeShiftId && shift.employeeId === employeeId && shift.date === dateKey);
 }
 
 function stagedShiftToShift(source, employeeId) {
@@ -6754,6 +6780,7 @@ function loadEmployee(id) {
   $("employeeActive").checked = employee.active !== false;
   $("employeeCanClose").checked = Boolean(employee.canClose);
   $("employeeCanLunchClose").checked = Boolean(employee.canLunchClose);
+  $("employeeNoDoubles").checked = Boolean(employee.noDoubles);
   $("employeeAlwaysPrintEndTime").checked = Boolean(employee.alwaysPrintFloorEndTime);
   setCheckedValues("employeeDepartments", normalizeEmployeeDepartments(employee));
   $("employeeCallWeekly").checked = Boolean(employee.callWeekly);
@@ -6799,6 +6826,7 @@ function resetEmployeeForm() {
   $("employeeActive").checked = true;
   $("employeeCanClose").checked = false;
   $("employeeCanLunchClose").checked = false;
+  $("employeeNoDoubles").checked = false;
   $("employeeAlwaysPrintEndTime").checked = false;
   setCheckedValues("employeeDepartments", ["FOH"]);
   $("employeeBirthday").value = "";
@@ -10856,6 +10884,11 @@ function wireEvents() {
     saveState();
     renderSchedule();
   };
+  if ($("toggleRoleSummaryBtn")) $("toggleRoleSummaryBtn").onclick = () => {
+    state.settings.showWeeklyRoleSummary = state.settings.showWeeklyRoleSummary === false;
+    saveState();
+    renderWeeklyRoleSummary();
+  };
   $("scheduleGrid").addEventListener("wheel", handleScheduleGridWheel, { passive: false });
   $("compactViewBtn").onclick = toggleCompactPreview;
   $("printBtn").onclick = openPrintDialog;
@@ -11101,6 +11134,7 @@ function wireEvents() {
       active: existingEmployee ? $("employeeActive").checked : true,
       canClose: $("employeeCanClose").checked,
       canLunchClose: $("employeeCanLunchClose").checked,
+      noDoubles: $("employeeNoDoubles").checked,
       alwaysPrintFloorEndTime: $("employeeAlwaysPrintEndTime").checked,
       archived: Boolean(existingEmployee?.archived),
       departments: checkedValues("employeeDepartments"),
