@@ -9929,9 +9929,13 @@ async function importCtuitTimeOff(event) {
   applyParsedRequestOffs(parsed);
 }
 
+function canUseLocalPdfParser() {
+  return SERVER_STORAGE_ENABLED && ["localhost", "127.0.0.1"].includes(location.hostname);
+}
+
 async function parseRequestOffPdfFiles(files) {
-  if (!SERVER_STORAGE_ENABLED) {
-    throw new Error("PDF request-off imports need Shift Bay opened from http://localhost:8787 so the local server can read the PDF tables.");
+  if (!canUseLocalPdfParser()) {
+    throw new Error("PDF request-off imports currently need the Shift Bay Cloud local launcher at http://localhost:8798 because PDF parsing runs on the local Node server. Text, CSV, and pasted request-off data can still be imported from the hosted site.");
   }
   const payloadFiles = [];
   for (const file of files) {
@@ -9942,14 +9946,14 @@ async function parseRequestOffPdfFiles(files) {
       dataBase64: arrayBufferToBase64(buffer)
     });
   }
-  const response = await fetch(apiUrl("/api/parse-time-off-pdf"), {
+  const response = await fetch("/api/parse-time-off-pdf", {
     method: "POST",
     headers: authRequestHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ files: payloadFiles })
   });
   const parsed = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(parsed.error || "The local server could not parse that request-off PDF.");
+    throw new Error(parsed.error || "The local Shift Bay server could not parse that request-off PDF.");
   }
   return parsed;
 }
