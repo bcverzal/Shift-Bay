@@ -18,6 +18,7 @@
 - [ ] Improve Shift Bay usability when there are many shifts: filtering, sorting, selection, and template-add flows.
 - [ ] Add a subtle completion/progress celebration for the Shift Bay: when a large batch of shifts is added and the week is close to covered, animate a gold left-to-right highlight across the bay.
 - [ ] Create a hotkey/help menu and review the full scheduling workflow for useful keyboard shortcuts.
+- [ ] Redesign employee profiles into clear tabs/sections so availability, training, roles, pay, notes, history, and future added data stay easy to find.
 - [ ] Create a stable baseline copy/version once the current workflow passes review.
 - [ ] Revisit faint grid cell divider lines: decide whether to keep them, soften them, remove them for single-entry cells, or show them only on hover/active rows.
 
