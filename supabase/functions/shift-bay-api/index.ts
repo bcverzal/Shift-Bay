@@ -245,6 +245,27 @@ async function handleLogin(request: Request) {
   return json(200, { ok: true, session, user: validated.user });
 }
 
+async function handleRefresh(request: Request) {
+  const cfg = config();
+  const body = await request.json().catch(() => ({}));
+  const refreshToken = String(body.refresh_token || "");
+  if (!refreshToken) return json(400, { ok: false, error: "Refresh token is required." });
+
+  const session = await supabaseJson(`${cfg.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: {
+      apikey: cfg.anonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+  const validated = await validateSession(new Request(request.url, {
+    headers: { Authorization: `Bearer ${session.access_token}` }
+  }));
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  return json(200, { ok: true, session, user: validated.user });
+}
+
 async function handleStatus() {
   const cfg = config();
   const row = await loadDocumentRow("saved_at,updated_at");
@@ -452,6 +473,7 @@ Deno.serve(async (request) => {
     const path = routePath(request);
     if (path === "/auth/config" && request.method === "GET") return await handleAuthConfig();
     if (path === "/auth/login" && request.method === "POST") return await handleLogin(request);
+    if (path === "/auth/refresh" && request.method === "POST") return await handleRefresh(request);
     if (path === "/auth/session" && request.method === "GET") {
       const result = await validateSession(request);
       return json(result.ok ? 200 : result.status || 401, result);

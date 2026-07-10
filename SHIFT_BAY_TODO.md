@@ -15,7 +15,10 @@
 - [ ] Continue redesigning Shift Detail so it is shorter, wider, easier to scan, and less error-prone.
 - [ ] Decide whether the shift name field is useful enough to keep or should be removed entirely.
 - [ ] Ensure deleting/unassigning shifts never causes the grid to jump unexpectedly.
+- [ ] Extend copy/stretch interactions to RO and Block cards: Shift+drag should stretch/copy them across days like normal shift cards, ROs should support the same behavior if they do not already, and both RO and Block cards should support copy/paste.
 - [ ] Improve Shift Bay usability when there are many shifts: filtering, sorting, selection, and template-add flows.
+- [ ] Rework the Shift Bay jump-to-role toolbar when sorting by role so it fits cleanly without scrollbars or crowding the bay controls; the first CSS pass did not fully fix it.
+- [ ] Rework the grid jump-to-role rail expansion so it does not cover the employee header/role section content and feels intentionally placed.
 - [ ] Add a subtle completion/progress celebration for the Shift Bay: when a large batch of shifts is added and the week is close to covered, animate a gold left-to-right highlight across the bay.
 - [ ] Create a hotkey/help menu and review the full scheduling workflow for useful keyboard shortcuts.
 - [ ] Redesign employee profiles into clear tabs/sections so availability, training, roles, pay, notes, history, and future added data stay easy to find.

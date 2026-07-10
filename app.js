@@ -36,6 +36,7 @@ let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : "Using this browser's local storage.";
@@ -788,9 +789,9 @@ async function persistStateToServer() {
   serverSaveInFlight = true;
   let saved = false;
   try {
-    const response = await fetch(apiUrl("/api/state"), {
+    const response = await authFetch("/api/state", {
       method: "PUT",
-      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(serverEnvelope())
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
@@ -868,6 +869,15 @@ function flushServerSaveOnClose() {
   } catch {
     // Normal saves still protect the browser copy; this is only a close-window flush.
   }
+}
+
+function warnBeforeLeavingWithUnsavedCloudChanges(event) {
+  const hasUnconfirmedSave = SERVER_STORAGE_ENABLED && canEditScheduler() && (storageStatus === "saving" || storageStatus === "error" || serverSaveInFlight || serverSavePending);
+  if (!hasUnconfirmedSave) return;
+  flushServerSaveOnClose();
+  event.preventDefault();
+  event.returnValue = "Shift Bay has changes that have not been confirmed by the cloud yet.";
+  return event.returnValue;
 }
 
 function loadAuthSession() {
@@ -971,6 +981,55 @@ function authRequestHeaders(extra = {}) {
   return headers;
 }
 
+function authSessionExpiresSoon() {
+  if (!authRequired || !authSession?.expires_at) return false;
+  return Number(authSession.expires_at) <= Math.floor(Date.now() / 1000) + 120;
+}
+
+async function refreshAuthSession(force = false) {
+  if (!authRequired || !authSession?.refresh_token) return false;
+  if (!force && !authSessionExpiresSoon()) return true;
+  if (authRefreshInFlight) return authRefreshInFlight;
+  authRefreshInFlight = (async () => {
+    const result = await fetchJson("/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: authSession.refresh_token })
+    });
+    const session = result.session;
+    if (!session?.access_token) throw new Error("Cloud login refresh did not return a session.");
+    saveAuthSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token || authSession.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600),
+      email: session.user?.email || authSession.email || currentUser?.email || ""
+    });
+    currentUser = result.user || currentUser;
+    updateAccountUi();
+    return true;
+  })();
+  try {
+    return await authRefreshInFlight;
+  } finally {
+    authRefreshInFlight = null;
+  }
+}
+
+async function authFetch(path, options = {}) {
+  if (authRequired) await refreshAuthSession();
+  let response = await fetch(apiUrl(path), {
+    ...options,
+    headers: authRequestHeaders(options.headers || {})
+  });
+  if (response.status === 401 && authSession?.refresh_token && await refreshAuthSession(true).catch(() => false)) {
+    response = await fetch(apiUrl(path), {
+      ...options,
+      headers: authRequestHeaders(options.headers || {})
+    });
+  }
+  return response;
+}
+
 function handleAuthRequired(message = "Your cloud session expired. Sign in again to continue.") {
   clearAuthSession();
   currentUser = null;
@@ -980,9 +1039,11 @@ function handleAuthRequired(message = "Your cloud session expired. Sign in again
 
 async function validateAuthSession(session = authSession) {
   if (!session?.access_token) throw new Error("No saved login session.");
-  const result = await fetchJson("/api/auth/session", {
-    headers: { Authorization: `Bearer ${session.access_token}` }
-  });
+  await refreshAuthSession();
+  const response = await authFetch("/api/auth/session", { method: "GET" });
+  const text = await response.text();
+  const result = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(result?.error || "Could not verify login.");
   currentUser = result.user;
   updateAccountUi();
   return result.user;
@@ -1059,12 +1120,23 @@ async function hydrateStateFromServer() {
   if (!SERVER_STORAGE_ENABLED) return;
   setStorageStatus("connecting", "Connecting to the shared scheduler data file...");
   try {
-    const response = await fetch(apiUrl("/api/state"), { cache: "no-store", headers: authRequestHeaders() });
+    const response = await authFetch("/api/state", { cache: "no-store" });
     if (response.ok) {
       const envelope = await response.json();
       const serverState = normalizeLoadedState(envelope.data || envelope);
-      lastKnownServerSavedAt = envelope.savedAt || envelope.updatedAt || "";
-      serverState.meta = { ...(serverState.meta || {}), serverSavedAt: lastKnownServerSavedAt };
+      const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
+      serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
+      if (localStateIsNewerThanServer(state, serverState)) {
+        serverStorageReady = true;
+        lastKnownServerSavedAt = state.meta?.serverSavedAt || serverSavedAt || "";
+        setStorageStatus("saving", "Recovering newer browser changes to the cloud schedule...");
+        showConflict("This browser had newer unsaved changes than the cloud copy. Shift Bay kept the browser copy and is saving it back to the cloud.");
+        await persistStateToServer();
+        renderAll();
+        updateZoomVisibility();
+        return;
+      }
+      lastKnownServerSavedAt = serverSavedAt;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
@@ -11507,5 +11579,6 @@ if (!SERVER_STORAGE_ENABLED) {
 initializeAuth().then((canLoad) => {
   if (canLoad) hydrateStateFromServer();
 });
+window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
 window.addEventListener("beforeunload", flushServerSaveOnClose);
 

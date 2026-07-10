@@ -176,6 +176,31 @@ async function signInWithSupabasePassword(email, password) {
   });
 }
 
+async function refreshSupabaseSession(refreshToken) {
+  const config = supabaseServerConfig();
+  if (!config.url || !config.anonKey) {
+    const missing = [];
+    if (!config.url) missing.push("SUPABASE_URL");
+    if (!config.anonKey) missing.push("SUPABASE_ANON_KEY");
+    const error = new Error(`Cloud login is not configured. Missing ${missing.join(", ")}.`);
+    error.status = 503;
+    throw error;
+  }
+  if (!refreshToken) {
+    const error = new Error("Refresh token is required.");
+    error.status = 400;
+    throw error;
+  }
+  return supabaseJson(`${config.url}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: {
+      apikey: config.anonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+}
+
 async function userEmailById(userId) {
   const config = supabaseServerConfig();
   if (!config.url || !config.serviceRoleKey || !userId) return "";
@@ -607,6 +632,25 @@ async function handleApi(request, response) {
       sendJson(response, 200, { ok: true, session, user: validated.user });
     } catch (error) {
       sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not sign in." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/auth/refresh" && request.method === "POST") {
+    try {
+      const rawBody = await readRequestBody(request);
+      const parsed = JSON.parse(rawBody || "{}");
+      const session = await refreshSupabaseSession(String(parsed.refresh_token || ""));
+      const fakeRequest = {
+        headers: { authorization: `Bearer ${session.access_token}` }
+      };
+      const validated = await validateSupabaseSession(fakeRequest);
+      if (!validated.ok) {
+        sendJson(response, validated.status || 401, { ok: false, error: validated.error });
+        return;
+      }
+      sendJson(response, 200, { ok: true, session, user: validated.user });
+    } catch (error) {
+      sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not refresh login." });
     }
     return;
   }
