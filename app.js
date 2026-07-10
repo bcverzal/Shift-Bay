@@ -930,7 +930,6 @@ function updateAccountUi() {
   const status = $("accountMenuStatus");
   const signIn = $("signInMenuBtn");
   const signOut = $("signOutBtn");
-  const sync = $("saveNowBtn");
   const recent = $("recentActivityBtn");
   const managers = $("manageManagersBtn");
   if (currentUser) {
@@ -940,12 +939,6 @@ function updateAccountUi() {
     if (status) status.textContent = role === "viewer" ? "viewer | View and print only" : `${role} | Cloud location connected`;
     if (signIn) signIn.hidden = true;
     if (signOut) signOut.hidden = false;
-    if (sync) {
-      sync.hidden = false;
-      sync.disabled = role === "viewer";
-      sync.textContent = role === "viewer" ? "View only" : "Sync now";
-      sync.title = role === "viewer" ? readOnlyMessage() : "Save this device's latest changes to the cloud.";
-    }
     if (recent) recent.hidden = false;
     if (managers) managers.hidden = currentUser.role !== "owner";
     return;
@@ -956,7 +949,6 @@ function updateAccountUi() {
   if (status) status.textContent = authRequired ? "Sign in to load cloud schedule data." : "Using this device or local server.";
   if (signIn) signIn.hidden = !authRequired;
   if (signOut) signOut.hidden = true;
-  if (sync) sync.hidden = authRequired;
   if (recent) recent.hidden = authRequired;
   if (managers) managers.hidden = true;
 }
@@ -9320,14 +9312,26 @@ function openStorageInfo() {
 
 function formatAuditEvent(event) {
   const details = event.details || {};
-  const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "";
+  const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Unknown time";
   const device = details.savedByDeviceId ? String(details.savedByDeviceId).slice(0, 8) : "";
-  const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity");
-  const detailText = [
-    details.schemaVersion ? `schema ${details.schemaVersion}` : "",
-    device ? `device ${device}` : ""
-  ].filter(Boolean).join(" | ");
-  return `<tr><th>${escapeHtml(when)}</th><td><strong>${escapeHtml(label)}</strong>${detailText ? `<br><small>${escapeHtml(detailText)}</small>` : ""}</td></tr>`;
+  const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity").replaceAll("_", " ");
+  const user = details.savedByEmail || event.user_email || "";
+  const role = details.savedByRole || "";
+  const meta = [
+    user ? `User: ${user}` : "",
+    role ? `Role: ${role}` : "",
+    details.schemaVersion ? `Schema: ${details.schemaVersion}` : "",
+    device ? `Device: ${device}` : ""
+  ].filter(Boolean);
+  return `
+    <article class="recent-activity-card">
+      <div class="recent-activity-main">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(when)}</span>
+      </div>
+      ${meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+    </article>
+  `;
 }
 
 async function openRecentActivity() {
@@ -9346,9 +9350,7 @@ async function openRecentActivity() {
     }
     if (body) {
       body.innerHTML = `
-        <table>
-          <tbody>${events.map(formatAuditEvent).join("")}</tbody>
-        </table>
+        ${events.map(formatAuditEvent).join("")}
       `;
     }
   } catch {
@@ -10691,7 +10693,6 @@ function wireEvents() {
   $("backupBtn").onclick = backup;
   $("storageInfoBtn").onclick = openStorageInfo;
   $("storageStatusBtn").onclick = openStorageInfo;
-  $("saveNowBtn").onclick = saveNow;
   $("recentActivityBtn")?.addEventListener("click", openRecentActivity);
   $("manageManagersBtn")?.addEventListener("click", openManagerAccess);
   $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));

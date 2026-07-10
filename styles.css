@@ -6935,6 +6935,66 @@ dialog {
   max-height: calc(100vh - 24px);
 }
 
+#recentActivityDialog {
+  width: min(740px, calc(100vw - 28px));
+  max-height: calc(100vh - 24px);
+}
+
+.recent-activity-list {
+  display: grid;
+  gap: 9px;
+  padding: 2px 0 8px;
+}
+
+.recent-activity-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(191, 219, 254, 0.9);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.recent-activity-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recent-activity-main strong {
+  color: #1e3a8a;
+  font-size: 14px;
+  font-weight: 950;
+  text-transform: capitalize;
+}
+
+.recent-activity-main span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.recent-activity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recent-activity-meta span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 7px;
+  border: 1px solid rgba(203, 213, 225, 0.82);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 dialog:not(#shiftDialog):not(#warningConfirmDialog) .modal-editor {
   display: flex;
   flex-direction: column;
