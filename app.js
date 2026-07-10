@@ -3697,6 +3697,8 @@ function beginDayFocusTimelineDrag(event, bar) {
     mode,
     startX: event.clientX,
     startY: event.clientY,
+    offsetX: event.clientX - bar.getBoundingClientRect().left,
+    offsetY: event.clientY - bar.getBoundingClientRect().top,
     originalStart: start,
     originalEnd: end <= start ? end + 1440 : end,
     timelineStart: Number(timebar.dataset.timelineStart) || 0,
@@ -3710,6 +3712,35 @@ function beginDayFocusTimelineDrag(event, bar) {
   bar.classList.add("timebar-dragging");
   window.addEventListener("pointermove", moveDayFocusTimelineDrag);
   window.addEventListener("pointerup", finishDayFocusTimelineDrag, { once: true });
+}
+
+function ensureDayFocusTimelineDragGhost(event) {
+  const drag = dayFocusTimelineDrag;
+  if (!drag || drag.mode !== "move" || drag.ghost) return;
+  const ghost = createDragGhost(drag.bar, event, drag);
+  ghost.classList.add("day-focus-drag-ghost");
+  document.body.append(ghost);
+  drag.ghost = ghost;
+  drag.bar.dataset.mouseDragging = "true";
+  drag.bar.classList.add("drag-source-hidden");
+  document.body.classList.add("dragging-assigned-shift");
+}
+
+function updateDayFocusTimelineDragGhost(event) {
+  const drag = dayFocusTimelineDrag;
+  const ghost = drag?.ghost;
+  if (!ghost) return;
+  ghost.style.left = `${event.clientX - (drag.offsetX || 0)}px`;
+  ghost.style.top = `${event.clientY - (drag.offsetY || 0)}px`;
+}
+
+function cleanupDayFocusTimelineDragVisual(drag = dayFocusTimelineDrag) {
+  drag?.ghost?.remove();
+  if (drag?.bar) {
+    drag.bar.dataset.mouseDragging = "false";
+    drag.bar.classList.remove("drag-source-hidden", "timebar-dragging");
+  }
+  document.body.classList.remove("dragging-assigned-shift");
 }
 
 function timelineSnapDelta(drag, clientX) {
@@ -3758,6 +3789,8 @@ function moveDayFocusTimelineDrag(event) {
   const times = dayFocusTimelineDragTimes(event.clientX);
   if (!times) return;
   drag.moved = true;
+  ensureDayFocusTimelineDragGhost(event);
+  updateDayFocusTimelineDragGhost(event);
   const range = Math.max(1, drag.timelineEnd - drag.timelineStart);
   const visibleStart = Math.max(drag.timelineStart, times.start);
   const visibleEnd = Math.min(drag.timelineEnd, drag.wasUntilVolume && drag.mode === "move" ? drag.originalEnd : times.end);
@@ -3775,7 +3808,7 @@ async function finishDayFocusTimelineDrag(event) {
   const drag = dayFocusTimelineDrag;
   window.removeEventListener("pointermove", moveDayFocusTimelineDrag);
   if (!drag) return;
-  drag.bar.classList.remove("timebar-dragging");
+  cleanupDayFocusTimelineDragVisual(drag);
   if (!drag.moved) {
     undoStack.pop();
     const shift = state.shifts.find((item) => item.id === drag.shiftId);
