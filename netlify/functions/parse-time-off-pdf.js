@@ -1,3 +1,6 @@
+const path = require("path");
+const { pathToFileURL } = require("url");
+
 let pdfjsPromise = null;
 
 function ensurePdfPolyfills() {
@@ -19,7 +22,12 @@ function ensurePdfPolyfills() {
 
 async function loadPdfJs() {
   ensurePdfPolyfills();
-  if (!pdfjsPromise) pdfjsPromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+  if (!pdfjsPromise) {
+    pdfjsPromise = import("pdfjs-dist/legacy/build/pdf.mjs").then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(path.join(__dirname, "pdf.worker.mjs")).href;
+      return pdfjs;
+    });
+  }
   return pdfjsPromise;
 }
 

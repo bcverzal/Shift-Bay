@@ -4,6 +4,7 @@
 
 [functions]
   external_node_modules = ["pdfjs-dist"]
+  included_files = ["netlify/functions/pdf.worker.mjs"]
 
 [[headers]]
   for = "/index.html"
