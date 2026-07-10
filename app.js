@@ -9931,13 +9931,16 @@ async function importCtuitTimeOff(event) {
   applyParsedRequestOffs(parsed);
 }
 
-function canUseLocalPdfParser() {
-  return SERVER_STORAGE_ENABLED && ["localhost", "127.0.0.1"].includes(location.hostname);
+function pdfParserUrl() {
+  if (!SERVER_STORAGE_ENABLED) return "";
+  if (["localhost", "127.0.0.1"].includes(location.hostname)) return "/api/parse-time-off-pdf";
+  return "/.netlify/functions/parse-time-off-pdf";
 }
 
 async function parseRequestOffPdfFiles(files) {
-  if (!canUseLocalPdfParser()) {
-    throw new Error("PDF request-off imports currently need the Shift Bay Cloud local launcher at http://localhost:8798 because PDF parsing runs on the local Node server. Text, CSV, and pasted request-off data can still be imported from the hosted site.");
+  const parserUrl = pdfParserUrl();
+  if (!parserUrl) {
+    throw new Error("PDF request-off imports need Shift Bay opened from the hosted site or the Shift Bay Cloud local launcher.");
   }
   const payloadFiles = [];
   for (const file of files) {
@@ -9948,14 +9951,14 @@ async function parseRequestOffPdfFiles(files) {
       dataBase64: arrayBufferToBase64(buffer)
     });
   }
-  const response = await fetch("/api/parse-time-off-pdf", {
+  const response = await fetch(parserUrl, {
     method: "POST",
     headers: authRequestHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ files: payloadFiles })
   });
   const parsed = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(parsed.error || "The local Shift Bay server could not parse that request-off PDF.");
+    throw new Error(parsed.error || "Shift Bay could not parse that request-off PDF.");
   }
   return parsed;
 }
