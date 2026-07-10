@@ -9931,6 +9931,166 @@ async function importCtuitTimeOff(event) {
   applyParsedRequestOffs(parsed);
 }
 
+let requestOffPdfJsPromise = null;
+
+async function loadRequestOffPdfJs() {
+  if (!requestOffPdfJsPromise) {
+    requestOffPdfJsPromise = import("./assets/vendor/pdf.mjs").then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("./assets/vendor/pdf.worker.mjs", location.href).href;
+      return pdfjs;
+    });
+  }
+  return requestOffPdfJsPromise;
+}
+
+function roPdfSplitReportName(value) {
+  const text = cleanCell(value).replace(/^,+|,+$/g, "");
+  if (!text) return { firstName: "", lastName: "" };
+  if (text.includes(",")) {
+    const [lastName, firstName] = text.split(",", 2).map(cleanCell);
+    return { firstName, lastName };
+  }
+  const parts = text.split(/\s+/);
+  return { firstName: parts.shift() || "", lastName: parts.join(" ") };
+}
+
+function roPdfNormalizeRequestTimeLabel(value) {
+  const match = cleanCell(value).match(/^(\d{1,2})(?::?(\d{2}))?\s*(a|am|p|pm)$/i);
+  if (!match) return cleanCell(value).toUpperCase();
+  let hour = Number(match[1]);
+  const minute = match[2] || "00";
+  const period = match[3].toLowerCase().startsWith("p") ? "PM" : "AM";
+  if (hour > 12) hour -= 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${minute.padStart(2, "0")} ${period}`;
+}
+
+function roPdfRequestDaypart(info) {
+  const text = cleanCell(info);
+  if (/\bAll\s+Day\b/i.test(text)) return "All day";
+  const range = text.match(/\b(\d{1,2}(?::?\d{2})?\s*(?:a|am|p|pm))\s*(?:to|-|until|through|thru)\s*(\d{1,2}(?::?\d{2})?\s*(?:a|am|p|pm))\b/i);
+  return range ? `${roPdfNormalizeRequestTimeLabel(range[1])} to ${roPdfNormalizeRequestTimeLabel(range[2])}` : "";
+}
+
+function roPdfColumnForX(x) {
+  if (x < 122) return "submitted";
+  if (x < 150) return "recurring";
+  if (x < 205) return "employee";
+  if (x < 248) return "date";
+  if (x < 295) return "info";
+  if (x < 340) return "note";
+  if (x < 452) return "approvedBy";
+  return "";
+}
+
+function roPdfJoinColumnItems(items) {
+  return items
+    .sort((a, b) => (b.y - a.y) || (a.x - b.x))
+    .map((item) => item.text)
+    .join(" ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function roPdfRowToRequest(row, fileName) {
+  const byColumn = {};
+  row.forEach((item) => {
+    const column = roPdfColumnForX(item.x);
+    if (!column) return;
+    if (!byColumn[column]) byColumn[column] = [];
+    byColumn[column].push(item);
+  });
+  const cells = Object.fromEntries(Object.entries(byColumn).map(([key, items]) => [key, roPdfJoinColumnItems(items)]));
+  cells.employee = cleanCell(cells.employee).replace(/\bEmployee\b/gi, "").trim();
+  cells.date = cleanCell(cells.date).replace(/\bDOB\b/gi, "").trim();
+  cells.info = cleanCell(cells.info).replace(/\bInformation\b/gi, "").trim();
+  cells.note = cleanCell(cells.note).replace(/\bNote\b/gi, "").trim();
+  cells.approvedBy = cleanCell(cells.approvedBy).replace(/\bApproved\b|\bBy\b/gi, "").trim();
+  if (!cells.employee || !cells.date || !cells.info) return null;
+  if (/^Employee$/i.test(cells.employee)) return null;
+  const date = normalizeImportDate(cells.date) || normalizeImportDate(cells.info);
+  if (!date) return null;
+  const { firstName, lastName } = roPdfSplitReportName(cells.employee);
+  if (!firstName && !lastName) return null;
+  const daypart = roPdfRequestDaypart(cells.info) || "All day";
+  return {
+    firstName,
+    lastName,
+    date,
+    daypart,
+    note: cells.note,
+    status: cells.approvedBy ? `Approved by ${cells.approvedBy}` : "",
+    source: `Ctuit RO PDF: ${fileName}`
+  };
+}
+
+function roPdfParsePageItems(items, fileName) {
+  const textItems = items
+    .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
+    .filter((item) => item.text);
+  const anchors = textItems
+    .filter((item) => /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(item.text) && item.x >= 205 && item.x < 248)
+    .sort((a, b) => b.y - a.y);
+  const requests = [];
+  anchors.forEach((anchor, index) => {
+    const nextY = anchors[index + 1]?.y ?? -999;
+    const previousY = anchors[index - 1]?.y;
+    const rowTop = previousY ? Math.min(anchor.y + 24, anchor.y + ((previousY - anchor.y) * 0.5)) : anchor.y + 34;
+    const previousGap = previousY ? previousY - anchor.y : 999;
+    const noteTop = previousY
+      ? (previousGap < 70 ? anchor.y + 12 : Math.min(previousY - 14, anchor.y + 140))
+      : anchor.y + 140;
+    const rowItems = textItems.filter((item) => {
+      const column = roPdfColumnForX(item.x);
+      if (column === "note") return item.y <= noteTop && item.y > nextY + 4;
+      return item.y <= rowTop && item.y > nextY + 4;
+    });
+    const request = roPdfRowToRequest(rowItems, fileName);
+    if (request) requests.push(request);
+  });
+  return requests;
+}
+
+async function parseRequestOffPdfFilesInBrowser(files) {
+  const pdfjs = await loadRequestOffPdfJs();
+  const results = [];
+  const errors = [];
+  for (const [index, file] of files.entries()) {
+    const fileName = cleanCell(file.name) || `request-off-${index + 1}.pdf`;
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const document = await pdfjs.getDocument({ data }).promise;
+      const requests = [];
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+        const page = await document.getPage(pageNumber);
+        const content = await page.getTextContent();
+        requests.push(...roPdfParsePageItems(content.items || [], fileName));
+      }
+      results.push({ fileName, pages: document.numPages, requests });
+    } catch (error) {
+      errors.push({ fileName, error: error.message || "Could not parse PDF." });
+    }
+  }
+  const requests = [];
+  const seen = new Set();
+  let duplicates = 0;
+  results.forEach((result) => {
+    result.requests.forEach((request) => {
+      const key = [request.firstName, request.lastName, request.date, request.daypart, request.note]
+        .map((value) => cleanCell(value).toLowerCase())
+        .join("|");
+      if (seen.has(key)) {
+        duplicates++;
+        return;
+      }
+      seen.add(key);
+      requests.push(request);
+    });
+  });
+  return { requests, source: "Ctuit RO PDF", diagnostics: { files: results, errors, duplicates } };
+}
 function pdfParserUrl() {
   if (!SERVER_STORAGE_ENABLED) return "";
   if (["localhost", "127.0.0.1"].includes(location.hostname)) return "/api/parse-time-off-pdf";
@@ -9938,6 +10098,8 @@ function pdfParserUrl() {
 }
 
 async function parseRequestOffPdfFiles(files) {
+  const browserParsed = await parseRequestOffPdfFilesInBrowser(files);
+  if (browserParsed.requests?.length || !browserParsed.diagnostics?.errors?.length) return browserParsed;
   const parserUrl = pdfParserUrl();
   if (!parserUrl) {
     throw new Error("PDF request-off imports need Shift Bay opened from the hosted site or the Shift Bay Cloud local launcher.");
