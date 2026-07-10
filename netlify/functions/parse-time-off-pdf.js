@@ -24,8 +24,12 @@ async function loadPdfJs() {
   ensurePdfPolyfills();
   if (!pdfjsPromise) {
     pdfjsPromise = import("pdfjs-dist/legacy/build/pdf.mjs").then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(path.join(__dirname, "pdf.worker.mjs")).href;
-      return pdfjs;
+      const workerUrl = pathToFileURL(path.join(__dirname, "pdf.worker.mjs")).href;
+      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+      return import(workerUrl).then((worker) => {
+        globalThis.pdfjsWorker = worker;
+        return pdfjs;
+      });
     });
   }
   return pdfjsPromise;
