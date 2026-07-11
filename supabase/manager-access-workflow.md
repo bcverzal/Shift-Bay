@@ -10,6 +10,21 @@ Shift Bay should keep manager access simple at first:
 
 Supabase's official admin API includes `inviteUserByEmail`, which sends an invite link to an email address. That call must stay server-side because it requires privileged auth.
 
+## Supabase Email Template Requirement
+
+The Supabase Auth **Invite user** email template must include an accept link using:
+
+```html
+<a href="{{ .ConfirmationURL }}">Accept invitation</a>
+```
+
+If the invite email arrives but has no clickable accept link, check the Supabase dashboard under **Authentication > Email Templates > Invite user** and make sure `{{ .ConfirmationURL }}` is present in the email body. Also keep the hosted app URL in the auth redirect allow list:
+
+```text
+https://shift-bay.netlify.app
+https://shift-bay.netlify.app/**
+```
+
 ## Roles
 
 - `owner`: manage managers, settings, imports, restores, and schedules.

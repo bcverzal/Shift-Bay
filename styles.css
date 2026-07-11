@@ -469,6 +469,38 @@ summary:focus-visible {
   min-height: 38px;
 }
 
+.manager-temp-login {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #93c5fd;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  color: #1e3a8a;
+  box-shadow:
+    0 10px 22px rgba(37, 99, 235, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+.manager-temp-login strong {
+  font-size: 13px;
+}
+
+.manager-temp-login code {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.manager-temp-login small {
+  color: #475569;
+  font-weight: 700;
+}
+
 .manager-access-role-select {
   min-width: 110px;
   min-height: 32px;
@@ -8344,5 +8376,4 @@ select {
   font-weight: 650;
   line-height: 1.35;
 }
-
 

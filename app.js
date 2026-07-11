@@ -3089,8 +3089,8 @@ async function finishMouseAssignedShiftDrag(event) {
     return;
   }
   if (!source || (!target && !employeeTarget)) {
-    if (source && !target && !employeeTarget) showConflict("Drop the shift onto an employee or schedule cell to move it.");
     endAnyDrag();
+    renderSchedulePreservingGridScroll();
     return;
   }
   await moveAssignedShiftToEmployee(
@@ -4137,6 +4137,11 @@ async function finishDayFocusTimelineDrag(event) {
   const shift = state.shifts.find((item) => item.id === drag.shiftId);
   if (!times || !shift) return;
   const targetCell = document.elementFromPoint(event.clientX, event.clientY)?.closest?.(".day-focus-employee-timeline-cell[data-employee-id]");
+  if (!targetCell) {
+    undoStack.pop();
+    renderSchedulePreservingGridScroll();
+    return;
+  }
   const targetEmployeeId = drag.mode === "move" && targetCell?.dataset.employeeId ? targetCell.dataset.employeeId : shift.employeeId;
   const nextShift = {
     ...shift,
@@ -9701,6 +9706,25 @@ function setManagerAccessMessage(message = "") {
   if (target) target.textContent = message;
 }
 
+function renderTemporaryManagerLogin(details = null) {
+  const target = $("managerTempLogin");
+  if (!target) return;
+  if (!details?.temporaryPassword) {
+    target.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+  const loginUrl = details.loginUrl || "https://shift-bay.netlify.app";
+  target.hidden = false;
+  target.innerHTML = [
+    "<strong>Manager login created. Copy this before closing.</strong>",
+    `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
+    `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
+    `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
+    "<small>No email was sent. Share this password directly and have the manager log in at the URL above.</small>"
+  ].join("");
+}
+
 function renderManagerAccessList(managers = []) {
   const target = $("managerAccessList");
   if (!target) return;
@@ -9757,6 +9781,7 @@ async function loadManagerAccess() {
 
 async function openManagerAccess() {
   if (currentUser?.role !== "owner") return;
+  renderTemporaryManagerLogin(null);
   $("managerAccessDialog")?.showModal();
   await loadManagerAccess();
 }
@@ -9770,20 +9795,26 @@ async function sendManagerInvite(event) {
     setManagerAccessMessage("Enter an email address first.");
     return;
   }
-  if (button) { button.disabled = true; button.textContent = "Sending..."; }
+  renderTemporaryManagerLogin(null);
+  if (button) { button.disabled = true; button.textContent = "Creating..."; }
   try {
-    await fetchJson("/api/managers/invite", {
+    const result = await fetchJson("/api/managers/invite", {
       method: "POST",
       headers: authRequestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ email, role })
     });
     $("managerInviteEmail").value = "";
-    setManagerAccessMessage(`Invite sent to ${email}.`);
+    renderTemporaryManagerLogin({
+      email,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl
+    });
+    setManagerAccessMessage(`Login created for ${email}. Share the temporary password manually.`);
     await loadManagerAccess();
   } catch (error) {
-    setManagerAccessMessage(error.message || "Could not send invite.");
+    setManagerAccessMessage(error.message || "Could not create manager login.");
   } finally {
-    if (button) { button.disabled = false; button.textContent = "Send Invite"; }
+    if (button) { button.disabled = false; button.textContent = "Create Login"; }
   }
 }
 

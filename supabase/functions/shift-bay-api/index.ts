@@ -7,6 +7,7 @@
 // - SUPABASE_SERVICE_ROLE_KEY
 // - SHIFT_BAY_LOCATION_ID
 // - SHIFT_BAY_DOCUMENT_KEY optional, defaults to primary
+// - SHIFT_BAY_SITE_URL optional, defaults to hosted Shift Bay URL
 
 type JsonRecord = Record<string, unknown>;
 
@@ -27,6 +28,7 @@ function config() {
     anonKey: env("SUPABASE_ANON_KEY"),
     serviceRoleKey: env("SUPABASE_SERVICE_ROLE_KEY"),
     locationId: env("SHIFT_BAY_LOCATION_ID"),
+    siteUrl: env("SHIFT_BAY_SITE_URL", "https://shift-bay.netlify.app"),
     documentKey: env("SHIFT_BAY_DOCUMENT_KEY", "primary")
   };
 }
@@ -87,6 +89,13 @@ function authAdminHeaders(extra: HeadersInit = {}) {
     "Content-Type": "application/json",
     ...extra
   };
+}
+
+function temporaryPassword(length = 16) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  const values = new Uint32Array(length);
+  crypto.getRandomValues(values);
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
 }
 
 function dataUpdatedAt(payload: any) {
@@ -397,18 +406,21 @@ async function handleInviteManager(request: Request) {
   if (!email || !email.includes("@")) return json(400, { ok: false, error: "Enter a valid email address." });
   if (!["owner", "manager", "viewer"].includes(role)) return json(400, { ok: false, error: "Choose owner, manager, or viewer." });
 
-  const invitedUser = await authAdminJson("/invite", {
+  const password = temporaryPassword();
+  const createdUser = await authAdminJson("/admin/users", {
     method: "POST",
     body: JSON.stringify({
       email,
-      data: {
+      password,
+      email_confirm: true,
+      user_metadata: {
         shift_bay_location_id: cfg.locationId,
         shift_bay_role: role
       }
     })
   });
-  const userId = invitedUser?.id || invitedUser?.user?.id;
-  if (!userId) return json(502, { ok: false, error: "Supabase sent the invite but did not return a user ID to link." });
+  const userId = createdUser?.id || createdUser?.user?.id;
+  if (!userId) return json(502, { ok: false, error: "Supabase created the login but did not return a user ID to link." });
 
   await supabaseJson("/location_users?on_conflict=location_id,user_id", {
     method: "POST",
@@ -419,8 +431,8 @@ async function handleInviteManager(request: Request) {
       role
     }])
   });
-  await logAuditEvent("manager_invited", (validated.user as any).id, { email, role, userId });
-  return json(200, { ok: true, manager: { userId, email, role } });
+  await logAuditEvent("manager_login_created", (validated.user as any).id, { email, role, userId });
+  return json(200, { ok: true, manager: { userId, email, role }, temporaryPassword: password, loginUrl: cfg.siteUrl });
 }
 
 async function handleUpdateManager(request: Request) {

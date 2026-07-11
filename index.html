@@ -842,6 +842,7 @@
   <dialog id="managerAccessDialog">
     <form id="managerInviteForm" method="dialog" class="editor modal-editor manager-access-editor">
       <h2>Manager Access</h2>
+      <p class="hint">Create manager logins here. No email is sent; copy the temporary password and share it with the manager directly.</p>
       <div class="manager-invite-grid">
         <label>Email
           <input id="managerInviteEmail" type="email" placeholder="manager@example.com" autocomplete="off">
@@ -853,8 +854,9 @@
             <option value="owner">Owner</option>
           </select>
         </label>
-        <button id="sendManagerInviteBtn" type="submit">Send Invite</button>
+        <button id="sendManagerInviteBtn" type="submit">Create Login</button>
       </div>
+      <div id="managerTempLogin" class="manager-temp-login" hidden></div>
       <div id="managerAccessMessage" class="hint"></div>
       <div id="managerAccessList" class="analysis-table"></div>
       <div class="form-actions">
