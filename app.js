@@ -88,6 +88,7 @@ let dayFocusShowOpenShifts = loadDayFocusShowOpenShifts();
 let dayFocusSortMode = loadDayFocusSortMode();
 let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
+let employeeFormCleanSnapshot = "";
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
 const collapsedTemplateDays = loadCollapsedTemplateDays();
@@ -920,6 +921,13 @@ function warnBeforeLeavingWithUnsavedCloudChanges(event) {
   flushServerSaveOnClose();
   event.preventDefault();
   event.returnValue = "Shift Bay has changes that have not been confirmed by the cloud yet.";
+  return event.returnValue;
+}
+
+function warnBeforeLeavingWithUnsavedEmployeeChanges(event) {
+  if (!employeeFormHasUnsavedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "This employee profile has unsaved changes.";
   return event.returnValue;
 }
 
@@ -1948,6 +1956,40 @@ async function confirmWarnings(warnings, options = {}) {
   });
 }
 
+function employeeFormSnapshot() {
+  const form = $("employeeForm");
+  if (!form) return "";
+  const values = Array.from(form.querySelectorAll("input, select, textarea"))
+    .filter((field) => field.type !== "file")
+    .map((field) => ({
+      key: field.name || field.id || field.dataset?.availabilityDay || field.dataset?.weeklyAvailabilityDay || "field",
+      id: field.id || "",
+      value: field.type === "checkbox" || field.type === "radio" ? Boolean(field.checked) : field.value
+    }));
+  values.push({ key: "weeklyAvailabilityVisible", value: !Boolean($("weeklyAvailabilityFieldset")?.hidden) });
+  return JSON.stringify(values);
+}
+
+function markEmployeeFormClean() {
+  employeeFormCleanSnapshot = employeeFormSnapshot();
+}
+
+function employeeFormHasUnsavedChanges() {
+  const form = $("employeeForm");
+  if (!form || !employeeFormCleanSnapshot) return false;
+  return employeeFormSnapshot() !== employeeFormCleanSnapshot;
+}
+
+async function confirmDiscardEmployeeChanges() {
+  if (!employeeFormHasUnsavedChanges()) return true;
+  return showAppConfirm({
+    title: "Unsaved Employee Changes",
+    message: "This employee profile has changes that have not been saved. Leave without saving them?",
+    confirmText: "Leave Without Saving",
+    cancelText: "Stay"
+  });
+}
+
 function weekDateKeys() {
   return weekDates().map(formatDateKey);
 }
@@ -2280,12 +2322,19 @@ function renderSchedulePreservingGridScroll() {
 
 function renderTabs() {
   document.querySelectorAll(".tab").forEach((tab) => {
-    tab.onclick = () => {
-      activateTab(tab.dataset.tab);
+    tab.onclick = async () => {
+      if (!(await requestActivateTab(tab.dataset.tab))) return;
       if (tab.dataset.tab === "monthly") renderMonthly();
       if (tab.dataset.tab === "floorplans") renderFloorPlan();
     };
   });
+}
+
+async function requestActivateTab(tabName) {
+  const activeTab = document.querySelector(".tab.active")?.dataset.tab || "";
+  if (activeTab === "employees" && tabName !== "employees" && !(await confirmDiscardEmployeeChanges())) return false;
+  activateTab(tabName);
+  return true;
 }
 
 function activateTab(tabName) {
@@ -2297,7 +2346,18 @@ function activateTab(tabName) {
 }
 
 function updateZoomVisibility(tabName = document.querySelector(".tab.active")?.dataset.tab) {
-  if ($("zoomControls")) $("zoomControls").hidden = tabName !== "schedule" || document.body.classList.contains("compact-preview");
+  if ($("zoomControls")) $("zoomControls").hidden = tabName !== "schedule";
+  updateCompactPreviewButton();
+}
+
+function updateCompactPreviewButton() {
+  const button = $("compactViewBtn");
+  if (!button) return;
+  const isCompactPreview = document.body.classList.contains("compact-preview");
+  button.textContent = isCompactPreview ? "Grid View" : "Compact";
+  button.title = isCompactPreview ? "Return to the schedule grid" : "Compact schedule preview";
+  button.setAttribute("aria-label", button.title);
+  button.classList.toggle("active", isCompactPreview);
 }
 
 function renderScheduleControls() {
@@ -3727,7 +3787,10 @@ function renderDayFocusRoleSections(grid, employees, dateKey, selectedRoleId = "
     const groupEmployees = employees.filter((employee) => dayFocusRolesForEmployee(employee, dateKey).has(role.id));
     const openRoleShifts = dayFocusOpenShiftsForRole(dateKey, role.id);
     if (!groupEmployees.length && (!dayFocusShowOpenShifts || !openRoleShifts.length)) return;
-    renderDayFocusRoleHeader(grid, role, groupEmployees, dateKey, openRoleShifts.length);
+    const isCollapsed = collapsedScheduleRoleGroups.has(role.id);
+    renderDayFocusRoleHeader(grid, role, groupEmployees, dateKey, openRoleShifts.length, isCollapsed, selectedRoleId === role.id);
+    groupEmployees.forEach((employee) => rendered.add(employee.id));
+    if (isCollapsed) return;
     const sortedEmployees = sortDayFocusGroupEmployees(groupEmployees, dateKey);
     if (dayFocusShowOpenShifts && dayFocusSortMode === "start" && openRoleShifts.length) {
       renderDayFocusRoleStartSortedRows(grid, role, sortedEmployees, openRoleShifts, dateKey, selectedRoleId, rendered);
@@ -3735,14 +3798,15 @@ function renderDayFocusRoleSections(grid, employees, dateKey, selectedRoleId = "
     }
     if (dayFocusShowOpenShifts) renderDayFocusOpenShiftRows(grid, role, openRoleShifts, dateKey);
     sortedEmployees.forEach((employee) => {
-      rendered.add(employee.id);
       renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId, role);
     });
   });
   const otherEmployees = employees.filter((employee) => !rendered.has(employee.id));
   if (otherEmployees.length) {
     const otherRole = { id: "__other__", name: "Other Available Staff", color: "#64748b" };
-    renderDayFocusRoleHeader(grid, otherRole, otherEmployees, dateKey, 0);
+    const isCollapsed = collapsedScheduleRoleGroups.has(otherRole.id);
+    renderDayFocusRoleHeader(grid, otherRole, otherEmployees, dateKey, 0, isCollapsed, false);
+    if (isCollapsed) return;
     sortDayFocusGroupEmployees(otherEmployees, dateKey).forEach((employee) => renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId));
   }
 }
@@ -3780,15 +3844,29 @@ function renderDayFocusRoleStartSortedRows(grid, role, employees, openShifts, da
   });
 }
 
-function renderDayFocusRoleHeader(grid, role, employees, dateKey, openShiftCount = 0) {
+function renderDayFocusRoleHeader(grid, role, employees, dateKey, openShiftCount = 0, isCollapsed = false, isSelected = false) {
   const roleShifts = state.shifts.filter((shift) => shift.date === dateKey && shift.roleId === role.id && visibleShift(shift));
   const openText = openShiftCount ? ` / ${openShiftCount} open` : "";
   const header = cell("schedule-role-group day-focus-role-group", `
-    <strong>${escapeHtml(role.name)}</strong>
-    <small>${employees.length} staff / ${roleShifts.length} shift${roleShifts.length === 1 ? "" : "s"}${openText}</small>
+    <span class="role-group-toggle" aria-hidden="true">${isCollapsed ? "+" : "-"}</span>
+    <span><strong>${escapeHtml(role.name)}</strong><small>${employees.length} staff / ${roleShifts.length} shift${roleShifts.length === 1 ? "" : "s"}${openText}</small></span>
   `);
   header.dataset.roleGroup = role.id;
+  header.title = `${isCollapsed ? "Expand" : "Collapse"} ${role.name}`;
+  header.classList.toggle("collapsed-role-group", isCollapsed);
+  if (isSelected) header.classList.add("selected-role-group");
   header.style.setProperty("--role-color", role.color || "#64748b");
+  header.onclick = () => {
+    if (suppressRoleGroupClickId === role.id) {
+      suppressRoleGroupClickId = null;
+      return;
+    }
+    if (collapsedScheduleRoleGroups.has(role.id)) collapsedScheduleRoleGroups.delete(role.id);
+    else collapsedScheduleRoleGroups.add(role.id);
+    saveCollapsedScheduleRoleGroups();
+    renderSchedule();
+  };
+  if (role.id !== "__other__") wireScheduleRoleGroupDrag(header, role.id);
   grid.append(header);
 }
 
@@ -7067,7 +7145,10 @@ function renderEmployeeRoster(employees, selectedEmployee) {
     `;
   }).join("");
   list.querySelectorAll("[data-roster-employee]").forEach((button) => {
-    button.onclick = () => loadEmployee(button.dataset.rosterEmployee);
+    button.onclick = async () => {
+      if (button.dataset.rosterEmployee !== $("employeeId")?.value && !(await confirmDiscardEmployeeChanges())) return;
+      loadEmployee(button.dataset.rosterEmployee);
+    };
   });
 }
 
@@ -7375,6 +7456,7 @@ function loadEmployee(id) {
   renderWeeklyAvailabilityEditor(employee);
   renderWeeklyRuleEditor(employee);
   updateStickyEmployeeName();
+  markEmployeeFormClean();
 }
 
 function updateStickyEmployeeName() {
@@ -7420,6 +7502,7 @@ function resetEmployeeForm() {
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
   activateEmployeeProfileTab("profile");
+  markEmployeeFormClean();
 }
 
 function renderTemplates() {
@@ -9015,7 +9098,7 @@ function printLayoutDescription(layout) {
 
 function clearPrintView() {
   document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "compact-preview");
-  if ($("compactViewBtn")) $("compactViewBtn").textContent = "Compact";
+  updateCompactPreviewButton();
   $("printView").hidden = true;
   $("printView").innerHTML = "";
   updateZoomVisibility();
@@ -9028,7 +9111,7 @@ function toggleCompactPreview() {
   }
   renderSimpleRolePrintView($("printSort")?.value || "role", { shiftOrder: compactPrintShiftOrder() });
   document.body.classList.add("compact-preview");
-  if ($("compactViewBtn")) $("compactViewBtn").textContent = "Grid View";
+  updateCompactPreviewButton();
   updateZoomVisibility();
   $("printView")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -9351,7 +9434,7 @@ function renderSimplePrintExtras(employee, employeeId, dateKey) {
     const isBlock = isScheduleBlock(request);
     const timeText = isBlock && !requestOffIsFullDay(request) ? `${request.start || ""} - ${request.end || ""}` : (request.daypart || "All day");
     const details = [isBlock ? scheduleBlockType(request) : "Request off", timeText, request.note].filter(Boolean).join(" - ");
-    extras.push(`<div class="simple-week-line ${isBlock ? "simple-week-block" : "simple-week-ro"}" title="${escapeHtml(details)}"><strong>${isBlock ? "BLOCK" : "RO"}</strong>${isBlock ? `<em>${escapeHtml(scheduleBlockType(request))}</em>` : ""}</div>`);
+    extras.push(`<div class="simple-week-line ${isBlock ? "simple-week-block" : "simple-week-ro"}" title="${escapeHtml(details)}"><strong>${isBlock ? "BLOCK" : "RO"}</strong></div>`);
   });
   const unavailableRanges = employee ? unavailableRangesForEmployeeDate(employee, dateKey) : [];
   const allDayUnavailable = unavailableRanges.some((range) => range.start <= 0 && range.end >= 1440);
@@ -11812,9 +11895,11 @@ function wireEvents() {
     renderAll();
     loadEmployee(id);
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
+    markEmployeeFormClean();
     showEmployeeSavedToast(displayName(employee));
   };
-  $("newEmployeeBtn").onclick = () => {
+  $("newEmployeeBtn").onclick = async () => {
+    if (!(await confirmDiscardEmployeeChanges())) return;
     resetEmployeeForm();
     renderEmployees();
     $("firstName")?.focus();
@@ -12165,5 +12250,6 @@ initializeAuth().then((canLoad) => {
   if (canLoad) hydrateStateFromServer();
 });
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
+window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedEmployeeChanges);
 window.addEventListener("beforeunload", flushServerSaveOnClose);
 

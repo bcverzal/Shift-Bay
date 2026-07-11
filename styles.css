@@ -2878,11 +2878,31 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
     linear-gradient(90deg, color-mix(in srgb, var(--role-color, #64748b) 18%, #ffffff) 0%, rgba(255, 255, 255, 0.96) 70%);
 }
 
+.day-focus-role-group > span:not(.role-group-toggle) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.day-focus-role-group strong {
+  white-space: nowrap;
+}
+
 .day-focus-role-group small {
   margin-left: auto;
   color: #475569;
   font-size: 11px;
   font-weight: 850;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.day-focus-role-group.collapsed-role-group {
+  min-height: 28px;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .day-focus-meal-title {
