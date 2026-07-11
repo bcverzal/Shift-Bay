@@ -1220,7 +1220,11 @@ async function hydrateStateFromServer() {
 function localStateIsNewerThanServer(localState, serverState) {
   const localServerSavedAt = Date.parse(localState?.meta?.serverSavedAt || "");
   const serverSavedAt = Date.parse(serverState?.meta?.serverSavedAt || "");
-  if (localServerSavedAt && serverSavedAt && Math.abs(localServerSavedAt - serverSavedAt) <= 1000) return false;
+  if (serverSavedAt) {
+    if (!localServerSavedAt) return false;
+    if (localServerSavedAt < serverSavedAt - 1000) return false;
+    if (Math.abs(localServerSavedAt - serverSavedAt) <= 1000) return false;
+  }
   const localTime = Date.parse(localState?.meta?.updatedAt || "");
   const serverTime = Date.parse(serverState?.meta?.updatedAt || "");
   if (!localTime || !serverTime) return false;
