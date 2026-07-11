@@ -48,6 +48,7 @@ let selectedTimeOffRequestId = null;
 let pendingDeleteShiftId = null;
 let pendingDeleteTimeOffRequestId = null;
 let clipboardShift = null;
+let clipboardTimeOffRequest = null;
 let undoStack = [];
 let dragShiftId = null;
 let dragUnassignedShiftId = null;
@@ -57,6 +58,7 @@ let dragScrollVelocity = 0;
 let dragGridScrollLock = null;
 let mouseOpenShiftDrag = null;
 let mouseAssignedShiftDrag = null;
+let mouseTimeOffDrag = null;
 let openShiftClickTimer = null;
 let suppressNextOpenShiftClickId = null;
 let selectedUnassignedShiftId = null;
@@ -2561,8 +2563,8 @@ function beginOpenShiftDrag() {
 }
 
 function suppressSelectionWhileDragging(event) {
-  if (event.type === "dragstart" && event.target.closest?.(".unassigned-shift-card, .shift-card")) return;
-  if (!dragShiftId && !dragUnassignedShiftId && !mouseOpenShiftDrag && !mouseAssignedShiftDrag) return;
+  if (event.type === "dragstart" && event.target.closest?.(".unassigned-shift-card, .shift-card, .time-off-badge")) return;
+  if (!dragShiftId && !dragUnassignedShiftId && !mouseOpenShiftDrag && !mouseAssignedShiftDrag && !mouseTimeOffDrag) return;
   event.preventDefault();
 }
 
@@ -2591,6 +2593,12 @@ function endAnyDrag() {
     mouseAssignedShiftDrag.sourceCard.classList.remove("drag-source-hidden");
   }
   mouseAssignedShiftDrag = null;
+  if (mouseTimeOffDrag?.ghost) mouseTimeOffDrag.ghost.remove();
+  if (mouseTimeOffDrag?.sourceBadge) {
+    mouseTimeOffDrag.sourceBadge.dataset.mouseDragging = "false";
+    mouseTimeOffDrag.sourceBadge.classList.remove("drag-source-hidden");
+  }
+  mouseTimeOffDrag = null;
 }
 
 function lockGridScrollForDrag() {
@@ -2825,6 +2833,114 @@ function cancelMouseOpenShiftDrag() {
   endAnyDrag();
 }
 
+function beginMouseTimeOffPaintDrag(event, badge, request) {
+  if (mouseTimeOffDrag || event.button !== 0 || !event.shiftKey || event.target.closest("button")) return;
+  badge.setPointerCapture?.(event.pointerId);
+  mouseTimeOffDrag = {
+    requestId: request.id,
+    sourceEmployeeId: request.employeeId,
+    sourceBadge: badge,
+    paintedTargets: new Map(),
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - badge.getBoundingClientRect().left,
+    offsetY: event.clientY - badge.getBoundingClientRect().top,
+    active: false
+  };
+  document.addEventListener("pointermove", moveMouseTimeOffPaintDrag);
+  document.addEventListener("pointerup", finishMouseTimeOffPaintDrag, { once: true });
+  document.addEventListener("pointercancel", cancelMouseTimeOffPaintDrag, { once: true });
+}
+
+function activateMouseTimeOffPaintDrag(event) {
+  if (!mouseTimeOffDrag || mouseTimeOffDrag.active) return;
+  mouseTimeOffDrag.active = true;
+  mouseTimeOffDrag.sourceBadge.releasePointerCapture?.(event.pointerId);
+  document.body.classList.add("dragging-assigned-shift");
+  lockGridScrollForDrag();
+  mouseTimeOffDrag.sourceBadge.dataset.mouseDragging = "true";
+  mouseTimeOffDrag.ghost = createDragGhost(mouseTimeOffDrag.sourceBadge, event, mouseTimeOffDrag);
+  document.body.append(mouseTimeOffDrag.ghost);
+  updateMouseTimeOffGhost(event);
+  restoreGridScrollDuringDrag();
+}
+
+function moveMouseTimeOffPaintDrag(event) {
+  if (!mouseTimeOffDrag) return;
+  const distance = Math.hypot(event.clientX - mouseTimeOffDrag.startX, event.clientY - mouseTimeOffDrag.startY);
+  if (!mouseTimeOffDrag.active && distance > 1) activateMouseTimeOffPaintDrag(event);
+  if (!mouseTimeOffDrag.active) return;
+  event.preventDefault();
+  updateMouseTimeOffGhost(event);
+  previewMouseTimeOffPaintTarget(event);
+  restoreGridScrollDuringDrag();
+}
+
+function updateMouseTimeOffGhost(event) {
+  const ghost = mouseTimeOffDrag?.ghost;
+  if (!ghost) return;
+  ghost.style.left = `${event.clientX - (mouseTimeOffDrag.offsetX || 0)}px`;
+  ghost.style.top = `${event.clientY - (mouseTimeOffDrag.offsetY || 0)}px`;
+}
+
+function previewMouseTimeOffPaintTarget(event) {
+  const source = (state.timeOffRequests || []).find((request) => request.id === mouseTimeOffDrag?.requestId);
+  const target = assignedShiftDropTargetFromPoint(event.clientX, event.clientY);
+  if (!source || !target?.dataset.employeeId || !target.dataset.date) return;
+  if (target.dataset.employeeId !== mouseTimeOffDrag.sourceEmployeeId) return;
+  if (source.employeeId === target.dataset.employeeId && source.date === target.dataset.date) return;
+  const key = `${target.dataset.employeeId}|${target.dataset.date}`;
+  if (mouseTimeOffDrag.paintedTargets.has(key)) return;
+  const copy = cloneCopiedTimeOffForCell(source, { employeeId: target.dataset.employeeId, date: target.dataset.date });
+  const duplicate = (state.timeOffRequests || []).some((item) => timeOffRequestMatches(item, copy));
+  target.classList.remove("drag-valid", "drag-warning", "drag-invalid");
+  target.classList.add(duplicate ? "drag-invalid" : "drag-valid");
+  mouseTimeOffDrag.paintedTargets.set(key, {
+    employeeId: target.dataset.employeeId,
+    date: target.dataset.date,
+    duplicate
+  });
+}
+
+function finishMouseTimeOffPaintDrag(event) {
+  document.removeEventListener("pointermove", moveMouseTimeOffPaintDrag);
+  document.removeEventListener("pointercancel", cancelMouseTimeOffPaintDrag);
+  const drag = mouseTimeOffDrag;
+  if (!drag) return;
+  if (!drag.active) {
+    mouseTimeOffDrag = null;
+    return;
+  }
+  event.preventDefault();
+  const source = (state.timeOffRequests || []).find((request) => request.id === drag.requestId);
+  const targets = Array.from(drag.paintedTargets?.values?.() || []);
+  const copyable = targets.filter((target) => !target.duplicate);
+  const skipped = targets.length - copyable.length;
+  endAnyDrag();
+  if (!source || !copyable.length) {
+    showConflict(skipped ? "No copies were added. Every painted cell already had that RO/Block." : "Drag across same-row schedule cells to copy the RO/Block.");
+    return;
+  }
+  pushUndo();
+  const copies = copyable.map((target) => cloneCopiedTimeOffForCell(source, target));
+  state.timeOffRequests = [...(state.timeOffRequests || []), ...copies];
+  selectedTimeOffRequestId = copies[copies.length - 1]?.id || null;
+  selectedShiftId = null;
+  selectedUnassignedShiftId = null;
+  selectedCell = copies.length ? { employeeId: copies[copies.length - 1].employeeId, date: copies[copies.length - 1].date } : selectedCell;
+  saveState();
+  renderAllPreservingScheduleScroll();
+  const label = isScheduleBlock(source) ? "Block" : "RO";
+  const skippedText = skipped ? ` Skipped ${skipped} duplicate cell${skipped === 1 ? "" : "s"}.` : "";
+  showConflict(`Copied ${label} into ${copies.length} cell${copies.length === 1 ? "" : "s"}.${skippedText}`);
+}
+
+function cancelMouseTimeOffPaintDrag() {
+  document.removeEventListener("pointermove", moveMouseTimeOffPaintDrag);
+  document.removeEventListener("pointerup", finishMouseTimeOffPaintDrag);
+  endAnyDrag();
+}
+
 function beginMouseAssignedShiftDrag(event, card, shift) {
   if (mouseAssignedShiftDrag) return;
   if (event.button !== 0 || event.target.closest(".delete-confirm-button")) return;
@@ -3043,7 +3159,7 @@ function updateDragAutoScroll(event) {
 }
 
 function runDragAutoScroll() {
-  if (!dragScrollVelocity || (!dragShiftId && !dragUnassignedShiftId)) {
+  if (!dragScrollVelocity || (!dragShiftId && !dragUnassignedShiftId && !mouseTimeOffDrag)) {
     dragScrollFrame = null;
     return;
   }
@@ -3177,9 +3293,6 @@ function renderSelectedStagedShiftInfo() {
       <button class="skip-open-shift-button" type="button" data-skip-open-shift title="Move this shift to the end of the Shift Bay without deleting it. Hotkey: S">Skip</button>
     </div>
     ${renderStagedCandidateSection("Best Fits", candidates.best, "best")}
-    ${renderStagedCandidateSection("Emergency Only", candidates.emergency, "emergency", { collapsible: true })}
-    ${renderClopenAlternatives(candidates)}
-    ${renderStagedCandidateSection("Warnings", candidates.warning, "warning", { collapsible: true })}
     ${renderRecentStagedSection(recent)}
   `;
   panel.querySelectorAll("[data-stage-assign]").forEach((button) => {
@@ -3837,6 +3950,9 @@ function beginDayFocusTimelineDrag(event, bar) {
     timelineEnd: Number(timebar.dataset.timelineEnd) || 1440,
     track,
     bar,
+    labelTime: bar.querySelector(".timebar-shift-label em"),
+    ghostLabelTime: null,
+    originalLabelText: bar.querySelector(".timebar-shift-label em")?.textContent || "",
     moved: false,
     wasUntilVolume: Boolean(shift.untilVolume)
   };
@@ -3853,6 +3969,7 @@ function ensureDayFocusTimelineDragGhost(event) {
   ghost.classList.add("day-focus-drag-ghost");
   document.body.append(ghost);
   drag.ghost = ghost;
+  drag.ghostLabelTime = ghost.querySelector(".timebar-shift-label em");
   drag.bar.dataset.mouseDragging = "true";
   drag.bar.classList.add("drag-source-hidden");
   document.body.classList.add("dragging-assigned-shift");
@@ -3868,9 +3985,14 @@ function updateDayFocusTimelineDragGhost(event) {
 
 function cleanupDayFocusTimelineDragVisual(drag = dayFocusTimelineDrag) {
   drag?.ghost?.remove();
+  removeDayFocusTimelineSnapPreview(drag);
   if (drag?.bar) {
     drag.bar.dataset.mouseDragging = "false";
     drag.bar.classList.remove("drag-source-hidden", "timebar-dragging");
+  }
+  if (drag?.labelTime) {
+    drag.labelTime.classList.remove("timebar-draft-time");
+    if (!drag.moved && drag.originalLabelText) drag.labelTime.textContent = drag.originalLabelText;
   }
   document.body.classList.remove("dragging-assigned-shift");
 }
@@ -3914,6 +4036,60 @@ function dayFocusTimelineDragTimes(clientX) {
   return { start, end };
 }
 
+function dayFocusDraftTimeText(drag, times) {
+  if (!drag || !times) return "";
+  const start = timeFromMinutes(times.start).replace(":00 ", "");
+  const end = drag.wasUntilVolume && drag.mode === "move" ? "Vol" : timeFromMinutes(times.end).replace(":00 ", "");
+  if (drag.mode === "start") return `Start ${start}`;
+  if (drag.mode === "end") return `End ${end}`;
+  return `${start} - ${end}`;
+}
+
+function removeDayFocusTimelineSnapPreview(drag = dayFocusTimelineDrag) {
+  drag?.snapPreview?.remove();
+  if (drag) drag.snapPreview = null;
+}
+
+function updateDayFocusTimelineSnapPreview(drag, times) {
+  if (!drag || !times || !drag.track) return;
+  const range = Math.max(1, drag.timelineEnd - drag.timelineStart);
+  if (!drag.snapPreview) {
+    const preview = document.createElement("div");
+    preview.className = "day-focus-snap-preview";
+    preview.innerHTML = '<span class="day-focus-snap-line day-focus-snap-line-start"></span><span class="day-focus-snap-line day-focus-snap-line-end"></span><strong class="day-focus-snap-label"></strong>';
+    drag.track.append(preview);
+    drag.snapPreview = preview;
+  }
+  const startPct = ((Math.max(drag.timelineStart, Math.min(drag.timelineEnd, times.start)) - drag.timelineStart) / range) * 100;
+  const endPct = ((Math.max(drag.timelineStart, Math.min(drag.timelineEnd, times.end)) - drag.timelineStart) / range) * 100;
+  const activePct = drag.mode === "end" ? endPct : startPct;
+  const preview = drag.snapPreview;
+  const startLine = preview.querySelector(".day-focus-snap-line-start");
+  const endLine = preview.querySelector(".day-focus-snap-line-end");
+  const label = preview.querySelector(".day-focus-snap-label");
+  if (startLine) {
+    startLine.style.left = `${startPct}%`;
+    startLine.hidden = drag.mode === "end";
+  }
+  if (endLine) {
+    endLine.style.left = `${endPct}%`;
+    endLine.hidden = drag.mode === "start" || (drag.wasUntilVolume && drag.mode === "move");
+  }
+  if (label) {
+    label.textContent = dayFocusDraftTimeText(drag, times);
+    label.style.left = `${Math.max(3, Math.min(97, activePct))}%`;
+  }
+}
+
+function updateDayFocusTimelineDraftLabels(drag, times) {
+  const text = dayFocusDraftTimeText(drag, times);
+  [drag?.labelTime, drag?.ghostLabelTime].forEach((label) => {
+    if (!label || !text) return;
+    label.textContent = text;
+    label.classList.add("timebar-draft-time");
+  });
+}
+
 function moveDayFocusTimelineDrag(event) {
   const drag = dayFocusTimelineDrag;
   if (!drag) return;
@@ -3930,10 +4106,8 @@ function moveDayFocusTimelineDrag(event) {
   const width = Math.max(7, ((visibleEnd - visibleStart) / range) * 100);
   drag.bar.style.left = `${left}%`;
   drag.bar.style.width = `${Math.min(width, 100 - left)}%`;
-  const label = drag.bar.querySelector(".timebar-shift-label");
-  const labelTime = label?.querySelector("em");
-  if (labelTime) labelTime.textContent = `${timeFromMinutes(times.start).replace(":00 ", "")} - ${drag.wasUntilVolume && drag.mode === "move" ? "Vol" : timeFromMinutes(times.end).replace(":00 ", "")}`;
-  else if (label) label.textContent = `${timeFromMinutes(times.start).replace(":00 ", "")} - ${drag.wasUntilVolume && drag.mode === "move" ? "Vol" : timeFromMinutes(times.end).replace(":00 ", "")}`;
+  updateDayFocusTimelineSnapPreview(drag, times);
+  updateDayFocusTimelineDraftLabels(drag, times);
 }
 
 async function finishDayFocusTimelineDrag(event) {
@@ -5060,6 +5234,7 @@ function toggleManualRequestOff(employeeId, dateKey) {
   if (manual) {
     pushUndo();
     state.timeOffRequests = state.timeOffRequests.filter((request) => request.id !== manual.id);
+    saveState();
     renderAll();
     showConflict(`Removed manual RO for ${displayName(employeeById(employeeId))} on ${displayDate(parseDateKey(dateKey))}.`);
     return;
@@ -5078,8 +5253,8 @@ function toggleManualRequestOff(employeeId, dateKey) {
     note: "Manual grid entry",
     source: "Manual"
   });
+  saveState();
   renderAll();
-  showConflict(`Added RO for ${displayName(employeeById(employeeId))} on ${displayDate(parseDateKey(dateKey))}.`);
 }
 
 function openDayBlockDialog(employeeId = selectedCell?.employeeId, dateKey = selectedCell?.date) {
@@ -5246,6 +5421,13 @@ function renderTimeOffBadge(request) {
     event.stopPropagation();
     deleteTimeOffRequest(request.id);
   });
+  badge.onpointerdown = (event) => {
+    if (!event.shiftKey || event.target.closest("button")) return;
+    event.stopPropagation();
+    event.preventDefault();
+    selectRequest();
+    beginMouseTimeOffPaintDrag(event, badge, request);
+  };
   return badge;
 }
 
@@ -8238,15 +8420,39 @@ function clearSelectedEmployee() {
 }
 
 function copySelectedShift() {
+  const request = (state.timeOffRequests || []).find((item) => item.id === selectedTimeOffRequestId);
+  if (request) {
+    clipboardTimeOffRequest = JSON.parse(JSON.stringify(request));
+    clipboardShift = null;
+    showConflict(`Copied ${isScheduleBlock(request) ? "Block" : "RO"} for ${displayName(employeeById(request.employeeId))}.`);
+    return;
+  }
   const shift = state.shifts.find((item) => item.id === selectedShiftId);
-  if (!shift) return showConflict("Select a shift to copy.");
+  if (!shift) return showConflict("Select a shift, RO, or Block to copy.");
   clipboardShift = JSON.parse(JSON.stringify(shift));
+  clipboardTimeOffRequest = null;
   showConflict(`Copied ${roleById(shift.roleId)?.name || "shift"} ${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}.`);
 }
 
 async function pasteShift() {
-  if (!clipboardShift) return showConflict("Copy a shift first.");
   if (!selectedCell?.employeeId || !selectedCell?.date) return showConflict("Select an employee/day cell to paste into.");
+  if (clipboardTimeOffRequest) {
+    const request = cloneCopiedTimeOffForCell(clipboardTimeOffRequest, selectedCell);
+    const duplicate = (state.timeOffRequests || []).some((item) => timeOffRequestMatches(item, request));
+    if (duplicate) return showConflict(`That ${isScheduleBlock(request) ? "Block" : "RO"} is already in that cell.`);
+    pushUndo();
+    state.timeOffRequests = [...(state.timeOffRequests || []), request];
+    selectedTimeOffRequestId = request.id;
+    selectedShiftId = null;
+    selectedUnassignedShiftId = null;
+    pendingDeleteShiftId = null;
+    pendingDeleteTimeOffRequestId = null;
+    saveState();
+    renderAll();
+    showConflict(`Pasted ${isScheduleBlock(request) ? "Block" : "RO"} for ${displayName(employeeById(request.employeeId))} on ${displayDate(parseDateKey(request.date))}.`);
+    return;
+  }
+  if (!clipboardShift) return showConflict("Copy a shift, RO, or Block first.");
   const shift = cloneCopiedShiftForCell(clipboardShift, selectedCell);
   const result = validateShift(shift);
   if (result.errors.length) return showConflict(result.errors.join(" "));
@@ -8258,6 +8464,7 @@ async function pasteShift() {
   selectedUnassignedShiftId = null;
   pendingDeleteShiftId = null;
   pendingDeleteTimeOffRequestId = null;
+  saveState();
   renderAll();
   showConflict(`Pasted ${roleById(shift.roleId)?.name || "shift"} for ${displayName(employeeById(shift.employeeId))} on ${displayDate(parseDateKey(shift.date))}.`);
 }
@@ -8276,6 +8483,33 @@ function cloneCopiedShiftForCell(sourceShift, targetCell) {
     updatedAt: nowIso(),
     updatedBy: currentSaveActor()
   };
+}
+
+function cloneCopiedTimeOffForCell(sourceRequest, targetCell) {
+  const copy = JSON.parse(JSON.stringify(sourceRequest || {}));
+  delete copy.id;
+  delete copy.createdAt;
+  delete copy.updatedAt;
+  return {
+    ...copy,
+    id: uid(isScheduleBlock(copy) ? "block" : "ro"),
+    employeeId: targetCell.employeeId,
+    date: targetCell.date,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    updatedBy: currentSaveActor()
+  };
+}
+
+function timeOffRequestMatches(a = {}, b = {}) {
+  return a.employeeId === b.employeeId &&
+    a.date === b.date &&
+    timeOffShortLabel(a) === timeOffShortLabel(b) &&
+    requestOffIsFullDay(a) === requestOffIsFullDay(b) &&
+    (a.start || "") === (b.start || "") &&
+    (a.end || "") === (b.end || "") &&
+    (a.daypart || "") === (b.daypart || "") &&
+    scheduleBlockType(a) === scheduleBlockType(b);
 }
 
 function exportCsv() {
