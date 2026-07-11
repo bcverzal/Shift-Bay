@@ -887,6 +887,7 @@ body:has(#schedule.panel.active):not(.compact-preview) #conflictBanner {
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) #printFilters,
+body:has(#schedule.panel.active):not(.compact-preview) #dayFocusToolRail,
 body:has(#schedule.panel.active):not(.compact-preview) #roleJumpStrip {
   position: absolute;
   left: 0;
@@ -2010,8 +2011,90 @@ body.shift-bay-expanded .unassigned-shift-card small {
   vertical-align: top;
 }
 
+.day-focus-tool-rail {
+  display: inline-grid;
+  align-content: start;
+  justify-items: center;
+  gap: 5px;
+  width: 56px;
+  padding: 7px 6px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 999px;
+  background: rgba(239, 246, 255, 0.95);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+  transition: width 180ms ease, border-radius 180ms ease, box-shadow 180ms ease;
+}
+
+body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail {
+  top: var(--day-focus-tool-rail-top, 166px);
+  z-index: 48;
+}
+
+body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:hover,
+body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focus-within {
+  width: min(150px, calc(100vw - 70px));
+  border-radius: 14px;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.16);
+}
+
+.day-focus-tool-rail > span {
+  display: grid;
+  width: 42px;
+  min-height: 22px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.day-focus-tool-rail .rail-label-full {
+  display: none;
+}
+
+.day-focus-tool-rail:hover .rail-label-full,
+.day-focus-tool-rail:focus-within .rail-label-full {
+  display: inline;
+}
+
+.day-focus-tool-rail:hover .rail-label-short,
+.day-focus-tool-rail:focus-within .rail-label-short {
+  display: none;
+}
+
+.day-focus-tool-button {
+  display: grid;
+  width: 42px;
+  min-height: 26px;
+  place-items: center;
+  padding: 3px 5px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #eaf2ff 100%);
+  color: #1e3a8a;
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.day-focus-tool-rail:hover .day-focus-tool-button,
+.day-focus-tool-rail:focus-within .day-focus-tool-button {
+  width: 100%;
+  min-height: 28px;
+  font-size: 11px;
+}
+
+.day-focus-tool-button.selected {
+  border-color: rgba(37, 99, 235, 0.62);
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(15, 23, 42, 0.22);
+}
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
-  top: 223px;
+  top: var(--role-jump-default-top, 223px);
   width: 44px;
   max-width: none;
   display: grid;
@@ -2027,6 +2110,14 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
   transition: top 180ms ease, width 180ms ease, max-height 180ms ease, border-radius 180ms ease, box-shadow 180ms ease;
 }
 
+
+body:has(#schedule.panel.active):not(.compact-preview):has(.day-focus-grid) .schedule-grid {
+  margin-left: 66px;
+}
+
+body:has(#schedule.panel.active):not(.compact-preview):has(.day-focus-grid) .role-jump-strip {
+  top: var(--role-jump-day-focus-top, 300px);
+}
 body.grid-filters-open:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
   top: var(--role-jump-open-top, 440px);
 }
@@ -3273,6 +3364,140 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   text-transform: uppercase;
 }
 
+.day-focus-open-name,
+.day-focus-open-cell {
+  min-height: 42px !important;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(239, 246, 255, 0.96) 100%);
+  border-bottom-color: rgba(37, 99, 235, 0.16);
+}
+
+.day-focus-open-name.expanded,
+.day-focus-open-cell.expanded {
+  min-height: 64px !important;
+}
+
+.day-focus-open-name {
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+}
+
+.day-focus-open-label {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px dashed color-mix(in srgb, var(--role-color, #2563eb) 45%, #94a3b8);
+  border-left: 4px solid var(--role-color, #2563eb);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1e293b;
+}
+
+.day-focus-open-label strong,
+.day-focus-open-label span {
+  display: block;
+}
+
+.day-focus-open-label strong {
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.day-focus-open-label span {
+  margin-top: 2px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.day-focus-open-toggle {
+  justify-self: end;
+  width: 19px;
+  height: 19px;
+  min-width: 19px;
+  padding: 0;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.day-focus-open-cell {
+  padding: 3px 6px;
+}
+
+.day-focus-open-timebar-wrap {
+  display: grid;
+  gap: 2px;
+}
+
+.day-focus-open-timebar-wrap .day-focus-timebar-track {
+  min-height: 30px;
+}
+
+.day-focus-open-shift {
+  top: 3px;
+  height: 23px;
+  border: 2px dashed rgba(255, 255, 255, 0.95);
+  outline: 2px dashed color-mix(in srgb, var(--shift-color, #2563eb) 55%, #ffffff);
+  outline-offset: -5px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--shift-color, #2563eb) 54%, #ffffff) 0%,
+    color-mix(in srgb, var(--shift-color, #2563eb) 68%, #ffffff) 100%) !important;
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.day-focus-open-shift .timebar-shift-label {
+  padding-left: 14px;
+}
+
+.day-focus-open-eligible {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  padding: 0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+
+.day-focus-open-eligible > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.day-focus-open-eligible > div button {
+  padding: 3px 8px;
+  border: 1px solid #86efac;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%);
+  color: #047857;
+  font-size: 10px;
+  font-weight: 850;
+  box-shadow: 0 2px 5px rgba(5, 150, 105, 0.14);
+}
+
+.day-focus-open-eligible em {
+  color: #64748b;
+  font-style: normal;
+  font-size: 10px;
+}
+
 .day-focus-employee-name {
   min-height: 34px !important;
   display: grid;
@@ -3863,7 +4088,7 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
   height: 18px;
   border: 1px solid currentColor;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   font-weight: 900;
   background: rgba(255, 255, 255, 0.68);
@@ -5443,14 +5668,19 @@ legend {
 
 .availability-day {
   display: grid;
-  grid-template-columns: 86px minmax(170px, 1fr) auto;
+  grid-template-columns: 86px minmax(120px, 1fr) auto auto auto;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
 }
 
 .availability-day .small-button {
-  min-width: 62px;
+  min-width: 44px;
+  padding-inline: 8px;
+}
+
+.availability-day .small-button:first-of-type {
+  min-width: 58px;
 }
 
 .availability-actions {
@@ -5850,7 +6080,7 @@ fieldset .checkbox {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.78);
   color: #2563eb;
-  font-size: 14px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 950;
 }
@@ -6203,7 +6433,7 @@ fieldset .checkbox {
 .settings-day h3 {
   margin: 0 0 9px;
   color: #1f3b63;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 950;
 }
 
@@ -7157,7 +7387,7 @@ dialog {
 
 .recent-activity-main strong {
   color: #1e3a8a;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 950;
   text-transform: capitalize;
 }
@@ -7285,7 +7515,7 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .modal-editor > .form-action
 .app-confirm-message {
   margin: 0 0 10px;
   color: #475467;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -7916,7 +8146,7 @@ dialog .time-picker {
   }
 
   body.printing-simple .print-view h2 {
-    font-size: 14px;
+    font-size: 12px;
     margin-bottom: 8px;
   }
 
@@ -8377,3 +8607,44 @@ select {
   line-height: 1.35;
 }
 
+
+/* Keep the single-day utility rail stable; expanding here steals space from the day board. */
+body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:hover,
+body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focus-within {
+  width: 56px;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.day-focus-tool-rail .rail-label-full,
+.day-focus-tool-rail:hover .rail-label-full,
+.day-focus-tool-rail:focus-within .rail-label-full {
+  display: none;
+}
+
+.day-focus-tool-rail .rail-label-short,
+.day-focus-tool-rail:hover .rail-label-short,
+.day-focus-tool-rail:focus-within .rail-label-short {
+  display: inline;
+}
+
+.day-focus-tool-rail:hover .day-focus-tool-button,
+.day-focus-tool-rail:focus-within .day-focus-tool-button {
+  width: 42px;
+  min-height: 26px;
+  font-size: 10px;
+}
+
+.day-focus-open-timeline .timebar-meal-segment em {
+  display: none;
+}
+
+.day-focus-open-timeline .day-focus-row-tick {
+  background: rgba(100, 116, 139, 0.24);
+}
+
+.day-focus-open-timeline .day-focus-row-tick em {
+  top: 1px;
+  color: rgba(51, 65, 85, 0.58);
+  font-size: 8px;
+}

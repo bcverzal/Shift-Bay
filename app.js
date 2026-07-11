@@ -8,6 +8,8 @@ const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1"
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
 const DISMISSED_ISSUES_KEY = "restaurantScheduler.dismissedIssues.v1";
 const COLLAPSED_SETTINGS_SECTIONS_KEY = "restaurantScheduler.collapsedSettingsSections.v1";
+const DAY_FOCUS_SHOW_OPEN_KEY = "restaurantScheduler.dayFocusShowOpen.v1";
+const DAY_FOCUS_SORT_KEY = "restaurantScheduler.dayFocusSort.v1";
 const DATA_SCHEMA_VERSION = 2;
 const PUBLIC_CONFIG = window.SHIFT_BAY_CONFIG || {};
 const HOSTED_API_BASE = String(PUBLIC_CONFIG.apiBase || "").replace(/\/$/, "");
@@ -79,6 +81,9 @@ let gridFiltersStayOpen = false;
 let gridFiltersChangedWhileOpen = false;
 let focusedDateKey = "";
 let dayFocusTimelineDrag = null;
+let dayFocusShowOpenShifts = loadDayFocusShowOpenShifts();
+let dayFocusSortMode = loadDayFocusSortMode();
+let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
@@ -95,6 +100,39 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function loadDayFocusShowOpenShifts() {
+  try {
+    const saved = localStorage.getItem(DAY_FOCUS_SHOW_OPEN_KEY);
+    return saved == null ? true : saved === "true";
+  } catch {
+    return true;
+  }
+}
+
+function saveDayFocusShowOpenShifts() {
+  try {
+    localStorage.setItem(DAY_FOCUS_SHOW_OPEN_KEY, String(dayFocusShowOpenShifts));
+  } catch {
+    // Display preference only.
+  }
+}
+
+function loadDayFocusSortMode() {
+  try {
+    const saved = localStorage.getItem(DAY_FOCUS_SORT_KEY);
+    return saved === "start" ? "start" : "alpha";
+  } catch {
+    return "alpha";
+  }
+}
+
+function saveDayFocusSortMode() {
+  try {
+    localStorage.setItem(DAY_FOCUS_SORT_KEY, dayFocusSortMode);
+  } catch {
+    // Display preference only.
+  }
+}
 function getDeviceId() {
   const key = "restaurantScheduler.deviceId";
   let id = localStorage.getItem(key);
@@ -2350,6 +2388,10 @@ function renderUnassignedShiftTray() {
       openShiftClickTimer = null;
       const currentCard = document.querySelector(`[data-unassigned-shift-id="${clickUnassignedShiftId}"]`);
       if (!currentCard || currentCard.dataset.mouseDragging === "true") return;
+      if (selectedUnassignedShiftId === clickUnassignedShiftId) {
+        clearOpenShiftSelectionAfterClick();
+        return;
+      }
       selectOpenShiftWithoutFullRender(clickUnassignedShiftId);
     }, 140);
   };
@@ -3258,6 +3300,21 @@ function selectOpenShiftWithoutFullRender(unassignedId) {
   renderSelectedStagedShiftInfo();
 }
 
+function clearOpenShiftSelectionAfterClick() {
+  selectedUnassignedShiftId = null;
+  pendingTrayWarning = null;
+  pendingDeleteUnassignedShiftId = null;
+  pendingDeleteShiftId = null;
+  document.querySelectorAll(".unassigned-shift-card").forEach((card) => {
+    card.classList.remove("selected", "pending-delete");
+    card.querySelector(":scope > .delete-confirm-button")?.remove();
+  });
+  if (focusedDateKey) {
+    renderSchedulePreservingGridScroll();
+    return;
+  }
+  renderSelectedStagedShiftInfo();
+}
 function clearOpenShiftSelectionWithoutFullRender() {
   selectedUnassignedShiftId = null;
   pendingTrayWarning = null;
@@ -3271,9 +3328,10 @@ function renderSelectedStagedShiftInfo() {
   const panel = $("stagedShiftInfo");
   if (!panel) return;
   const shift = state.unassignedShifts?.find((item) => item.id === selectedUnassignedShiftId);
-  document.body.classList.toggle("shift-bay-expanded", Boolean(shift));
-  if (!shift) {
-    selectedUnassignedShiftId = null;
+  const showPanel = Boolean(shift) && !focusedDateKey;
+  document.body.classList.toggle("shift-bay-expanded", showPanel);
+  if (!shift || focusedDateKey) {
+    if (!shift) selectedUnassignedShiftId = null;
     panel.hidden = true;
     panel.classList.add("empty");
     panel.innerHTML = "";
@@ -3569,6 +3627,7 @@ function renderSchedule() {
   const selectedRoleId = selectedOpenShiftRoleId();
   const selectedOpenShift = selectedOpenShiftForSchedule();
   const orderedEmployees = prioritizeEmployeesForOpenShift(activeEmployees, selectedOpenShift);
+  renderDayFocusToolRail();
   renderRoleJumpStrip(selectedRoleId);
   if (focusedDateKey) {
     if ($("printFilters")) $("printFilters").hidden = true;
@@ -3660,31 +3719,195 @@ function renderDayFocusRoleSections(grid, employees, dateKey, selectedRoleId = "
   const rendered = new Set();
   orderedRolesForSchedule(selectedRoleId).forEach((role) => {
     const groupEmployees = employees.filter((employee) => dayFocusRolesForEmployee(employee, dateKey).has(role.id));
-    if (!groupEmployees.length) return;
-    renderDayFocusRoleHeader(grid, role, groupEmployees, dateKey);
-    groupEmployees.forEach((employee) => {
+    const openRoleShifts = dayFocusOpenShiftsForRole(dateKey, role.id);
+    if (!groupEmployees.length && (!dayFocusShowOpenShifts || !openRoleShifts.length)) return;
+    renderDayFocusRoleHeader(grid, role, groupEmployees, dateKey, openRoleShifts.length);
+    const sortedEmployees = sortDayFocusGroupEmployees(groupEmployees, dateKey);
+    if (dayFocusShowOpenShifts && dayFocusSortMode === "start" && openRoleShifts.length) {
+      renderDayFocusRoleStartSortedRows(grid, role, sortedEmployees, openRoleShifts, dateKey, selectedRoleId, rendered);
+      return;
+    }
+    if (dayFocusShowOpenShifts) renderDayFocusOpenShiftRows(grid, role, openRoleShifts, dateKey);
+    sortedEmployees.forEach((employee) => {
       rendered.add(employee.id);
       renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId, role);
     });
   });
   const otherEmployees = employees.filter((employee) => !rendered.has(employee.id));
   if (otherEmployees.length) {
-    renderDayFocusRoleHeader(grid, { id: "__other__", name: "Other Available Staff", color: "#64748b" }, otherEmployees, dateKey);
-    otherEmployees.forEach((employee) => renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId));
+    const otherRole = { id: "__other__", name: "Other Available Staff", color: "#64748b" };
+    renderDayFocusRoleHeader(grid, otherRole, otherEmployees, dateKey, 0);
+    sortDayFocusGroupEmployees(otherEmployees, dateKey).forEach((employee) => renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId));
   }
 }
 
-function renderDayFocusRoleHeader(grid, role, employees, dateKey) {
+function renderDayFocusRoleStartSortedRows(grid, role, employees, openShifts, dateKey, selectedRoleId, rendered) {
+  const rows = [
+    ...openShifts.map((openShift) => ({
+      type: "open",
+      key: `open-${openShift.id}`,
+      start: minutesFromTime(openShift.start) ?? 99999,
+      label: `${role.name} ${openShift.start || ""}`,
+      openShift
+    })),
+    ...employees.map((employee) => ({
+      type: "employee",
+      key: `employee-${employee.id}`,
+      start: earliestEmployeeShiftStartForDate(employee.id, dateKey),
+      label: displayName(employee),
+      employee
+    }))
+  ].sort((a, b) => {
+    const startCompare = a.start - b.start;
+    if (startCompare) return startCompare;
+    if (a.type !== b.type) return a.type === "open" ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  rows.forEach((row) => {
+    if (row.type === "open") {
+      renderDayFocusOpenShiftRows(grid, role, [row.openShift], dateKey);
+      return;
+    }
+    rendered.add(row.employee.id);
+    renderDayFocusEmployeeRow(grid, row.employee, dateKey, selectedRoleId, role);
+  });
+}
+
+function renderDayFocusRoleHeader(grid, role, employees, dateKey, openShiftCount = 0) {
   const roleShifts = state.shifts.filter((shift) => shift.date === dateKey && shift.roleId === role.id && visibleShift(shift));
+  const openText = openShiftCount ? ` / ${openShiftCount} open` : "";
   const header = cell("schedule-role-group day-focus-role-group", `
     <strong>${escapeHtml(role.name)}</strong>
-    <small>${employees.length} staff / ${roleShifts.length} shift${roleShifts.length === 1 ? "" : "s"}</small>
+    <small>${employees.length} staff / ${roleShifts.length} shift${roleShifts.length === 1 ? "" : "s"}${openText}</small>
   `);
   header.dataset.roleGroup = role.id;
   header.style.setProperty("--role-color", role.color || "#64748b");
   grid.append(header);
 }
 
+function sortDayFocusGroupEmployees(employees, dateKey) {
+  const list = [...employees];
+  if (dayFocusSortMode !== "start") {
+    return list.sort((a, b) => displayName(a).localeCompare(displayName(b)));
+  }
+  return list.sort((a, b) => {
+    const aStart = earliestEmployeeShiftStartForDate(a.id, dateKey);
+    const bStart = earliestEmployeeShiftStartForDate(b.id, dateKey);
+    return aStart - bStart || displayName(a).localeCompare(displayName(b));
+  });
+}
+
+function earliestEmployeeShiftStartForDate(employeeId, dateKey) {
+  const starts = state.shifts
+    .filter((shift) => shift.employeeId === employeeId && shift.date === dateKey && visibleShift(shift))
+    .map((shift) => minutesFromTime(shift.start))
+    .filter((value) => value != null);
+  return starts.length ? Math.min(...starts) : 99999;
+}
+
+function dayFocusOpenShiftsForRole(dateKey, roleId) {
+  return (state.unassignedShifts || [])
+    .filter((shift) => shift.date === dateKey && shift.roleId === roleId && visibleShift(shift))
+    .sort((a, b) => (minutesFromTime(a.start) ?? 0) - (minutesFromTime(b.start) ?? 0) || (minutesFromTime(a.end) ?? 0) - (minutesFromTime(b.end) ?? 0));
+}
+
+function dayFocusEligibleEmployeesForOpenShift(openShift) {
+  return schedulableEmployees()
+    .filter(visibleEmployee)
+    .map((employee) => {
+      const proposed = stagedShiftToShift(openShift, employee.id);
+      const result = validateShift(proposed);
+      return { employee, result };
+    })
+    .filter((item) => !item.result.errors.length && !item.result.warnings.length)
+    .sort((a, b) => displayName(a.employee).localeCompare(displayName(b.employee)));
+}
+
+function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
+  openShifts.forEach((openShift) => {
+    const roleColor = role.color || shiftColor(openShift);
+    const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
+    const labelCell = cell(`day-focus-open-name ${expanded ? "expanded" : ""}`, `
+      <div class="day-focus-open-label" style="--role-color:${roleColor}">
+        <div>
+          <strong>Open</strong>
+          <span>${escapeHtml(openShift.start)} - ${escapeHtml(openShift.untilVolume ? "Vol" : openShift.end)}</span>
+        </div>
+        <button type="button" class="day-focus-open-toggle" data-day-open-toggle-eligible aria-label="${expanded ? "Hide" : "Show"} eligible staff for this open shift">${expanded ? "-" : "+"}</button>
+      </div>
+    `);
+    const timelineCell = cell(`day-cell day-focus-open-cell ${expanded ? "expanded" : ""}`, renderDayFocusOpenShiftTimeline(openShift, role));
+    timelineCell.dataset.date = dateKey;
+    timelineCell.dataset.openShiftId = openShift.id;
+    grid.append(labelCell);
+    grid.append(timelineCell);
+    timelineCell.querySelector("[data-day-open-edit]")?.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      selectedUnassignedShiftId = openShift.id;
+      openShiftDialog(openShift);
+    });
+    labelCell.querySelector("[data-day-open-toggle-eligible]")?.addEventListener("click", () => {
+      if (dayFocusExpandedEligibleShiftIds.has(openShift.id)) dayFocusExpandedEligibleShiftIds.delete(openShift.id);
+      else dayFocusExpandedEligibleShiftIds.add(openShift.id);
+      renderSchedulePreservingGridScroll();
+    });
+    timelineCell.querySelectorAll("[data-day-open-assign]").forEach((button) => {
+      button.addEventListener("click", () => assignUnassignedShift(openShift.id, button.dataset.dayOpenAssign));
+    });
+  });
+}
+
+function renderDayFocusOpenShiftTimeline(openShift, role) {
+  const window = dayFocusFullTimelineWindow(openShift.date);
+  const range = Math.max(1, window.end - window.start);
+  const shiftRange = getTimelineRange(openShift);
+  const start = shiftRange.start ?? window.start;
+  const end = shiftRange.end ?? start + 60;
+  const visibleStart = Math.max(window.start, start);
+  const visibleEnd = Math.min(window.end, end);
+  const left = ((visibleStart - window.start) / range) * 100;
+  const width = Math.max(5, ((Math.max(visibleEnd, visibleStart + 30) - visibleStart) / range) * 100);
+  const eligible = dayFocusEligibleEmployeesForOpenShift(openShift);
+  const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
+  const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
+  const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
+  const chips = eligible.length
+    ? eligible.map((item) => `<button type="button" data-day-open-assign="${item.employee.id}" title="Assign this open shift to ${escapeHtml(displayName(item.employee))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
+    : `<em>No clean fits</em>`;
+  return `
+    <div class="day-focus-row-timebar day-focus-open-timebar-wrap">
+      <div class="day-focus-timebar day-focus-row-timeline day-focus-open-timeline" data-timeline-date="${openShift.date}" data-timeline-start="${window.start}" data-timeline-end="${window.end}">
+        <div class="day-focus-timebar-track" style="--timeline-lanes:1;">
+          ${renderDayFocusTimelineBackdrop(openShift.date, window, true)}
+          <div class="day-focus-timebar-shift day-focus-open-shift ${selectedUnassignedShiftId === openShift.id ? "selected" : ""}" data-day-open-edit data-unassigned-shift-id="${openShift.id}" style="--shift-color:${role.color || shiftColor(openShift)}; left:${left}%; width:${Math.min(width, 100 - left)}%;" title="Open ${escapeHtml(role?.name || "shift")}: ${escapeHtml(openShift.start)} - ${escapeHtml(openShift.untilVolume ? "Until Volume" : openShift.end)}">
+            <span class="timebar-shift-label"><strong>Open ${escapeHtml(role?.name || "Shift")}</strong><em>${escapeHtml(timeLabel)}</em></span>
+          </div>
+        </div>
+      </div>
+      ${expanded ? `<div class="day-focus-open-eligible"><span>Eligible</span><div>${chips}</div></div>` : ""}
+    </div>
+  `;
+}
+
+function renderDayFocusTimelineBackdrop(dateKey, window, showTicks = false) {
+  const range = Math.max(1, window.end - window.start);
+  const periods = getMealPeriodsForDate(dateKey).filter((period) => ["Breakfast", "Lunch", "Dinner"].includes(period.name));
+  const segments = periods.map((period) => {
+    const left = ((Math.max(window.start, period.startMinutes) - window.start) / range) * 100;
+    const width = ((Math.min(window.end, period.endMinutes) - Math.max(window.start, period.startMinutes)) / range) * 100;
+    return `<span class="timebar-meal-segment timebar-meal-${period.name.toLowerCase()}" style="left:${left}%; width:${Math.max(0, width)}%;"><em>${period.name}</em></span>`;
+  }).join("");
+  if (!showTicks) return segments;
+  const ticks = [];
+  for (let minutes = Math.ceil(window.start / 180) * 180; minutes <= window.end; minutes += 180) {
+    ticks.push({
+      label: timeFromMinutes(minutes).replace(":00", "").replace(" ", ""),
+      left: ((minutes - window.start) / range) * 100
+    });
+  }
+  return `${segments}${ticks.map((tick) => `<span class="timebar-tick day-focus-row-tick" style="left:${tick.left}%"><em>${tick.label}</em></span>`).join("")}`;
+}
 function dayFocusPrimaryRoleName(employee, dateKey, selectedRoleId = "") {
   if (selectedRoleId && employee.roleTraining?.includes(selectedRoleId)) return roleById(selectedRoleId)?.name || "";
   const scheduledRole = state.shifts.find((shift) => shift.employeeId === employee.id && shift.date === dateKey && visibleShift(shift))?.roleId;
@@ -3769,7 +3992,8 @@ function renderDayFocusTimelineHeader(dateKey) {
 function dayFocusFullTimelineWindow(dateKey) {
   const periods = getMealPeriodsForDate(dateKey).filter((period) => ["Breakfast", "Lunch", "Dinner"].includes(period.name));
   const shifts = state.shifts.filter((shift) => shift.date === dateKey && visibleShift(shift));
-  const shiftRanges = shifts.map(getTimelineRange).filter((range) => range.start != null);
+  const openShifts = dayFocusShowOpenShifts ? (state.unassignedShifts || []).filter((shift) => shift.date === dateKey && visibleShift(shift)) : [];
+  const shiftRanges = [...shifts, ...openShifts].map(getTimelineRange).filter((range) => range.start != null);
   const periodStarts = periods.map((period) => period.startMinutes).filter((value) => value != null);
   const periodEnds = periods.map((period) => period.endMinutes).filter((value) => value != null);
   const shiftStarts = shiftRanges.map((range) => range.start).filter((value) => value != null);
@@ -3813,11 +4037,7 @@ function renderDayFocusFullTimeline(dateKey, countHtml = "") {
       left: ((minutes - window.start) / range) * 100
     });
   }
-  const segments = periods.map((period) => {
-    const left = ((Math.max(window.start, period.startMinutes) - window.start) / range) * 100;
-    const width = ((Math.min(window.end, period.endMinutes) - Math.max(window.start, period.startMinutes)) / range) * 100;
-    return `<span class="timebar-meal-segment timebar-meal-${period.name.toLowerCase()}" style="left:${left}%; width:${Math.max(0, width)}%;"><em>${period.name}</em></span>`;
-  }).join("");
+  const segments = renderDayFocusTimelineBackdrop(dateKey, window, false);
   return `
     <div class="day-focus-timebar day-focus-full-timebar" data-timeline-date="${dateKey}" data-timeline-start="${window.start}" data-timeline-end="${window.end}">
       <div class="day-focus-timebar-track day-focus-ruler-track" style="--timeline-lanes:1;">
@@ -4415,6 +4635,52 @@ function dayFocusCleanFitForDay(employee, dateKey, selectedRoleId = "") {
   return null;
 }
 
+function renderDayFocusToolRail() {
+  const rail = $("dayFocusToolRail");
+  if (!rail) return;
+  if (!focusedDateKey) {
+    rail.hidden = true;
+    rail.innerHTML = "";
+    return;
+  }
+  document.body.classList.remove("grid-filters-open");
+  rail.hidden = false;
+  rail.innerHTML = `
+    <span><span class="rail-label-short">Day</span><span class="rail-label-full">Day view</span></span>
+    <button type="button" class="day-focus-tool-button ${dayFocusShowOpenShifts ? "selected" : ""}" data-day-focus-open-toggle title="Show or hide unassigned Shift Bay shifts inside this day view">Bay</button>
+    <button type="button" class="day-focus-tool-button ${dayFocusSortMode === "alpha" ? "selected" : ""}" data-day-focus-sort="alpha" title="Sort staff alphabetically inside each role">A-Z</button>
+    <button type="button" class="day-focus-tool-button ${dayFocusSortMode === "start" ? "selected" : ""}" data-day-focus-sort="start" title="Sort staff inside each role by earliest scheduled start time">Start</button>
+  `;
+  rail.querySelector("[data-day-focus-open-toggle]")?.addEventListener("click", () => {
+    dayFocusShowOpenShifts = !dayFocusShowOpenShifts;
+    saveDayFocusShowOpenShifts();
+    renderSchedulePreservingGridScroll();
+  });
+  rail.querySelectorAll("[data-day-focus-sort]").forEach((button) => {
+    button.addEventListener("click", () => {
+      dayFocusSortMode = button.dataset.dayFocusSort === "start" ? "start" : "alpha";
+      saveDayFocusSortMode();
+      renderSchedulePreservingGridScroll();
+    });
+  });
+  positionDayFocusRails();
+}
+
+function positionDayFocusRails() {
+  const rail = $("dayFocusToolRail");
+  const schedulePanel = $("schedule");
+  if (!rail || !schedulePanel || rail.hidden || !focusedDateKey) return;
+  window.requestAnimationFrame(() => {
+    const panelRect = schedulePanel.getBoundingClientRect();
+    const firstRoleHeader = schedulePanel.querySelector(".day-focus-role-group");
+    const roleHeaderRect = firstRoleHeader?.getBoundingClientRect();
+    const fallbackTop = 190;
+    const railTop = roleHeaderRect ? Math.max(138, Math.round(roleHeaderRect.top - panelRect.top + 6)) : fallbackTop;
+    const roleTop = railTop + (rail.offsetHeight || 124) + 8;
+    document.documentElement.style.setProperty("--day-focus-tool-rail-top", `${railTop}px`);
+    document.documentElement.style.setProperty("--role-jump-day-focus-top", `${roleTop}px`);
+  });
+}
 function renderRoleJumpStrip(selectedRoleId = "") {
   const strip = $("roleJumpStrip");
   if (!strip) return;
@@ -6861,6 +7127,41 @@ function setWeeklyAvailabilityWeek(dateKey = currentWeekKey(), options = {}) {
   if (options.render !== false) renderWeeklyAvailabilityEditor(employeeById($("employeeId")?.value));
 }
 
+function dateKeyForAvailabilityDay(dayIndex, weekKey = currentWeekKey()) {
+  const weekStart = startOfWeek(parseDateKey(weekKey || currentWeekKey()), state.settings.weekStart);
+  const offset = (Number(dayIndex) - weekStart.getDay() + 7) % 7;
+  return formatDateKey(addDays(weekStart, offset));
+}
+
+function compactAvailabilityTime(minutes) {
+  return timeFromMinutes(minutes).replace(":00 ", "").replace(/\s+/g, "").toLowerCase();
+}
+
+function availabilityPresetForDay(dayIndex, preset, weekKey = currentWeekKey()) {
+  if (preset === "open") return "12a-11:59p";
+  const dateKey = dateKeyForAvailabilityDay(dayIndex, weekKey);
+  const periods = floorPlanPeriodsForShiftDate(dateKey).sort((a, b) => a.startMinutes - b.startMinutes);
+  if (!periods.length) return preset === "pm" ? "4p-11:59p" : "6a-4p";
+  const dinner = periods.find((period) => period.name === "Dinner");
+  if (preset === "pm") {
+    const start = dinner?.startMinutes ?? Math.max(...periods.map((period) => period.startMinutes));
+    const end = dinner?.endMinutes ?? Math.max(...periods.map((period) => period.endMinutes));
+    return `${compactAvailabilityTime(start)}-${compactAvailabilityTime(end)}`;
+  }
+  const amPeriods = dinner ? periods.filter((period) => period.startMinutes < dinner.startMinutes) : periods;
+  const source = amPeriods.length ? amPeriods : periods;
+  const start = Math.min(...source.map((period) => period.startMinutes));
+  const end = dinner?.startMinutes ?? Math.max(...source.map((period) => period.endMinutes));
+  return `${compactAvailabilityTime(start)}-${compactAvailabilityTime(end)}`;
+}
+
+function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = currentWeekKey()) {
+  const input = document.querySelector(inputSelector);
+  if (!input) return;
+  input.value = availabilityPresetForDay(dayIndex, preset, weekKey);
+  input.focus();
+  input.select?.();
+}
 function renderAvailabilityEditor(employee = null) {
   const availability = employee?.availability || emptyAvailability();
   $("availabilityEditor").innerHTML = DAYS.map((day, index) => {
@@ -6870,16 +7171,18 @@ function renderAvailabilityEditor(employee = null) {
         <strong>${day}</strong>
         <input data-availability-day="${index}" placeholder="7a-2p, 5p-10p or blank unavailable" value="${ranges}">
         <small>available</small>
-        <button type="button" class="small-button" data-open-availability="${index}">Open</button>
+        <button type="button" class="small-button" data-availability-preset="open" data-availability-preset-day="${index}">Open</button>
+        <button type="button" class="small-button" data-availability-preset="am" data-availability-preset-day="${index}">AM</button>
+        <button type="button" class="small-button" data-availability-preset="pm" data-availability-preset-day="${index}">PM</button>
       </div>
     `;
   }).join("");
-  document.querySelectorAll("[data-open-availability]").forEach((button) => {
-    button.onclick = () => {
-      const input = document.querySelector(`[data-availability-day="${button.dataset.openAvailability}"]`);
-      input.value = "12a-11:59p";
-      input.focus();
-    };
+  document.querySelectorAll("[data-availability-preset]").forEach((button) => {
+    button.onclick = () => setAvailabilityPreset(
+      `[data-availability-day="${button.dataset.availabilityPresetDay}"]`,
+      button.dataset.availabilityPresetDay,
+      button.dataset.availabilityPreset
+    );
   });
   wireAvailabilityTabFlow("[data-availability-day]");
 }
@@ -6896,16 +7199,19 @@ function renderWeeklyAvailabilityEditor(employee = null) {
         <strong>${day}</strong>
         <input data-weekly-availability-day="${index}" placeholder="7a-2p, 5p-10p or blank unavailable" value="${ranges}">
         <small>${weekKey}</small>
-        <button type="button" class="small-button" data-open-weekly-availability="${index}">Open</button>
+        <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
+        <button type="button" class="small-button" data-weekly-availability-preset="am" data-weekly-availability-preset-day="${index}">AM</button>
+        <button type="button" class="small-button" data-weekly-availability-preset="pm" data-weekly-availability-preset-day="${index}">PM</button>
       </div>
     `;
   }).join("");
-  document.querySelectorAll("[data-open-weekly-availability]").forEach((button) => {
-    button.onclick = () => {
-      const input = document.querySelector(`[data-weekly-availability-day="${button.dataset.openWeeklyAvailability}"]`);
-      input.value = "12a-11:59p";
-      input.focus();
-    };
+  document.querySelectorAll("[data-weekly-availability-preset]").forEach((button) => {
+    button.onclick = () => setAvailabilityPreset(
+      `[data-weekly-availability-day="${button.dataset.weeklyAvailabilityPresetDay}"]`,
+      button.dataset.weeklyAvailabilityPresetDay,
+      button.dataset.weeklyAvailabilityPreset,
+      weekKey
+    );
   });
   wireAvailabilityTabFlow("[data-weekly-availability-day]");
 }
