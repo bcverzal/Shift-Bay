@@ -5739,6 +5739,21 @@ fieldset .checkbox {
   width: 100%;
 }
 
+.weekly-availability-day {
+  grid-template-columns: 82px 84px minmax(150px, 0.72fr) auto auto auto;
+}
+
+.availability-date-label {
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.weekly-availability-day input {
+  max-width: 260px;
+}
+
 .weekly-rule-row {
   display: grid;
   grid-template-columns: minmax(260px, 1.6fr) 92px minmax(140px, 1fr) auto;

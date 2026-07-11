@@ -13,7 +13,10 @@ const DAY_FOCUS_SORT_KEY = "restaurantScheduler.dayFocusSort.v1";
 const DATA_SCHEMA_VERSION = 2;
 const PUBLIC_CONFIG = window.SHIFT_BAY_CONFIG || {};
 const HOSTED_API_BASE = String(PUBLIC_CONFIG.apiBase || "").replace(/\/$/, "");
-const SERVER_STORAGE_ENABLED = location.protocol === "http:" || location.protocol === "https:";
+const LOCAL_TEST_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const IS_LOCAL_TEST_HOST = LOCAL_TEST_HOSTS.has(location.hostname);
+const SERVER_STORAGE_ENABLED = (location.protocol === "http:" || location.protocol === "https:") &&
+  (!IS_LOCAL_TEST_HOST || PUBLIC_CONFIG.enableCloudOnLocal === true);
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
@@ -41,7 +44,7 @@ let serverSavePending = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
-let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : "Using this browser's local storage.";
+let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
 let currentMonth = new Date();
 let selectedCell = null;
@@ -781,7 +784,7 @@ function storageStatusTitle() {
   if (storageStatusDetail) return storageStatusDetail;
   if (storageStatus === "saved") return "Cloud connected. Schedule data is saving to Supabase.";
   if (storageStatus === "saving") return "Saving schedule changes to Supabase.";
-  if (storageStatus === "local") return "LOCAL MODE: changes are only on this computer and will not sync.";
+  if (storageStatus === "local") return IS_LOCAL_TEST_HOST ? "LOCAL TEST MODE: changes are only in this browser and will not sync to the cloud." : "LOCAL MODE: changes are only on this computer and will not sync.";
   if (storageStatus === "error") return "Cloud storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
@@ -1207,6 +1210,9 @@ async function hydrateStateFromServer() {
 }
 
 function localStateIsNewerThanServer(localState, serverState) {
+  const localServerSavedAt = Date.parse(localState?.meta?.serverSavedAt || "");
+  const serverSavedAt = Date.parse(serverState?.meta?.serverSavedAt || "");
+  if (localServerSavedAt && serverSavedAt && Math.abs(localServerSavedAt - serverSavedAt) <= 1000) return false;
   const localTime = Date.parse(localState?.meta?.updatedAt || "");
   const serverTime = Date.parse(serverState?.meta?.updatedAt || "");
   if (!localTime || !serverTime) return false;
@@ -1460,7 +1466,7 @@ function employeeAvailability(employee, dayIndex, dateKey = "") {
     const override = employee.weeklyAvailability?.[weekKey];
     if (override && Object.prototype.hasOwnProperty.call(employee.weeklyAvailability || {}, weekKey)) return override[dayIndex] || [];
   }
-  if (employee.callWeekly) return [{ start: "12:00 AM", end: "11:59 PM" }];
+  if (employee.callWeekly) return [];
   return employee.availability?.[dayIndex] || [];
 }
 
@@ -7133,6 +7139,12 @@ function dateKeyForAvailabilityDay(dayIndex, weekKey = currentWeekKey()) {
   return formatDateKey(addDays(weekStart, offset));
 }
 
+function availabilityDayDateLabel(dayIndex, weekKey = currentWeekKey()) {
+  const date = parseDateKey(dateKeyForAvailabilityDay(dayIndex, weekKey));
+  if (Number.isNaN(date.getTime())) return DAYS[Number(dayIndex)] || "Day";
+  return `${DAYS[Number(dayIndex)] || "Day"} ${date.getMonth() + 1}/${date.getDate()}`;
+}
+
 function compactAvailabilityTime(minutes) {
   return timeFromMinutes(minutes).replace(":00 ", "").replace(/\s+/g, "").toLowerCase();
 }
@@ -7194,9 +7206,11 @@ function renderWeeklyAvailabilityEditor(employee = null) {
   const availability = employee?.weeklyAvailability?.[weekKey] || emptyAvailability();
   $("weeklyAvailabilityEditor").innerHTML = DAYS.map((day, index) => {
     const ranges = (availability[index] || []).map((range) => `${range.start}-${range.end}`).join(", ");
+    const dayDate = availabilityDayDateLabel(index, weekKey);
     return `
-      <div class="availability-day">
+      <div class="availability-day weekly-availability-day">
         <strong>${day}</strong>
+        <span class="availability-date-label">${escapeHtml(dayDate)}</span>
         <input data-weekly-availability-day="${index}" placeholder="7a-2p, 5p-10p or blank unavailable" value="${ranges}">
         <small>${weekKey}</small>
         <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
