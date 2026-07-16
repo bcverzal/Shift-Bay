@@ -4,6 +4,7 @@ const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
 const AUTH_SESSION_KEY = "shiftBay.supabaseSession.v1";
 const SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId.v1";
+const DEMO_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -981,6 +982,218 @@ function closeAccountMenu() {
   const menu = $("accountMenu");
   if (menu) menu.open = false;
 }
+function isDemoLocation() {
+  return selectedLocationId === DEMO_LOCATION_ID;
+}
+
+function demoRoleId(name) {
+  return state.roles.find((role) => role.name.toLowerCase() === String(name).toLowerCase())?.id || "";
+}
+
+function makeDemoAvailability(days = null) {
+  const availability = {};
+  for (let day = 0; day <= 6; day++) availability[day] = [];
+  if (!days) {
+    for (let day = 0; day <= 6; day++) availability[day] = [{ start: "12:00 AM", end: "11:59 PM" }];
+    return availability;
+  }
+  Object.entries(days).forEach(([day, windows]) => {
+    availability[day] = windows;
+  });
+  return availability;
+}
+
+function buildDemoEmployee(firstName, lastName, roleNames, options = {}) {
+  return {
+    id: uid("employee"),
+    firstName,
+    lastName,
+    nickname: options.nickname || "",
+    phone: options.phone || "(555) 010-0000",
+    birthday: options.birthday || "",
+    departments: options.departments || ["FOH"],
+    active: true,
+    archived: false,
+    callWeekly: Boolean(options.callWeekly),
+    noDoubles: Boolean(options.noDoubles),
+    canClose: Boolean(options.canClose),
+    canLunchClose: Boolean(options.canLunchClose),
+    alwaysPrintFloorEndTime: Boolean(options.alwaysPrintFloorEndTime),
+    roleTraining: roleNames.map(demoRoleId).filter(Boolean),
+    trainerRoles: (options.trainerRoles || []).map(demoRoleId).filter(Boolean),
+    emergencyRoleIds: (options.emergencyRoleIds || []).map(demoRoleId).filter(Boolean),
+    mealTraining: options.mealTraining || ["Breakfast", "Lunch", "Dinner", "Brunch"],
+    roleMealTraining: options.roleMealTraining || {},
+    availability: options.availability || makeDemoAvailability(),
+    weeklyAvailability: {},
+    weeklyRules: [],
+    payRates: {},
+    managerNotes: options.managerNotes || "",
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function buildDemoTemplateShift(dayIndex, roleName, start, end, flags = {}) {
+  const roleId = demoRoleId(roleName);
+  const role = roleById(roleId) || {};
+  return {
+    id: uid("templateShift"),
+    dayIndex,
+    department: role.department || "FOH",
+    roleId,
+    start,
+    end,
+    untilVolume: false,
+    isCloser: Boolean(flags.isCloser),
+    isFlexDouble: Boolean(flags.isFlexDouble),
+    isLunchCloser: Boolean(flags.isLunchCloser),
+    color: role.color || "#2563eb",
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function buildDemoShift(date, employee, roleName, start, end, flags = {}) {
+  const roleId = demoRoleId(roleName);
+  const role = roleById(roleId) || {};
+  return {
+    id: uid(flags.open ? "openShift" : "shift"),
+    date,
+    employeeId: flags.open ? "" : employee?.id,
+    department: role.department || "FOH",
+    roleId,
+    shiftLabel: flags.shiftLabel || roleName,
+    start,
+    end,
+    untilVolume: false,
+    isCloser: Boolean(flags.isCloser),
+    isFlexDouble: Boolean(flags.isFlexDouble),
+    isLunchCloser: Boolean(flags.isLunchCloser),
+    color: role.color || "#2563eb",
+    meals: flags.meals || [],
+    notes: flags.notes || "",
+    training: flags.training || { isTraining: false, segmentEnd: "" },
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function buildDemoSchedulerState() {
+  const demo = defaultState();
+  state = demo;
+  const employees = [
+    buildDemoEmployee("Alex", "Rivera", ["Server", "Bartender"], { canClose: true, canLunchClose: true, trainerRoles: ["Server"] }),
+    buildDemoEmployee("Morgan", "Lane", ["Server"], { canClose: true, managerNotes: "Strong dinner seller; use for prime shifts in demos." }),
+    buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], { canLunchClose: true }),
+    buildDemoEmployee("Jordan", "Kim", ["Busser"], { availability: makeDemoAvailability({ 2: [{ start: "4:00 PM", end: "11:59 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }], 6: [{ start: "9:00 AM", end: "11:59 PM" }] }) }),
+    buildDemoEmployee("Casey", "Stone", ["Bartender", "Server"], { canClose: true, noDoubles: true }),
+    buildDemoEmployee("Riley", "Chen", ["Server", "Banquet Server"], { canClose: true }),
+    buildDemoEmployee("Sam", "Patel", ["Host", "Expo"], { canLunchClose: true }),
+    buildDemoEmployee("Jamie", "Ortiz", ["Server"], { managerNotes: "Demo trainee candidate." }),
+    buildDemoEmployee("Avery", "Quinn", ["Host"], { callWeekly: true, availability: makeDemoAvailability({}) }),
+    buildDemoEmployee("Devin", "Moore", ["Busser", "Banquet Server"], { availability: makeDemoAvailability({ 4: [{ start: "11:00 AM", end: "5:00 PM" }], 5: [{ start: "11:00 AM", end: "11:59 PM" }], 6: [{ start: "11:00 AM", end: "11:59 PM" }] }) })
+  ];
+  const byName = Object.fromEntries(employees.map((employee) => [`${employee.firstName} ${employee.lastName}`, employee]));
+  demo.employees = employees;
+  demo.templates = [{
+    id: uid("template"),
+    name: "Standard Demo Week",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    shifts: [
+      buildDemoTemplateShift(2, "Server", "6:30 AM", "11:00 AM"),
+      buildDemoTemplateShift(2, "Server", "11:00 AM", "3:00 PM"),
+      buildDemoTemplateShift(2, "Host", "9:00 AM", "2:00 PM"),
+      buildDemoTemplateShift(2, "Bartender", "5:00 PM", "9:30 PM", { isCloser: true }),
+      buildDemoTemplateShift(3, "Server", "8:00 AM", "1:00 PM"),
+      buildDemoTemplateShift(3, "Server", "4:00 PM", "9:30 PM", { isCloser: true }),
+      buildDemoTemplateShift(3, "Busser", "5:00 PM", "9:00 PM"),
+      buildDemoTemplateShift(4, "Server", "9:00 AM", "3:00 PM", { isLunchCloser: true }),
+      buildDemoTemplateShift(4, "Banquet Server", "4:30 PM", "9:00 PM"),
+      buildDemoTemplateShift(5, "Server", "9:00 AM", "7:00 PM", { isFlexDouble: true }),
+      buildDemoTemplateShift(5, "Bartender", "4:00 PM", "11:00 PM", { isCloser: true }),
+      buildDemoTemplateShift(5, "Expo", "4:00 PM", "8:00 PM"),
+      buildDemoTemplateShift(6, "Host", "9:00 AM", "2:00 PM"),
+      buildDemoTemplateShift(6, "Server", "5:00 PM", "10:30 PM", { isCloser: true }),
+      buildDemoTemplateShift(0, "Server", "9:00 AM", "2:00 PM"),
+      buildDemoTemplateShift(0, "Busser", "9:00 AM", "2:00 PM")
+    ]
+  }];
+  demo.shifts = [
+    buildDemoShift("2026-07-21", byName["Alex Rivera"], "Server", "6:30 AM", "11:00 AM"),
+    buildDemoShift("2026-07-21", byName["Morgan Lane"], "Server", "11:00 AM", "3:00 PM"),
+    buildDemoShift("2026-07-21", byName["Taylor Brooks"], "Host", "9:00 AM", "2:00 PM"),
+    buildDemoShift("2026-07-22", byName["Casey Stone"], "Bartender", "5:00 PM", "9:30 PM", { isCloser: true }),
+    buildDemoShift("2026-07-23", byName["Riley Chen"], "Banquet Server", "4:30 PM", "9:00 PM"),
+    buildDemoShift("2026-07-24", byName["Alex Rivera"], "Server", "9:00 AM", "7:00 PM", { isFlexDouble: true }),
+    buildDemoShift("2026-07-24", byName["Sam Patel"], "Expo", "4:00 PM", "8:00 PM"),
+    buildDemoShift("2026-07-25", byName["Jordan Kim"], "Busser", "5:00 PM", "10:00 PM"),
+    buildDemoShift("2026-07-26", byName["Morgan Lane"], "Server", "9:00 AM", "2:00 PM", { isLunchCloser: true })
+  ];
+  demo.unassignedShifts = [
+    buildDemoShift("2026-07-21", null, "Bartender", "5:00 PM", "9:30 PM", { open: true, isCloser: true }),
+    buildDemoShift("2026-07-22", null, "Server", "4:00 PM", "9:30 PM", { open: true, isCloser: true }),
+    buildDemoShift("2026-07-23", null, "Busser", "5:00 PM", "9:00 PM", { open: true }),
+    buildDemoShift("2026-07-24", null, "Server", "5:00 PM", "11:00 PM", { open: true, isCloser: true }),
+    buildDemoShift("2026-07-25", null, "Host", "9:00 AM", "2:00 PM", { open: true }),
+    buildDemoShift("2026-07-26", null, "Banquet Server", "11:00 AM", "3:00 PM", { open: true })
+  ];
+  demo.timeOffRequests = [{
+    id: uid("timeoff"),
+    employeeId: byName["Jamie Ortiz"].id,
+    date: "2026-07-25",
+    daypart: "All day",
+    note: "Demo request off",
+    source: "Demo seed"
+  }, {
+    id: uid("timeoff"),
+    employeeId: byName["Avery Quinn"].id,
+    date: "2026-07-23",
+    daypart: "Partial day",
+    start: "8:00 AM",
+    end: "3:00 PM",
+    allDay: false,
+    note: "Demo partial request off",
+    source: "Demo seed"
+  }, {
+    id: uid("block"),
+    employeeId: byName["Devin Moore"].id,
+    date: "2026-07-24",
+    kind: "block",
+    source: "Day Block",
+    blockType: "Off-site Demo Event",
+    daypart: "All day",
+    allDay: true,
+    start: "",
+    end: "",
+    note: "Demo day block"
+  }];
+  demo.settings.groupEmployeesByRole = true;
+  demo.settings.scheduleRoleOrder = demo.roles.filter((role) => role.department === "FOH").map((role) => role.id);
+  demo.settings.printRoleOrder = demo.settings.scheduleRoleOrder;
+  demo.meta.updatedAt = nowIso();
+  return demo;
+}
+
+async function resetDemoData() {
+  if (!isDemoLocation() || currentAccessRole() !== "owner") return showConflict("Demo reset is only available to the owner inside the sandbox location.");
+  const confirmed = await showAppConfirm({
+    title: "Reset Demo Data",
+    message: "Replace the sandbox with fresh fake employees, shifts, request offs, blocks, and demo Shift Bay shifts? This will not touch the real restaurant.",
+    confirmText: "Reset Sandbox",
+    cancelText: "Cancel"
+  });
+  if (!confirmed) return;
+  pushUndo();
+  state = buildDemoSchedulerState();
+  currentDate = parseDateKey("2026-07-21");
+  saveLocalActiveWeek({ shared: false });
+  renderAll();
+  updateZoomVisibility();
+  await saveState({ immediate: true });
+  showConflict("Sandbox reset with fresh demo data.");
+}
 
 function renderLocationSwitcher() {
   const label = $("accountLocationLabel");
@@ -1054,7 +1267,10 @@ function updateAccountUi() {
   const signOut = $("signOutBtn");
   const recent = $("recentActivityBtn");
   const managers = $("manageManagersBtn");
+  const resetDemo = $("resetDemoDataBtn");
+  const sandboxBadge = $("sandboxBadge");
   renderLocationSwitcher();
+  if (sandboxBadge) sandboxBadge.hidden = !isDemoLocation();
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
@@ -1065,6 +1281,7 @@ function updateAccountUi() {
     if (signOut) signOut.hidden = false;
     if (recent) recent.hidden = false;
     if (managers) managers.hidden = currentUser.role !== "owner";
+    if (resetDemo) resetDemo.hidden = !(role === "owner" && isDemoLocation());
     return;
   }
   document.body.classList.remove("viewer-read-only");
@@ -1075,6 +1292,8 @@ function updateAccountUi() {
   if (signOut) signOut.hidden = true;
   if (recent) recent.hidden = authRequired;
   if (managers) managers.hidden = true;
+  if (resetDemo) resetDemo.hidden = true;
+  if (sandboxBadge) sandboxBadge.hidden = true;
 }
 
 async function fetchJson(url, options = {}) {
@@ -11747,6 +11966,7 @@ function wireEvents() {
   $("storageStatusBtn").onclick = openStorageInfo;
   $("recentActivityBtn")?.addEventListener("click", openRecentActivity);
   $("manageManagersBtn")?.addEventListener("click", openManagerAccess);
+  $("resetDemoDataBtn")?.addEventListener("click", resetDemoData);
   $("locationSwitcher")?.addEventListener("change", handleLocationSwitcherChange);
   $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));
   $("signOutBtn")?.addEventListener("click", () => {
