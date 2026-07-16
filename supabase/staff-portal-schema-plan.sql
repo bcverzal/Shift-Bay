@@ -7,22 +7,35 @@
 
 create table if not exists public.staff_accounts (
   id uuid primary key default gen_random_uuid(),
+  location_id uuid not null references public.locations(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  employee_id uuid not null references public.employees(id) on delete cascade,
+  employee_id uuid references public.employees(id) on delete set null,
+  legacy_employee_id text not null default '',
+  display_name text not null default '',
   status text not null default 'active' check (status in ('invited', 'active', 'disabled')),
   invited_by uuid references auth.users(id) on delete set null,
   invited_at timestamptz,
   activated_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique(user_id),
-  unique(employee_id)
+  updated_at timestamptz not null default now()
 );
+
+create unique index if not exists staff_accounts_location_user_idx
+  on public.staff_accounts (location_id, user_id);
+
+create unique index if not exists staff_accounts_location_employee_idx
+  on public.staff_accounts (location_id, employee_id)
+  where employee_id is not null;
+
+create unique index if not exists staff_accounts_location_legacy_employee_idx
+  on public.staff_accounts (location_id, legacy_employee_id)
+  where legacy_employee_id <> '';
 
 create table if not exists public.staff_requests (
   id uuid primary key default gen_random_uuid(),
   location_id uuid not null references public.locations(id) on delete cascade,
-  employee_id uuid not null references public.employees(id) on delete cascade,
+  employee_id uuid references public.employees(id) on delete set null,
+  legacy_employee_id text not null default '',
   request_type text not null check (request_type in ('request_off', 'availability', 'shift_release', 'shift_pickup', 'shift_swap')),
   status text not null default 'pending' check (status in ('draft', 'pending', 'approved', 'denied', 'cancelled', 'expired')),
   source_shift_id text,

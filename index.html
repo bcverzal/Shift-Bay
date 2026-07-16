@@ -624,6 +624,26 @@
     </form>
   </div>
 
+  <dialog id="passwordChangeDialog" class="app-alert-dialog">
+    <form id="passwordChangeForm" class="editor modal-editor password-change-editor">
+      <div class="app-confirm-icon" aria-hidden="true">!</div>
+      <div>
+        <h2>Create Your Password</h2>
+        <p class="app-confirm-message">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
+        <label>New password
+          <input id="newManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+        </label>
+        <label>Confirm password
+          <input id="confirmManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+        </label>
+        <p id="passwordChangeMessage" class="login-message"></p>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="passwordChangeSubmitBtn" class="primary" type="submit">Save Password</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="zoomControls" class="zoom-controls" aria-label="Schedule zoom controls">
     <button id="compactViewBtn" class="zoom-side-toggle" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
     <button id="toggleRoleSummaryBtn" class="zoom-side-toggle" type="button" title="Show or hide role summary bubbles" aria-label="Show or hide role summary bubbles">Roles</button>

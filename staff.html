@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift Bay Staff Portal</title>
+  <link rel="stylesheet" href="staff.css">
+</head>
+<body>
+  <main class="staff-shell">
+    <section class="staff-card staff-login-card" id="loginCard">
+      <div class="staff-brand">
+        <span class="staff-logo" aria-hidden="true"><span></span><span></span><span></span></span>
+        <strong>SHIFT BAY</strong>
+      </div>
+      <h1>Staff Portal</h1>
+      <p class="staff-muted">Sign in to view shifts, request time off, and manage availability.</p>
+      <form id="staffLoginForm" class="staff-form">
+        <label>
+          Email
+          <input id="staffEmail" type="email" autocomplete="email" required>
+        </label>
+        <label>
+          Password
+          <input id="staffPassword" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="staff-primary">Sign In</button>
+      </form>
+      <div id="staffLoginMessage" class="staff-message" hidden></div>
+      <div id="demoPreviewCard" class="staff-demo-preview" hidden>
+        <h2>Demo Staff Preview</h2>
+        <p>Choose a fake demo employee to preview the staff-facing portal without creating a real staff login.</p>
+        <label>
+          Demo employee
+          <select id="demoEmployeeSelect"></select>
+        </label>
+        <button type="button" id="demoPreviewButton" class="staff-secondary">Preview Staff View</button>
+      </div>
+    </section>
+
+    <section class="staff-app" id="staffApp" hidden>
+      <header class="staff-header">
+        <div>
+          <div class="staff-brand staff-brand-small">
+            <span class="staff-logo" aria-hidden="true"><span></span><span></span><span></span></span>
+            <strong>SHIFT BAY</strong>
+          </div>
+          <p id="staffIdentity" class="staff-muted">Signed in</p>
+        </div>
+        <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
+      </header>
+
+      <div id="staffStatus" class="staff-status"></div>
+
+      <section class="staff-grid">
+        <article class="staff-panel">
+          <h2>My Schedule</h2>
+          <div id="staffScheduleList" class="staff-list">
+            <p>Upcoming shifts will show here after this login is linked to an employee profile.</p>
+          </div>
+          <button type="button" class="staff-secondary" disabled>View Shifts</button>
+        </article>
+        <article class="staff-panel">
+          <h2>Request Off</h2>
+          <p>This will become the staff-facing request-off form with manager approval.</p>
+          <button type="button" class="staff-secondary" disabled>Create Request</button>
+        </article>
+        <article class="staff-panel">
+          <h2>Availability</h2>
+          <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
+          <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script src="shift-bay-config.js"></script>
+  <script src="staff.js"></script>
+</body>
+</html>

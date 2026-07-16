@@ -978,6 +978,28 @@ function hideLoginOverlay() {
   setLoginMessage("");
 }
 
+function setPasswordChangeMessage(message = "") {
+  const target = $("passwordChangeMessage");
+  if (target) target.textContent = message;
+}
+
+function showPasswordChangeDialog() {
+  hideLoginOverlay();
+  setPasswordChangeMessage("");
+  const dialog = $("passwordChangeDialog");
+  if (!dialog) return;
+  if (!dialog.open) dialog.showModal();
+  window.setTimeout(() => $("newManagerPassword")?.focus(), 50);
+}
+
+function hidePasswordChangeDialog() {
+  const dialog = $("passwordChangeDialog");
+  if (dialog?.open) dialog.close();
+  setPasswordChangeMessage("");
+  if ($("newManagerPassword")) $("newManagerPassword").value = "";
+  if ($("confirmManagerPassword")) $("confirmManagerPassword").value = "";
+}
+
 function closeAccountMenu() {
   const menu = $("accountMenu");
   if (menu) menu.open = false;
@@ -1404,6 +1426,18 @@ async function signInWithPassword(email, password) {
   if (!currentUser) await validateAuthSession(authSession);
   await loadUserLocations().catch(() => []);
   updateAccountUi();
+  return currentUser;
+}
+
+async function changeRequiredPassword(password) {
+  const result = await fetchJson("/api/auth/change-password", {
+    method: "POST",
+    headers: authRequestHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ password })
+  });
+  currentUser = result.user || { ...(currentUser || {}), passwordChangeRequired: false };
+  updateAccountUi();
+  return currentUser;
 }
 
 async function initializeAuth() {
@@ -1428,6 +1462,10 @@ async function initializeAuth() {
     if (authSession?.access_token) {
       try {
         await validateAuthSession(authSession);
+        if (currentUser?.passwordChangeRequired) {
+          showPasswordChangeDialog();
+          return false;
+        }
         hideLoginOverlay();
         return true;
       } catch {
@@ -11980,7 +12018,11 @@ function wireEvents() {
     if (button) { button.disabled = true; button.textContent = "Signing in..."; }
     try {
       setLoginMessage("Checking account...");
-      await signInWithPassword($("loginEmail").value.trim(), $("loginPassword").value);
+      const user = await signInWithPassword($("loginEmail").value.trim(), $("loginPassword").value);
+      if (user?.passwordChangeRequired) {
+        showPasswordChangeDialog();
+        return;
+      }
       hideLoginOverlay();
       await hydrateStateFromServer();
     } catch (error) {
@@ -11989,6 +12031,29 @@ function wireEvents() {
       setLoginMessage("Sign in failed. Check the email and password, then try again.", error.message);
     } finally {
       if (button) { button.disabled = false; button.textContent = "Sign In"; }
+    }
+  });
+  $("passwordChangeDialog")?.addEventListener("cancel", (event) => {
+    if (currentUser?.passwordChangeRequired) event.preventDefault();
+  });
+  $("passwordChangeForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const password = $("newManagerPassword")?.value || "";
+    const confirm = $("confirmManagerPassword")?.value || "";
+    if (password.length < 8) { setPasswordChangeMessage("Use at least 8 characters."); return; }
+    if (password !== confirm) { setPasswordChangeMessage("The passwords do not match."); return; }
+    const button = $("passwordChangeSubmitBtn");
+    if (button) { button.disabled = true; button.textContent = "Saving..."; }
+    try {
+      setPasswordChangeMessage("Saving password...");
+      await changeRequiredPassword(password);
+      hidePasswordChangeDialog();
+      hideLoginOverlay();
+      await hydrateStateFromServer();
+    } catch (error) {
+      setPasswordChangeMessage(error.message || "Could not change password.");
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "Save Password"; }
     }
   });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();

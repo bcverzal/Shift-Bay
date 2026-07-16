@@ -1,0 +1,257 @@
+:root {
+  --staff-blue: #2767e8;
+  --staff-ink: #1f2b3d;
+  --staff-muted: #5b6b82;
+  --staff-line: #b9cce7;
+  --staff-panel: #f7fbff;
+  --staff-soft: #eaf3ff;
+  --staff-shadow: 0 22px 60px rgba(36, 72, 130, 0.2);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--staff-ink);
+  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(39, 103, 232, 0.14), transparent 28%),
+    linear-gradient(145deg, #f8fbff 0%, #e9f2ff 100%);
+}
+
+.staff-shell {
+  width: min(1040px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 42px 0;
+}
+
+.staff-card,
+.staff-app {
+  border: 1px solid var(--staff-line);
+  border-radius: 18px;
+  background: rgba(248, 252, 255, 0.94);
+  box-shadow: var(--staff-shadow);
+}
+
+.staff-login-card {
+  width: min(430px, 100%);
+  margin: 8vh auto 0;
+  padding: 30px;
+}
+
+.staff-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #1d3f9a;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.staff-brand-small {
+  justify-content: flex-start;
+  font-size: 24px;
+}
+
+.staff-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 17px;
+  border: 3px solid #2767e8;
+  border-radius: 999px;
+  background: #f7fbff;
+}
+
+.staff-logo span {
+  width: 4px;
+  height: 8px;
+  border-radius: 6px;
+}
+
+.staff-logo span:nth-child(1) { background: #2767e8; }
+.staff-logo span:nth-child(2) { background: #18a76f; }
+.staff-logo span:nth-child(3) { background: #e6357b; }
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin: 18px 0 8px;
+  text-align: center;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+.staff-muted {
+  color: var(--staff-muted);
+}
+
+.staff-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #33445d;
+}
+
+input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #b9c8dc;
+  border-radius: 9px;
+  padding: 0 12px;
+  font: inherit;
+  background: #fff;
+}
+
+select {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #b9c8dc;
+  border-radius: 9px;
+  padding: 0 12px;
+  font: inherit;
+  background: #fff;
+}
+
+button {
+  min-height: 40px;
+  border: 1px solid #bdd0eb;
+  border-radius: 999px;
+  padding: 0 18px;
+  font-weight: 900;
+  color: #1d3768;
+  background: linear-gradient(#fff, #e8f2ff);
+  box-shadow: 0 4px 10px rgba(29, 63, 154, 0.14);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.staff-primary {
+  color: #fff;
+  border-color: #1d5ad8;
+  background: linear-gradient(#397cff, #2059d9);
+}
+
+.staff-message,
+.staff-status {
+  margin-top: 18px;
+  border: 1px solid #ffc26f;
+  border-radius: 12px;
+  padding: 12px;
+  color: #713d00;
+  background: #fff7e8;
+  font-weight: 800;
+}
+
+.staff-status.is-ready {
+  color: #075c38;
+  border-color: #7edcae;
+  background: #edfff5;
+}
+
+.staff-demo-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+  border: 1px solid #c5d7ee;
+  border-radius: 14px;
+  padding: 16px;
+  background: linear-gradient(180deg, #ffffff, #eef6ff);
+}
+
+.staff-demo-preview h2 {
+  margin-bottom: 0;
+  color: #1d3f9a;
+}
+
+.staff-demo-preview p {
+  margin-bottom: 0;
+  color: var(--staff-muted);
+  font-size: 14px;
+}
+
+.staff-app {
+  padding: 20px;
+}
+
+.staff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #c9d9ef;
+  padding-bottom: 16px;
+}
+
+.staff-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.staff-panel {
+  min-height: 190px;
+  border: 1px solid #c5d7ee;
+  border-radius: 14px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff, var(--staff-panel));
+}
+
+.staff-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.staff-shift-row {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr 1fr;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #c7d8f0;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .staff-shell {
+    width: min(100vw - 20px, 1040px);
+    padding: 16px 0;
+  }
+
+  .staff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

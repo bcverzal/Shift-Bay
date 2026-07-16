@@ -7440,6 +7440,32 @@ dialog {
   max-height: calc(100vh - 24px);
 }
 
+.password-change-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  width: min(560px, calc(100vw - 28px));
+}
+
+.password-change-editor label {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  font-weight: 800;
+}
+
+.password-change-editor input {
+  height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.9);
+  border-radius: 8px;
+  padding: 0 10px;
+  font: inherit;
+}
+
+.password-change-editor .form-actions {
+  grid-column: 1 / -1;
+}
+
 .recent-activity-list {
   display: grid;
   gap: 9px;

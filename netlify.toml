@@ -25,3 +25,18 @@
   for = "/shift-bay-config.js"
   [headers.values]
     Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.html"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.css"
+  [headers.values]
+    Cache-Control = "no-store"

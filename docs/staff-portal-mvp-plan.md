@@ -39,6 +39,14 @@ Managers should see:
 
 ### Staff
 
+Foundation route:
+
+- `/staff.html` is the first staff-facing entry point.
+- Staff authentication must not require manager access.
+- A staff login links to an employee through `staff_accounts`.
+- During the JSON-state transition, `staff_accounts.legacy_employee_id` points to the employee id stored inside the scheduler state document.
+- Later, once employees are normalized into tables, `staff_accounts.employee_id` can become the primary link.
+
 1. Login
 2. My Schedule
 3. Request Off

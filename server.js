@@ -110,8 +110,8 @@ async function validateSupabaseSession(request) {
   });
   const selectedLocationId = selectedLocationFromRequest(request);
   const membershipUrl = selectedLocationId
-    ? `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(selectedLocationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role,created_at`
-    : `${config.url}/rest/v1/location_users?user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role,created_at&order=created_at.asc`;
+    ? `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(selectedLocationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=*`
+    : `${config.url}/rest/v1/location_users?user_id=eq.${encodeURIComponent(user.id)}&select=*&order=created_at.asc`;
   const memberships = await supabaseJson(
     membershipUrl,
     {
@@ -132,7 +132,33 @@ async function validateSupabaseSession(request) {
       id: user.id,
       email: user.email,
       role: membership.role || "manager",
+      passwordChangeRequired: Boolean(membership.password_change_required),
       locationId: membership.location_id || selectedLocationId || config.locationId
+    }
+  };
+}
+
+async function validateSupabaseAuthUser(request) {
+  const config = supabaseServerConfig();
+  const token = bearerToken(request);
+  if (!config.url || !config.serviceRoleKey) {
+    const missing = [];
+    if (!config.url) missing.push("SUPABASE_URL");
+    if (!config.serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+    return { ok: false, status: 503, error: `Cloud login is not fully configured. Missing ${missing.join(", ")}.` };
+  }
+  if (!token) return { ok: false, status: 401, error: "No login token was provided." };
+  const user = await supabaseJson(`${config.url}/auth/v1/user`, {
+    headers: {
+      apikey: config.anonKey || config.serviceRoleKey,
+      Authorization: `Bearer ${token}`
+    }
+  });
+  return {
+    ok: true,
+    user: {
+      id: user.id,
+      email: user.email
     }
   };
 }
@@ -178,6 +204,56 @@ async function listUserLocations(request) {
       };
     })
   };
+}
+
+function isMissingStaffSchema(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return error?.status === 404
+    || message.includes("staff_accounts")
+    || message.includes("could not find the table")
+    || message.includes("schema cache")
+    || message.includes("does not exist");
+}
+
+async function staffAccountForUser(request) {
+  const validated = await validateSupabaseAuthUser(request);
+  if (!validated.ok) return validated;
+  const config = supabaseServerConfig();
+  const locationId = selectedLocationFromRequest(request) || config.locationId;
+  try {
+    const rows = await supabaseJson(
+      `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,created_at,updated_at`,
+      {
+        headers: {
+          apikey: config.serviceRoleKey,
+          Authorization: `Bearer ${config.serviceRoleKey}`
+        }
+      }
+    );
+    const account = Array.isArray(rows) ? rows[0] : null;
+    return {
+      ok: true,
+      schemaReady: true,
+      linked: Boolean(account),
+      user: validated.user,
+      locationId,
+      account: account || null,
+      message: account ? "" : "No staff employee profile is linked to this login yet."
+    };
+  } catch (error) {
+    if (isMissingStaffSchema(error)) {
+      return {
+        ok: true,
+        schemaReady: false,
+        linked: false,
+        user: validated.user,
+        locationId,
+        account: null,
+        message: "Staff portal tables have not been created yet."
+      };
+    }
+    throw error;
+  }
 }
 
 async function requireCloudUser(request, response) {
@@ -254,6 +330,39 @@ async function refreshSupabaseSession(refreshToken) {
     },
     body: JSON.stringify({ refresh_token: refreshToken })
   });
+}
+
+async function changeSupabasePassword(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  const rawBody = await readRequestBody(request);
+  const parsed = JSON.parse(rawBody || "{}");
+  const password = String(parsed.password || "");
+  if (password.length < 8) return { ok: false, status: 400, error: "Use a password with at least 8 characters." };
+  const config = supabaseServerConfig();
+  await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(validated.user.id)}`, {
+    method: "PUT",
+    headers: {
+      apikey: config.serviceRoleKey,
+      Authorization: `Bearer ${config.serviceRoleKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ password })
+  });
+  await supabaseJson(
+    `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(validated.user.locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({ password_change_required: false })
+    }
+  );
+  return { ok: true, user: { ...validated.user, passwordChangeRequired: false } };
 }
 
 async function userEmailById(userId) {
@@ -717,6 +826,15 @@ async function handleApi(request, response) {
     }
     return;
   }
+  if (url.pathname === "/api/auth/change-password" && request.method === "POST") {
+    try {
+      const result = await changeSupabasePassword(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not change password." });
+    }
+    return;
+  }
   if (url.pathname === "/api/auth/session") {
     try {
       const result = await validateSupabaseSession(request);
@@ -740,6 +858,38 @@ async function handleApi(request, response) {
       sendJson(response, 200, result);
     } catch (error) {
       sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not list locations." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/login" && request.method === "POST") {
+    try {
+      const rawBody = await readRequestBody(request);
+      const parsed = JSON.parse(rawBody || "{}");
+      const session = await signInWithSupabasePassword(String(parsed.email || "").trim(), String(parsed.password || ""));
+      const fakeRequest = {
+        url: request.url,
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "x-shift-bay-location-id": request.headers["x-shift-bay-location-id"] || ""
+        }
+      };
+      const profile = await staffAccountForUser(fakeRequest);
+      if (!profile.ok) {
+        sendJson(response, profile.status || 401, { ok: false, error: profile.error });
+        return;
+      }
+      sendJson(response, 200, { ok: true, session, profile });
+    } catch (error) {
+      sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not sign in." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/me" && request.method === "GET") {
+    try {
+      const result = await staffAccountForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 401, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff profile." });
     }
     return;
   }
