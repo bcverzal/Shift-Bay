@@ -10443,7 +10443,7 @@ function renderTemporaryManagerLogin(details = null) {
   const loginUrl = details.loginUrl || "https://shift-bay.netlify.app";
   target.hidden = false;
   target.innerHTML = [
-    "<strong>Manager login created. Copy this before closing.</strong>",
+    `<strong>${details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
@@ -10533,9 +10533,12 @@ async function sendManagerInvite(event) {
     renderTemporaryManagerLogin({
       email,
       temporaryPassword: result.temporaryPassword,
-      loginUrl: result.loginUrl
+      loginUrl: result.loginUrl,
+      reusedExistingLogin: Boolean(result.reusedExistingLogin)
     });
-    setManagerAccessMessage(`Login created for ${email}. Share the temporary password manually.`);
+    setManagerAccessMessage(result.reusedExistingLogin
+      ? `Existing login for ${email} was relinked and given a new temporary password.`
+      : `Login created for ${email}. Share the temporary password manually.`);
     await loadManagerAccess();
   } catch (error) {
     setManagerAccessMessage(error.message || "Could not create manager login.");

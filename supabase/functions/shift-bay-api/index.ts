@@ -230,6 +230,19 @@ async function userEmailById(userId: string) {
   }
 }
 
+async function authUserByEmail(email: string) {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return null;
+  for (let page = 1; page <= 10; page += 1) {
+    const result = await authAdminJson(`/admin/users?page=${page}&per_page=100`, { method: "GET" });
+    const users = Array.isArray(result?.users) ? result.users : (Array.isArray(result) ? result : []);
+    const match = users.find((user: any) => String(user?.email || "").toLowerCase() === target);
+    if (match) return match;
+    if (users.length < 100) return null;
+  }
+  return null;
+}
+
 async function loadDocumentRow(select = "*", locationId = config().locationId) {
   const cfg = config();
   const rows = await supabaseJson(
@@ -581,20 +594,42 @@ async function handleInviteManager(request: Request) {
   if (!["owner", "manager", "viewer"].includes(role)) return json(400, { ok: false, error: "Choose owner, manager, or viewer." });
 
   const password = temporaryPassword();
-  const createdUser = await authAdminJson("/admin/users", {
-    method: "POST",
-    body: JSON.stringify({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        shift_bay_location_id: locationId,
-        shift_bay_role: role
-      }
-    })
-  });
+  let reusedExistingLogin = false;
+  let createdUser: any = null;
+  try {
+    createdUser = await authAdminJson("/admin/users", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          shift_bay_location_id: locationId,
+          shift_bay_role: role
+        }
+      })
+    });
+  } catch (error) {
+    const message = String((error as Error)?.message || "").toLowerCase();
+    if (!message.includes("already") && !message.includes("registered") && !message.includes("exists")) throw error;
+    createdUser = await authUserByEmail(email);
+    reusedExistingLogin = true;
+    if (!createdUser) return json(409, { ok: false, error: "That email already has a Supabase login, but Shift Bay could not find it to relink." });
+    await authAdminJson(`/admin/users/${encodeURIComponent(createdUser.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        password,
+        email_confirm: true,
+        user_metadata: {
+          ...(createdUser.user_metadata || {}),
+          shift_bay_location_id: locationId,
+          shift_bay_role: role
+        }
+      })
+    });
+  }
   const userId = createdUser?.id || createdUser?.user?.id;
-  if (!userId) return json(502, { ok: false, error: "Supabase created the login but did not return a user ID to link." });
+  if (!userId) return json(502, { ok: false, error: "Supabase created or found the login but did not return a user ID to link." });
 
   await supabaseJson("/location_users?on_conflict=location_id,user_id", {
     method: "POST",
@@ -606,8 +641,8 @@ async function handleInviteManager(request: Request) {
       password_change_required: true
     }])
   });
-  await logAuditEvent("manager_login_created", (validated.user as any).id, { email, role, userId }, locationId);
-  return json(200, { ok: true, manager: { userId, email, role }, temporaryPassword: password, loginUrl: cfg.siteUrl });
+  await logAuditEvent(reusedExistingLogin ? "manager_login_relinked" : "manager_login_created", (validated.user as any).id, { email, role, userId }, locationId);
+  return json(200, { ok: true, manager: { userId, email, role }, temporaryPassword: password, loginUrl: cfg.siteUrl, reusedExistingLogin });
 }
 
 async function handleUpdateManager(request: Request) {

@@ -381,6 +381,25 @@ async function userEmailById(userId) {
   }
 }
 
+async function authUserByEmail(email) {
+  const config = supabaseServerConfig();
+  const target = String(email || "").trim().toLowerCase();
+  if (!config.url || !config.serviceRoleKey || !target) return null;
+  for (let page = 1; page <= 10; page += 1) {
+    const result = await supabaseJson(`${config.url}/auth/v1/admin/users?page=${page}&per_page=100`, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`
+      }
+    });
+    const users = Array.isArray(result?.users) ? result.users : (Array.isArray(result) ? result : []);
+    const match = users.find((user) => String(user?.email || "").toLowerCase() === target);
+    if (match) return match;
+    if (users.length < 100) return null;
+  }
+  return null;
+}
+
 function readRequestBody(request) {
   return new Promise((resolve, reject) => {
     let body = "";
