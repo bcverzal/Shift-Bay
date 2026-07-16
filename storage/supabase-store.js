@@ -3,15 +3,15 @@ const { dataUpdatedAt } = require("./local-json-store");
 function requireSupabaseConfig() {
   const url = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const locationId = process.env.SHIFT_BAY_LOCATION_ID;
-  if (!url || !serviceRoleKey || !locationId) {
+  const defaultLocationId = process.env.SHIFT_BAY_LOCATION_ID;
+  if (!url || !serviceRoleKey || !defaultLocationId) {
     const missing = [];
     if (!url) missing.push("SUPABASE_URL");
     if (!serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
-    if (!locationId) missing.push("SHIFT_BAY_LOCATION_ID");
+    if (!defaultLocationId) missing.push("SHIFT_BAY_LOCATION_ID");
     throw new Error(`Supabase storage is not configured. Missing ${missing.join(", ")}.`);
   }
-  return { url: url.replace(/\/$/, ""), serviceRoleKey, locationId };
+  return { url: url.replace(/\/$/, ""), serviceRoleKey, defaultLocationId };
 }
 
 async function supabaseFetch(config, path, options = {}) {
@@ -38,21 +38,28 @@ function createSupabaseStore() {
   const config = requireSupabaseConfig();
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
 
-  async function loadDocumentRow(select = "*") {
+  function locationFor(userOrLocationId = null) {
+    if (typeof userOrLocationId === "string" && userOrLocationId) return userOrLocationId;
+    return userOrLocationId?.locationId || config.defaultLocationId;
+  }
+
+  async function loadDocumentRow(select = "*", userOrLocationId = null) {
+    const locationId = locationFor(userOrLocationId);
     const rows = await supabaseFetch(
       config,
-      `/scheduler_state_documents?location_id=eq.${encodeURIComponent(config.locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=${select}`
+      `/scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=${select}`
     );
     return Array.isArray(rows) ? rows[0] : null;
   }
 
   async function logAuditEvent(eventType, user, details = {}) {
     if (!user?.id) return;
+    const locationId = locationFor(user);
     await supabaseFetch(config, "/audit_events", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify([{
-        location_id: config.locationId,
+        location_id: locationId,
         user_id: user.id,
         event_type: eventType,
         entity_type: "scheduler_state_document",
@@ -66,19 +73,20 @@ function createSupabaseStore() {
   return {
     mode: "supabase",
 
-    async status() {
-      const row = await loadDocumentRow("saved_at,updated_at");
+    async status(userOrLocationId = null) {
+      const locationId = locationFor(userOrLocationId);
+      const row = await loadDocumentRow("saved_at,updated_at", locationId);
       return {
         ok: true,
         mode: "supabase",
-        locationId: config.locationId,
+        locationId,
         documentKey,
         updatedAt: row?.updated_at || row?.saved_at || null
       };
     },
 
-    async loadState() {
-      const row = await loadDocumentRow("*");
+    async loadState(userOrLocationId = null) {
+      const row = await loadDocumentRow("*", userOrLocationId);
       if (!row) return { exists: false };
       return {
         exists: true,
@@ -94,12 +102,13 @@ function createSupabaseStore() {
     },
 
     async saveState(payload, user = null) {
+      const locationId = locationFor(user);
       const state = payload?.data || payload?.state || payload;
       const savedBy = user?.id || payload?.savedBy?.id || null;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
       const baseServerSavedAt = payload?.baseServerSavedAt || state?.meta?.serverSavedAt || "";
       const incomingTime = dataUpdatedAt(payload);
-      const existingRow = await loadDocumentRow("state,saved_at,updated_at");
+      const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
       const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
       if (baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
         return {
@@ -119,7 +128,7 @@ function createSupabaseStore() {
         };
       }
       const body = [{
-        location_id: config.locationId,
+        location_id: locationId,
         document_key: documentKey,
         schema_version: Number(payload?.schemaVersion || state?.meta?.schemaVersion || 1),
         state,
@@ -145,10 +154,11 @@ function createSupabaseStore() {
       return { ok: true, savedAt: body[0].saved_at, savedBy };
     },
 
-    async recentAuditEvents(limit = 50) {
+    async recentAuditEvents(limit = 50, userOrLocationId = null) {
+      const locationId = locationFor(userOrLocationId);
       return supabaseFetch(
         config,
-        `/audit_events?location_id=eq.${encodeURIComponent(config.locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=${Number(limit) || 50}`
+        `/audit_events?location_id=eq.${encodeURIComponent(locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=${Number(limit) || 50}`
       );
     }
   };

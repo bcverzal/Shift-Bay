@@ -3,6 +3,7 @@ const STAFF_RESET_KEY = "restaurantScheduler.staffReset.20260611";
 const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
 const AUTH_SESSION_KEY = "shiftBay.supabaseSession.v1";
+const SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId.v1";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -37,12 +38,15 @@ let authConfig = null;
 let authRequired = false;
 let authSession = loadAuthSession();
 let currentUser = null;
+let availableLocations = [];
+let selectedLocationId = loadSelectedLocationId();
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
+let skipLocalRecoveryOnce = false;
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
@@ -124,9 +128,9 @@ function saveDayFocusShowOpenShifts() {
 function loadDayFocusSortMode() {
   try {
     const saved = localStorage.getItem(DAY_FOCUS_SORT_KEY);
-    return saved === "start" ? "start" : "alpha";
+    return saved === "alpha" ? "alpha" : "start";
   } catch {
-    return "alpha";
+    return "start";
   }
 }
 
@@ -311,64 +315,7 @@ function defaultState() {
     },
     roles,
     employees: [],
-    templates: [
-      {
-        id: uid("template"),
-        name: "Breakfast Server",
-        shifts: [{
-          id: uid("templateShift"),
-          dayIndex: 2,
-          department: "FOH",
-          roleId: roleByName.Server,
-          start: "7:00 AM",
-          end: "Until Volume",
-          untilVolume: true,
-          color: "#2563eb"
-        }]
-      },
-      {
-        id: uid("template"),
-        name: "Lunch Server",
-        shifts: [{
-          id: uid("templateShift"),
-          dayIndex: 2,
-          department: "FOH",
-          roleId: roleByName.Server,
-          start: "10:30 AM",
-          end: "Until Volume",
-          untilVolume: true,
-          color: "#0f766e"
-        }]
-      },
-      {
-        id: uid("template"),
-        name: "Dinner Server",
-        shifts: [{
-          id: uid("templateShift"),
-          dayIndex: 2,
-          department: "FOH",
-          roleId: roleByName.Server,
-          start: "4:00 PM",
-          end: "Until Volume",
-          untilVolume: true,
-          color: "#9333ea"
-        }]
-      },
-      {
-        id: uid("template"),
-        name: "BOH Commitment",
-        shifts: [{
-          id: uid("templateShift"),
-          dayIndex: 2,
-          department: "BOH",
-          roleId: roleByName["BOH Block"],
-          start: "8:00 AM",
-          end: "2:00 PM",
-          untilVolume: false,
-          color: "#64748b"
-        }]
-      }
-    ],
+    templates: [],
     shifts: [],
     unassignedShifts: [],
     salesProjections: {},
@@ -434,19 +381,16 @@ function loadState() {
   const saved = localStorage.getItem(STORE_KEY);
   if (!saved) {
     const fresh = defaultState();
-    applyOneTimeFohTemplateSeed(fresh);
     applyOneTimeStaffReset(fresh);
     return fresh;
   }
   try {
     const parsed = JSON.parse(saved);
     const loaded = normalizeLoadedState(parsed);
-    applyOneTimeFohTemplateSeed(loaded);
     applyOneTimeStaffReset(loaded);
     return loaded;
   } catch {
     const fresh = defaultState();
-    applyOneTimeFohTemplateSeed(fresh);
     applyOneTimeStaffReset(fresh);
     return fresh;
   }
@@ -958,6 +902,53 @@ function clearAuthSession() {
   }
 }
 
+function loadSelectedLocationId() {
+  try {
+    return localStorage.getItem(SELECTED_LOCATION_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSelectedLocationId(locationId = "") {
+  selectedLocationId = String(locationId || "").trim();
+  try {
+    if (selectedLocationId) localStorage.setItem(SELECTED_LOCATION_KEY, selectedLocationId);
+    else localStorage.removeItem(SELECTED_LOCATION_KEY);
+  } catch {}
+}
+
+function currentLocationRecord() {
+  return availableLocations.find((location) => location.id === selectedLocationId) || availableLocations[0] || null;
+}
+
+function currentLocationName() {
+  return currentLocationRecord()?.name || "Shift Bay Location";
+}
+
+function selectedLocationHeaders() {
+  return selectedLocationId ? { "X-Shift-Bay-Location-Id": selectedLocationId } : {};
+}
+
+function resetWorkspaceForLocationSwitch() {
+  state = defaultState();
+  selectedCell = null;
+  selectedShiftId = null;
+  selectedUnassignedShiftId = null;
+  selectedTimeOffRequestId = null;
+  pendingDeleteShiftId = null;
+  pendingDeleteUnassignedShiftId = null;
+  pendingDeleteTimeOffRequestId = null;
+  clipboardShift = null;
+  clipboardTimeOffRequest = null;
+  undoStack = [];
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  } catch {}
+  currentDate = loadLocalActiveWeek(state.settings.weekStart);
+  renderAll();
+  updateZoomVisibility();
+}
 function shortAccountName(email = "") {
   return String(email || "").split("@")[0] || "Account";
 }
@@ -986,6 +977,74 @@ function hideLoginOverlay() {
   setLoginMessage("");
 }
 
+function closeAccountMenu() {
+  const menu = $("accountMenu");
+  if (menu) menu.open = false;
+}
+
+function renderLocationSwitcher() {
+  const label = $("accountLocationLabel");
+  const select = $("locationSwitcher");
+  if (!label || !select) return;
+  const canSwitch = currentUser && availableLocations.length > 1;
+  label.hidden = !canSwitch;
+  if (!canSwitch) {
+    select.innerHTML = "";
+    return;
+  }
+  select.innerHTML = availableLocations.map((location) => {
+    const selected = location.id === selectedLocationId ? "selected" : "";
+    return `<option value="${escapeHtml(location.id)}" ${selected}>${escapeHtml(location.name || "Shift Bay Location")}</option>`;
+  }).join("");
+}
+
+async function loadUserLocations() {
+  if (!authRequired || !authSession?.access_token) return [];
+  const result = await fetchJson("/api/locations", {
+    cache: "no-store",
+    headers: authRequestHeaders()
+  });
+  availableLocations = Array.isArray(result.locations) ? result.locations : [];
+  const allowed = availableLocations.some((location) => location.id === selectedLocationId);
+  const nextLocationId = allowed ? selectedLocationId : (result.selectedLocationId || currentUser?.locationId || availableLocations[0]?.id || "");
+  saveSelectedLocationId(nextLocationId);
+  const activeLocation = currentLocationRecord();
+  if (currentUser && activeLocation) {
+    currentUser = {
+      ...currentUser,
+      role: activeLocation.role || currentUser.role,
+      locationId: activeLocation.id,
+      locationName: activeLocation.name || currentUser.locationName || "Shift Bay Location"
+    };
+  }
+  renderLocationSwitcher();
+  return availableLocations;
+}
+
+async function handleLocationSwitcherChange(event) {
+  const nextLocationId = String(event.target.value || "").trim();
+  if (!nextLocationId || nextLocationId === selectedLocationId) return;
+  clearTimeout(serverSaveTimer);
+  serverSavePending = false;
+  saveSelectedLocationId(nextLocationId);
+  const activeLocation = currentLocationRecord();
+  if (currentUser && activeLocation) {
+    currentUser = {
+      ...currentUser,
+      role: activeLocation.role || currentUser.role,
+      locationId: activeLocation.id,
+      locationName: activeLocation.name || currentUser.locationName || "Shift Bay Location"
+    };
+  }
+  serverStorageReady = false;
+  lastKnownServerSavedAt = "";
+  skipLocalRecoveryOnce = true;
+  setStorageStatus("connecting", `Switching to ${currentLocationName()}...`);
+  updateAccountUi();
+  closeAccountMenu();
+  resetWorkspaceForLocationSwitch();
+  await hydrateStateFromServer();
+}
 function updateAccountUi() {
   document.body.classList.toggle("viewer-read-only", currentAccessRole() === "viewer");
   const avatar = $("accountAvatar");
@@ -995,11 +1054,13 @@ function updateAccountUi() {
   const signOut = $("signOutBtn");
   const recent = $("recentActivityBtn");
   const managers = $("manageManagersBtn");
+  renderLocationSwitcher();
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
     const role = currentAccessRole() || "manager";
-    if (status) status.textContent = role === "viewer" ? "viewer | View and print only" : `${role} | Cloud location connected`;
+    const locationName = currentLocationName();
+    if (status) status.textContent = role === "viewer" ? `viewer | ${locationName} | View and print only` : `${role} | ${locationName}`;
     if (signIn) signIn.hidden = true;
     if (signOut) signOut.hidden = false;
     if (recent) recent.hidden = false;
@@ -1027,7 +1088,7 @@ async function fetchJson(url, options = {}) {
 }
 
 function authRequestHeaders(extra = {}) {
-  const headers = { ...extra };
+  const headers = { ...selectedLocationHeaders(), ...extra };
   if (authSession?.access_token) headers.Authorization = `Bearer ${authSession.access_token}`;
   return headers;
 }
@@ -1044,7 +1105,7 @@ async function refreshAuthSession(force = false) {
   authRefreshInFlight = (async () => {
     const result = await fetchJson("/api/auth/refresh", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...selectedLocationHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: authSession.refresh_token })
     });
     const session = result.session;
@@ -1056,6 +1117,7 @@ async function refreshAuthSession(force = false) {
       email: session.user?.email || authSession.email || currentUser?.email || ""
     });
     currentUser = result.user || currentUser;
+    await loadUserLocations().catch(() => []);
     updateAccountUi();
     return true;
   })();
@@ -1096,6 +1158,7 @@ async function validateAuthSession(session = authSession) {
   const result = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(result?.error || "Could not verify login.");
   currentUser = result.user;
+  await loadUserLocations().catch(() => []);
   updateAccountUi();
   return result.user;
 }
@@ -1105,6 +1168,7 @@ async function signInWithPassword(email, password) {
   const result = await fetchJson("/api/auth/login", {
     method: "POST",
     headers: {
+      ...selectedLocationHeaders(),
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ email, password })
@@ -1119,6 +1183,7 @@ async function signInWithPassword(email, password) {
   });
   currentUser = result.user || null;
   if (!currentUser) await validateAuthSession(authSession);
+  await loadUserLocations().catch(() => []);
   updateAccountUi();
 }
 
@@ -1177,7 +1242,9 @@ async function hydrateStateFromServer() {
       const serverState = normalizeLoadedState(envelope.data || envelope);
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
-      if (localStateIsNewerThanServer(state, serverState)) {
+      const skipLocalRecovery = skipLocalRecoveryOnce;
+      skipLocalRecoveryOnce = false;
+      if (!skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
         serverStorageReady = true;
         lastKnownServerSavedAt = state.meta?.serverSavedAt || serverSavedAt || "";
         setStorageStatus("saving", "Recovering newer browser changes to the cloud schedule...");
@@ -1202,6 +1269,14 @@ async function hydrateStateFromServer() {
       return;
     }
     if (response.status === 404) {
+      const createCleanLocation = skipLocalRecoveryOnce;
+      skipLocalRecoveryOnce = false;
+      if (createCleanLocation) {
+        state = defaultState();
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        renderAll();
+        updateZoomVisibility();
+      }
       serverStorageReady = true;
       lastKnownServerSavedAt = "";
       setStorageStatus("saving", "Creating the first shared scheduler data file...");
@@ -1211,6 +1286,7 @@ async function hydrateStateFromServer() {
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
     throw new Error(`Load failed: ${response.status}`);
   } catch {
+    skipLocalRecoveryOnce = false;
     serverStorageReady = false;
     setStorageStatus("error", "Could not reach the shared scheduler file. Browser backup is still saved locally.");
     showConflict("Could not reach the shared scheduler file. This window is using its browser backup for now.");
@@ -2207,8 +2283,10 @@ function captureScheduleReturnContext(issue = {}) {
 
 function employeeProfileTabForTarget(targetId = "") {
   if (["availabilityEditor", "weeklyAvailabilityEditor", "employeeCallWeekly", "weeklyAvailabilityFieldset", "regularAvailabilityFieldset"].includes(targetId)) return "availability";
-  if (["employeeTrainingSection", "trainerRoles", "employeeRoleChecks", "employeeTrainerChecks"].includes(targetId)) return "training";
+  if (["employeeTrainingSection", "employeeRoleChecks", "employeeMealTrainingSection"].includes(targetId)) return "roles";
+  if (["trainerRoles", "employeeTrainerChecks"].includes(targetId)) return "training";
   if (["employeePayRates", "weeklyRuleEditor"].includes(targetId)) return "pay";
+  if (["employeeManagerNotes"].includes(targetId)) return "notes";
   return "profile";
 }
 
@@ -8408,25 +8486,11 @@ async function addTemplateToTray(templateId) {
   const template = templateById(templateId);
   if (!template || !template.shifts?.length) return showConflict("Choose a template with at least one saved shift.");
   const duplicatePlan = planTemplateMissingShifts(template);
-  let addMode = "missing";
-  if (duplicatePlan.skipped.length) {
-    addMode = await showAppChoice({
-      title: "Template Shifts Already Exist",
-      message: `${duplicatePlan.skipped.length} shift${duplicatePlan.skipped.length === 1 ? " is" : "s are"} already represented on this week. What should Shift Bay add?`,
-      items: duplicatePlan.skipped.slice(0, 6).map(describeTemplateDuplicateSkip),
-      choices: [
-        { value: "missing", label: "Add Missing Only" },
-        { value: "all", label: "Add All Anyway" },
-        { value: "cancel", label: "Cancel" }
-      ]
-    });
-    if (!addMode || addMode === "cancel") return;
-  }
   pushUndo();
   state.unassignedShifts = state.unassignedShifts || [];
   let addedFromTemplate = 0;
-  let skippedDuplicates = 0;
-  const templateShiftsToAdd = addMode === "all" ? duplicatePlan.all : duplicatePlan.toAdd;
+  const skippedDuplicates = duplicatePlan.skipped.length;
+  const templateShiftsToAdd = duplicatePlan.toAdd;
   templateShiftsToAdd.forEach((templateShift) => {
     const date = dateForWeekday(Number(templateShift.dayIndex));
     state.unassignedShifts.push({
@@ -8439,7 +8503,6 @@ async function addTemplateToTray(templateId) {
     });
     addedFromTemplate += 1;
   });
-  skippedDuplicates = addMode === "missing" ? duplicatePlan.skipped.length : 0;
   renderAll();
   if (!addedFromTemplate && skippedDuplicates) {
     showConflict(`${template.name} is already represented on this week.`);
@@ -8532,7 +8595,6 @@ function addCoverageShortfallShifts(dateKeys) {
         isCloser: false,
         isLunchCloser: false,
         isFlexDouble: false,
-        notes: "Added from coverage Set requirement",
         color: role.color || "#2563eb",
         coverageSource: {
           dateKey,
@@ -11229,15 +11291,10 @@ function parseRequestOffText(text) {
 
 function normalizeRequestDaypart(value) {
   const text = cleanCell(value);
-  if (!text) return "";
+  if (!text) return "All Day";
   const timeRange = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm|a|p))\s*(?:-|to|until|through|thru)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm|a|p))\b/i);
   if (timeRange) return `${normalizeTime(timeRange[1])} to ${normalizeTime(timeRange[2])}`;
-  const match = MEALS.find((meal) => new RegExp(`\\b${meal}\\b`, "i").test(text));
-  if (match) return match;
-  if (/\b(all day|full day|entire day)\b/i.test(text)) return "All Day";
-  if (/\b(am|morning)\b/i.test(text)) return "AM";
-  if (/\b(pm|night|evening)\b/i.test(text)) return "PM";
-  return "";
+  return "All Day";
 }
 
 function expandDateRange(startDateKey, endDateKey) {
@@ -11310,7 +11367,7 @@ function parseCtuitTimeOffReport(text) {
       requests.push({
         ...currentEmployee,
         date,
-        daypart: inNotes ? "" : currentDaypart,
+        daypart: normalizeRequestDaypart(noteMatch[2]),
         note: cleanCell(noteMatch[2])
       });
     }
@@ -11690,6 +11747,7 @@ function wireEvents() {
   $("storageStatusBtn").onclick = openStorageInfo;
   $("recentActivityBtn")?.addEventListener("click", openRecentActivity);
   $("manageManagersBtn")?.addEventListener("click", openManagerAccess);
+  $("locationSwitcher")?.addEventListener("change", handleLocationSwitcherChange);
   $("signInMenuBtn")?.addEventListener("click", () => showLoginOverlay("Sign in to open the cloud scheduler."));
   $("signOutBtn")?.addEventListener("click", () => {
     clearAuthSession();

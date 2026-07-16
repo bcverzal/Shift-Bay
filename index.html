@@ -37,6 +37,9 @@
         <div class="account-menu-panel">
           <strong id="accountMenuTitle">Shift Bay Account</strong>
           <span id="accountMenuStatus">Checking login...</span>
+          <label id="accountLocationLabel" class="account-location-label" hidden>Location
+            <select id="locationSwitcher"></select>
+          </label>
           <button id="signInMenuBtn" class="account-menu-action" type="button">Sign in</button>
           <button id="recentActivityBtn" class="account-menu-action" type="button">Recent activity</button>
           <button id="manageManagersBtn" class="account-menu-action" type="button">Managers</button>
@@ -155,8 +158,10 @@
           <div class="employee-profile-tabs" role="tablist" aria-label="Employee profile sections">
             <button type="button" class="active" data-employee-profile-tab="profile">Profile</button>
             <button type="button" data-employee-profile-tab="availability">Availability</button>
+            <button type="button" data-employee-profile-tab="roles">Roles</button>
             <button type="button" data-employee-profile-tab="training">Training</button>
-            <button type="button" data-employee-profile-tab="pay">Pay & Rules</button>
+            <button type="button" data-employee-profile-tab="pay">Pay</button>
+            <button type="button" data-employee-profile-tab="notes">Notes</button>
           </div>
           <div class="employee-profile-panel employee-profile-basics" data-employee-profile-panel="profile">
           <label>First name <input id="firstName" required></label>
@@ -164,7 +169,6 @@
           <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
           <label>Birthday <input id="employeeBirthday" type="date"></label>
           <label>Phone <input id="employeePhone" inputmode="tel"></label>
-          <label>Manager notes <textarea id="employeeManagerNotes" rows="3" placeholder="Imported notes or manual reminders"></textarea></label>
           <div class="checkbox checkbox-direct"><input id="employeeActive" type="checkbox" checked><span>Active</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanClose" type="checkbox"><span>Trained closer</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanLunchClose" type="checkbox"><span>Lunch closer available</span></div>
@@ -204,7 +208,7 @@
             <div id="weeklyAvailabilityEditor"></div>
           </fieldset>
           </div>
-          <div class="employee-profile-panel employee-profile-training" data-employee-profile-panel="training" hidden>
+          <div class="employee-profile-panel employee-profile-roles" data-employee-profile-panel="roles" hidden>
           <fieldset id="employeeMealTrainingSection">
             <legend>Meal Training</legend>
             <label class="checkbox"><input type="checkbox" name="mealTraining" value="Breakfast"> Breakfast</label>
@@ -217,6 +221,8 @@
             <p class="hint">Use Emergency only for roles they can work in a pinch but should not be recommended for. Meal boxes under a role override the broad meal training for that role.</p>
             <div id="employeeRoleChecks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-training" data-employee-profile-panel="training" hidden>
           <fieldset id="trainerRoles">
             <legend>Trainer Eligibility</legend>
             <div id="employeeTrainerChecks"></div>
@@ -234,6 +240,9 @@
             <div id="weeklyRuleEditor"></div>
             <button id="addWeeklyRuleBtn" type="button">Add Rule</button>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-notes" data-employee-profile-panel="notes" hidden>
+          <label>Manager notes <textarea id="employeeManagerNotes" rows="7" placeholder="Imported notes or manual reminders"></textarea></label>
           </div>
           <div class="form-actions">
             <button type="submit">Save Employee</button>

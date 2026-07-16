@@ -13,7 +13,7 @@ type JsonRecord = Record<string, unknown>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-shift-bay-location-id",
   "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
   "Cache-Control": "no-store"
 };
@@ -106,11 +106,10 @@ function dataUpdatedAt(payload: any) {
 
 async function validateSession(request: Request) {
   const cfg = config();
-  if (!cfg.supabaseUrl || !cfg.serviceRoleKey || !cfg.locationId) {
+  if (!cfg.supabaseUrl || !cfg.serviceRoleKey) {
     const missing = [
       !cfg.supabaseUrl ? "SUPABASE_URL" : "",
-      !cfg.serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY" : "",
-      !cfg.locationId ? "SHIFT_BAY_LOCATION_ID" : ""
+      !cfg.serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY" : ""
     ].filter(Boolean);
     return { ok: false, status: 503, error: `Cloud login is not fully configured. Missing ${missing.join(", ")}.` };
   }
@@ -123,12 +122,20 @@ async function validateSession(request: Request) {
       Authorization: `Bearer ${token}`
     }
   });
+  const selectedLocationId = selectedLocationFromRequest(request);
+  const membershipQuery = selectedLocationId
+    ? `/location_users?location_id=eq.${encodeURIComponent(selectedLocationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role`
+    : `/location_users?user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role&order=created_at.asc`;
   const memberships = await supabaseJson(
-    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=role`,
+    membershipQuery,
     { headers: serviceHeaders() }
   );
-  const membership = Array.isArray(memberships) ? memberships[0] : null;
+  const rows = Array.isArray(memberships) ? memberships : [];
+  const membership = selectedLocationId
+    ? rows[0]
+    : (rows.find((row: any) => row.location_id === cfg.locationId) || rows[0] || null);
   if (!membership) return { ok: false, status: 403, error: "This account is not linked to this Shift Bay location." };
+  const locationId = membership.location_id || selectedLocationId || cfg.locationId;
 
   return {
     ok: true,
@@ -136,9 +143,14 @@ async function validateSession(request: Request) {
       id: user.id,
       email: user.email,
       role: membership.role || "manager",
-      locationId: cfg.locationId
+      locationId
     }
   };
+}
+
+function selectedLocationFromRequest(request: Request) {
+  const url = new URL(request.url);
+  return String(request.headers.get("x-shift-bay-location-id") || url.searchParams.get("locationId") || "").trim();
 }
 
 async function requireOwner(request: Request) {
@@ -191,22 +203,21 @@ async function userEmailById(userId: string) {
   }
 }
 
-async function loadDocumentRow(select = "*") {
+async function loadDocumentRow(select = "*", locationId = config().locationId) {
   const cfg = config();
   const rows = await supabaseJson(
-    `/scheduler_state_documents?location_id=eq.${encodeURIComponent(cfg.locationId)}&document_key=eq.${encodeURIComponent(cfg.documentKey)}&select=${select}`,
+    `/scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.${encodeURIComponent(cfg.documentKey)}&select=${select}`,
     { headers: serviceHeaders() }
   );
   return Array.isArray(rows) ? rows[0] : null;
 }
 
-async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}) {
-  const cfg = config();
+async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}, locationId = config().locationId) {
   await supabaseJson("/audit_events", {
     method: "POST",
     headers: serviceHeaders({ Prefer: "return=minimal" }),
     body: JSON.stringify([{
-      location_id: cfg.locationId,
+      location_id: locationId,
       user_id: userId,
       event_type: eventType,
       entity_type: "scheduler_state_document",
@@ -223,12 +234,45 @@ async function handleAuthConfig() {
     enabled: Boolean(cfg.supabaseUrl && cfg.anonKey),
     supabaseUrl: cfg.supabaseUrl,
     anonKey: cfg.anonKey,
-    locationId: cfg.locationId,
+    defaultLocationId: cfg.locationId,
     missing: [
       !cfg.supabaseUrl ? "SUPABASE_URL" : "",
       !cfg.anonKey ? "SUPABASE_ANON_KEY" : "",
-      !cfg.locationId ? "SHIFT_BAY_LOCATION_ID" : ""
     ].filter(Boolean)
+  });
+}
+
+async function handleListLocations(request: Request) {
+  const validated = await validateSession(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const userId = (validated.user as any).id;
+  const memberships = await supabaseJson(
+    `/location_users?user_id=eq.${encodeURIComponent(userId)}&select=location_id,role,created_at&order=created_at.asc`,
+    { headers: serviceHeaders() }
+  );
+  const rows = Array.isArray(memberships) ? memberships : [];
+  if (!rows.length) return json(200, { ok: true, locations: [] });
+
+  const ids = rows.map((row: any) => row.location_id).filter(Boolean);
+  const locations = await supabaseJson(
+    `/locations?id=in.(${ids.map((id: string) => encodeURIComponent(id)).join(",")})&select=id,name,timezone`,
+    { headers: serviceHeaders() }
+  );
+  const locationMap = new Map((Array.isArray(locations) ? locations : []).map((location: any) => [location.id, location]));
+  return json(200, {
+    ok: true,
+    selectedLocationId: (validated.user as any).locationId,
+    locations: rows.map((row: any) => {
+      const location = (locationMap.get(row.location_id) || {}) as any;
+      return {
+        id: row.location_id,
+        name: location.name || "Shift Bay Location",
+        timezone: location.timezone || "America/Chicago",
+        role: row.role || "manager",
+        createdAt: row.created_at
+      };
+    })
   });
 }
 
@@ -247,8 +291,11 @@ async function handleLogin(request: Request) {
     },
     body: JSON.stringify({ email, password })
   });
+  const headers = new Headers({ Authorization: `Bearer ${session.access_token}` });
+  const requestedLocationId = selectedLocationFromRequest(request);
+  if (requestedLocationId) headers.set("x-shift-bay-location-id", requestedLocationId);
   const validated = await validateSession(new Request(request.url, {
-    headers: { Authorization: `Bearer ${session.access_token}` }
+    headers
   }));
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
   return json(200, { ok: true, session, user: validated.user });
@@ -268,20 +315,25 @@ async function handleRefresh(request: Request) {
     },
     body: JSON.stringify({ refresh_token: refreshToken })
   });
+  const headers = new Headers({ Authorization: `Bearer ${session.access_token}` });
+  const requestedLocationId = selectedLocationFromRequest(request);
+  if (requestedLocationId) headers.set("x-shift-bay-location-id", requestedLocationId);
   const validated = await validateSession(new Request(request.url, {
-    headers: { Authorization: `Bearer ${session.access_token}` }
+    headers
   }));
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
   return json(200, { ok: true, session, user: validated.user });
 }
 
-async function handleStatus() {
+async function handleStatus(request: Request) {
   const cfg = config();
-  const row = await loadDocumentRow("saved_at,updated_at");
+  const validated = bearerToken(request) ? await validateSession(request) : null;
+  const locationId = validated?.ok ? (validated.user as any).locationId : cfg.locationId;
+  const row = await loadDocumentRow("saved_at,updated_at", locationId);
   return json(200, {
     ok: true,
     mode: "supabase",
-    locationId: cfg.locationId,
+    locationId,
     documentKey: cfg.documentKey,
     updatedAt: row?.updated_at || row?.saved_at || null
   });
@@ -291,7 +343,8 @@ async function handleLoadState(request: Request) {
   const validated = await validateSession(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
-  const row = await loadDocumentRow("*");
+  const locationId = (validated.user as any).locationId;
+  const row = await loadDocumentRow("*", locationId);
   if (!row) return json(404, { error: "No scheduler data file has been created yet." });
   return json(200, {
     app: "restaurant-scheduler",
@@ -308,11 +361,12 @@ async function handleSaveState(request: Request) {
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
   const cfg = config();
+  const locationId = (validated.user as any).locationId;
   const payload = await request.json();
   const state = (payload?.data || payload?.state || payload) as JsonRecord;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
-  const existingRow = await loadDocumentRow("state,saved_at,updated_at");
+  const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   if (baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
@@ -332,7 +386,7 @@ async function handleSaveState(request: Request) {
 
   const savedAt = new Date().toISOString();
   const body = [{
-    location_id: cfg.locationId,
+    location_id: locationId,
     document_key: cfg.documentKey,
     schema_version: Number(payload?.schemaVersion || (state.meta as any)?.schemaVersion || 1),
     state,
@@ -353,7 +407,7 @@ async function handleSaveState(request: Request) {
     savedByRole: (validated.user as any).role || "",
     savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
     schemaVersion: body[0].schema_version
-  });
+  }, locationId);
   return json(200, { ok: true, savedAt });
 }
 
@@ -361,8 +415,8 @@ async function handleRecentAudit(request: Request) {
   const validated = await validateSession(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
-  const cfg = config();
-  const url = `/audit_events?location_id=eq.${encodeURIComponent(cfg.locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=50`;
+  const locationId = (validated.user as any).locationId;
+  const url = `/audit_events?location_id=eq.${encodeURIComponent(locationId)}&select=id,event_type,entity_type,details,created_at,user_id&order=created_at.desc&limit=50`;
   const rows = await supabaseJson(url, { headers: serviceHeaders() });
   const emailCache = new Map<string, string>();
   const events = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => {
@@ -381,9 +435,9 @@ async function handleListManagers(request: Request) {
   const validated = await requireOwner(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
-  const cfg = config();
+  const locationId = (validated.user as any).locationId;
   const rows = await supabaseJson(
-    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&select=user_id,role,created_at&order=created_at.asc`,
+    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&select=user_id,role,created_at&order=created_at.asc`,
     { headers: serviceHeaders() }
   );
   const managers = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => ({
@@ -400,6 +454,7 @@ async function handleInviteManager(request: Request) {
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
   const cfg = config();
+  const locationId = (validated.user as any).locationId;
   const body = await request.json().catch(() => ({}));
   const email = String(body.email || "").trim().toLowerCase();
   const role = String(body.role || "manager").trim().toLowerCase();
@@ -414,7 +469,7 @@ async function handleInviteManager(request: Request) {
       password,
       email_confirm: true,
       user_metadata: {
-        shift_bay_location_id: cfg.locationId,
+        shift_bay_location_id: locationId,
         shift_bay_role: role
       }
     })
@@ -426,12 +481,12 @@ async function handleInviteManager(request: Request) {
     method: "POST",
     headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
     body: JSON.stringify([{
-      location_id: cfg.locationId,
+      location_id: locationId,
       user_id: userId,
       role
     }])
   });
-  await logAuditEvent("manager_login_created", (validated.user as any).id, { email, role, userId });
+  await logAuditEvent("manager_login_created", (validated.user as any).id, { email, role, userId }, locationId);
   return json(200, { ok: true, manager: { userId, email, role }, temporaryPassword: password, loginUrl: cfg.siteUrl });
 }
 
@@ -439,7 +494,7 @@ async function handleUpdateManager(request: Request) {
   const validated = await requireOwner(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
-  const cfg = config();
+  const locationId = (validated.user as any).locationId;
   const body = await request.json().catch(() => ({}));
   const userId = String(body.userId || "").trim();
   const role = String(body.role || "").trim().toLowerCase();
@@ -447,14 +502,14 @@ async function handleUpdateManager(request: Request) {
   if (!["owner", "manager", "viewer"].includes(role)) return json(400, { ok: false, error: "Choose owner, manager, or viewer." });
 
   await supabaseJson(
-    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
+    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
     {
       method: "PATCH",
       headers: serviceHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify({ role })
     }
   );
-  await logAuditEvent("manager_role_updated", (validated.user as any).id, { userId, role });
+  await logAuditEvent("manager_role_updated", (validated.user as any).id, { userId, role }, locationId);
   return json(200, { ok: true });
 }
 
@@ -462,20 +517,20 @@ async function handleRemoveManager(request: Request) {
   const validated = await requireOwner(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
-  const cfg = config();
+  const locationId = (validated.user as any).locationId;
   const body = await request.json().catch(() => ({}));
   const userId = String(body.userId || "").trim();
   if (!userId) return json(400, { ok: false, error: "Manager user ID is required." });
   if (userId === (validated.user as any).id) return json(400, { ok: false, error: "You cannot remove your own owner access here." });
 
   await supabaseJson(
-    `/location_users?location_id=eq.${encodeURIComponent(cfg.locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
+    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(userId)}`,
     {
       method: "DELETE",
       headers: serviceHeaders({ Prefer: "return=minimal" })
     }
   );
-  await logAuditEvent("manager_access_removed", (validated.user as any).id, { userId });
+  await logAuditEvent("manager_access_removed", (validated.user as any).id, { userId }, locationId);
   return json(200, { ok: true });
 }
 
@@ -490,7 +545,8 @@ Deno.serve(async (request) => {
       const result = await validateSession(request);
       return json(result.ok ? 200 : result.status || 401, result);
     }
-    if (path === "/status" && request.method === "GET") return await handleStatus();
+    if (path === "/locations" && request.method === "GET") return await handleListLocations(request);
+    if (path === "/status" && request.method === "GET") return await handleStatus(request);
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);
     if (path === "/audit/recent" && request.method === "GET") return await handleRecentAudit(request);

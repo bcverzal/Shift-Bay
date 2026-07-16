@@ -85,6 +85,11 @@ function bearerToken(request) {
   return match ? match[1] : "";
 }
 
+function selectedLocationFromRequest(request) {
+  const url = new URL(request.url || "/", `http://${request.headers?.host || "localhost"}`);
+  return String(request.headers["x-shift-bay-location-id"] || url.searchParams.get("locationId") || "").trim();
+}
+
 async function validateSupabaseSession(request) {
   const config = supabaseServerConfig();
   const token = bearerToken(request);
@@ -103,8 +108,12 @@ async function validateSupabaseSession(request) {
       Authorization: `Bearer ${token}`
     }
   });
+  const selectedLocationId = selectedLocationFromRequest(request);
+  const membershipUrl = selectedLocationId
+    ? `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(selectedLocationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role,created_at`
+    : `${config.url}/rest/v1/location_users?user_id=eq.${encodeURIComponent(user.id)}&select=location_id,role,created_at&order=created_at.asc`;
   const memberships = await supabaseJson(
-    `${config.url}/rest/v1/location_users?location_id=eq.${encodeURIComponent(config.locationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=role`,
+    membershipUrl,
     {
       headers: {
         apikey: config.serviceRoleKey,
@@ -112,7 +121,10 @@ async function validateSupabaseSession(request) {
       }
     }
   );
-  const membership = Array.isArray(memberships) ? memberships[0] : null;
+  const rows = Array.isArray(memberships) ? memberships : [];
+  const membership = selectedLocationId
+    ? rows[0]
+    : (rows.find((row) => row.location_id === config.locationId) || rows[0] || null);
   if (!membership) return { ok: false, status: 403, error: "This account is not linked to this Shift Bay location." };
   return {
     ok: true,
@@ -120,8 +132,51 @@ async function validateSupabaseSession(request) {
       id: user.id,
       email: user.email,
       role: membership.role || "manager",
-      locationId: config.locationId
+      locationId: membership.location_id || selectedLocationId || config.locationId
     }
+  };
+}
+
+async function listUserLocations(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  const config = supabaseServerConfig();
+  const userId = validated.user.id;
+  const memberships = await supabaseJson(
+    `${config.url}/rest/v1/location_users?user_id=eq.${encodeURIComponent(userId)}&select=location_id,role,created_at&order=created_at.asc`,
+    {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`
+      }
+    }
+  );
+  const rows = Array.isArray(memberships) ? memberships : [];
+  if (!rows.length) return { ok: true, selectedLocationId: validated.user.locationId, locations: [] };
+  const ids = rows.map((row) => row.location_id).filter(Boolean);
+  const locations = await supabaseJson(
+    `${config.url}/rest/v1/locations?id=in.(${ids.map((id) => encodeURIComponent(id)).join(",")})&select=id,name,timezone`,
+    {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`
+      }
+    }
+  );
+  const locationMap = new Map((Array.isArray(locations) ? locations : []).map((location) => [location.id, location]));
+  return {
+    ok: true,
+    selectedLocationId: validated.user.locationId,
+    locations: rows.map((row) => {
+      const location = locationMap.get(row.location_id) || {};
+      return {
+        id: row.location_id,
+        name: location.name || "Shift Bay Location",
+        timezone: location.timezone || "America/Chicago",
+        role: row.role || "viewer",
+        createdAt: row.created_at || ""
+      };
+    })
   };
 }
 
@@ -622,7 +677,11 @@ async function handleApi(request, response) {
       const parsed = JSON.parse(rawBody || "{}");
       const session = await signInWithSupabasePassword(String(parsed.email || "").trim(), String(parsed.password || ""));
       const fakeRequest = {
-        headers: { authorization: `Bearer ${session.access_token}` }
+        url: request.url,
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "x-shift-bay-location-id": request.headers["x-shift-bay-location-id"] || ""
+        }
       };
       const validated = await validateSupabaseSession(fakeRequest);
       if (!validated.ok) {
@@ -641,7 +700,11 @@ async function handleApi(request, response) {
       const parsed = JSON.parse(rawBody || "{}");
       const session = await refreshSupabaseSession(String(parsed.refresh_token || ""));
       const fakeRequest = {
-        headers: { authorization: `Bearer ${session.access_token}` }
+        url: request.url,
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "x-shift-bay-location-id": request.headers["x-shift-bay-location-id"] || ""
+        }
       };
       const validated = await validateSupabaseSession(fakeRequest);
       if (!validated.ok) {
@@ -667,13 +730,26 @@ async function handleApi(request, response) {
     }
     return;
   }
+  if (url.pathname === "/api/locations" && request.method === "GET") {
+    try {
+      const result = await listUserLocations(request);
+      if (!result.ok) {
+        sendJson(response, result.status || 401, { ok: false, error: result.error });
+        return;
+      }
+      sendJson(response, 200, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not list locations." });
+    }
+    return;
+  }
   if (url.pathname === "/api/status") {
-    sendJson(response, 200, await schedulerStore.status());
+    sendJson(response, 200, await schedulerStore.status(request.shiftBayUser || null));
     return;
   }
   if (url.pathname === "/api/state" && request.method === "GET") {
     if (!(await requireCloudUser(request, response))) return;
-    const result = await schedulerStore.loadState();
+    const result = await schedulerStore.loadState(request.shiftBayUser);
     if (!result.exists) {
       sendJson(response, 404, { error: "No scheduler data file has been created yet." });
       return;
@@ -708,7 +784,7 @@ async function handleApi(request, response) {
       return;
     }
     try {
-      const rows = await schedulerStore.recentAuditEvents(50);
+      const rows = await schedulerStore.recentAuditEvents(50, request.shiftBayUser);
       const emailCache = new Map();
       const events = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row) => {
         const details = row.details || {};
