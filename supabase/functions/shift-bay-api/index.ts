@@ -91,11 +91,23 @@ function authAdminHeaders(extra: HeadersInit = {}) {
   };
 }
 
-function temporaryPassword(length = 16) {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
-  const values = new Uint32Array(length);
+function pickRandom(items: string[]) {
+  const values = new Uint32Array(1);
   crypto.getRandomValues(values);
-  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+  return items[values[0] % items.length];
+}
+
+function temporaryPassword() {
+  const words = [
+    "lake", "mint", "pine", "leaf", "dawn", "dusk", "star", "moon",
+    "rain", "snow", "gold", "blue", "lime", "rose", "chef", "fork",
+    "pear", "plum", "bean", "bake", "cafe", "sage", "salt", "cake"
+  ];
+  const symbols = ["!", "#", "$", "%"];
+  const first = pickRandom(words);
+  const second = pickRandom(words.filter((word) => word !== first));
+  const capitalized = first.charAt(0).toUpperCase() + first.slice(1);
+  return `${capitalized}${pickRandom(symbols)}${second}`;
 }
 
 function dataUpdatedAt(payload: any) {
@@ -332,7 +344,7 @@ async function handleStaffMe(request: Request) {
   const locationId = selectedLocationFromRequest(request) || config().locationId;
   try {
     const rows = await supabaseJson(
-      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,created_at,updated_at`,
+      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,created_at,updated_at`,
       { headers: serviceHeaders() }
     );
     const account = Array.isArray(rows) ? rows[0] : null;
@@ -340,7 +352,7 @@ async function handleStaffMe(request: Request) {
       ok: true,
       schemaReady: true,
       linked: Boolean(account),
-      user: validated.user,
+      user: { ...(validated.user as any), passwordChangeRequired: Boolean(account?.password_change_required) },
       locationId,
       account: account || null,
       message: account ? "" : "No staff employee profile is linked to this login yet."
@@ -408,6 +420,36 @@ async function handleStaffLogin(request: Request) {
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, { ok: false, error: profile.error || "Could not load staff profile." });
   return json(200, { ok: true, session, profile });
+}
+
+async function handleStaffChangePassword(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, { ok: false, error: profile.error || "Could not load staff profile." });
+  if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+
+  const body = await request.json().catch(() => ({}));
+  const password = String(body.password || "");
+  if (password.length < 8) return json(400, { ok: false, error: "Use a password with at least 8 characters." });
+
+  await authAdminJson(`/admin/users/${encodeURIComponent(profile.user.id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ password })
+  });
+  await supabaseJson(
+    `/staff_accounts?id=eq.${encodeURIComponent(profile.account.id)}`,
+    {
+      method: "PATCH",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({
+        password_change_required: false,
+        status: "active",
+        activated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+    }
+  );
+  return json(200, { ok: true, user: { ...(profile.user || {}), passwordChangeRequired: false } });
 }
 
 async function handleChangePassword(request: Request) {
@@ -689,6 +731,146 @@ async function handleRemoveManager(request: Request) {
   return json(200, { ok: true });
 }
 
+async function handleListStaffAccounts(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const locationId = (validated.user as any).locationId;
+  try {
+    const rows = await supabaseJson(
+      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,status,password_change_required,invited_at,activated_at,created_at,updated_at&order=display_name.asc`,
+      { headers: serviceHeaders() }
+    );
+    const staff = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      email: await userEmailById(row.user_id),
+      legacyEmployeeId: row.legacy_employee_id,
+      displayName: row.display_name,
+      status: row.status,
+      passwordChangeRequired: Boolean(row.password_change_required),
+      invitedAt: row.invited_at,
+      activatedAt: row.activated_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    })));
+    return json(200, { ok: true, staff });
+  } catch (error) {
+    if (isMissingStaffSchema(error)) return json(200, { ok: true, schemaReady: false, staff: [] });
+    throw error;
+  }
+}
+
+async function handleInviteStaff(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const locationId = (validated.user as any).locationId;
+  const body = await request.json().catch(() => ({}));
+  const email = String(body.email || "").trim().toLowerCase();
+  const legacyEmployeeId = String(body.legacyEmployeeId || "").trim();
+  const displayName = String(body.displayName || "").trim();
+  if (!email || !email.includes("@")) return json(400, { ok: false, error: "Enter a valid staff email address." });
+  if (!legacyEmployeeId) return json(400, { ok: false, error: "Choose an employee to link." });
+  if (!displayName) return json(400, { ok: false, error: "Employee display name is required." });
+
+  const password = temporaryPassword();
+  let reusedExistingLogin = false;
+  let createdUser: any = null;
+  try {
+    createdUser = await authAdminJson("/admin/users", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          shift_bay_staff: true,
+          shift_bay_location_id: locationId,
+          shift_bay_legacy_employee_id: legacyEmployeeId
+        }
+      })
+    });
+  } catch (error) {
+    const message = String((error as Error)?.message || "").toLowerCase();
+    if (!message.includes("already") && !message.includes("registered") && !message.includes("exists")) throw error;
+    createdUser = await authUserByEmail(email);
+    reusedExistingLogin = true;
+    if (!createdUser) return json(409, { ok: false, error: "That email already has a Supabase login, but Shift Bay could not find it to link." });
+    await authAdminJson(`/admin/users/${encodeURIComponent(createdUser.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        password,
+        email_confirm: true,
+        user_metadata: {
+          ...(createdUser.user_metadata || {}),
+          shift_bay_staff: true,
+          shift_bay_location_id: locationId,
+          shift_bay_legacy_employee_id: legacyEmployeeId
+        }
+      })
+    });
+  }
+
+  const userId = createdUser?.id || createdUser?.user?.id;
+  if (!userId) return json(502, { ok: false, error: "Supabase created or found the staff login but did not return a user ID to link." });
+
+  const existingByEmployee = await supabaseJson(
+    `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&legacy_employee_id=eq.${encodeURIComponent(legacyEmployeeId)}&select=id,user_id`,
+    { headers: serviceHeaders() }
+  ).catch((error) => {
+    if (isMissingStaffSchema(error)) throw Object.assign(new Error("Staff account tables have not been created yet. Run staff-accounts-mvp.sql first."), { status: 400 });
+    throw error;
+  });
+  const existing = Array.isArray(existingByEmployee) ? existingByEmployee[0] : null;
+  const accountBody = {
+    location_id: locationId,
+    user_id: userId,
+    legacy_employee_id: legacyEmployeeId,
+    display_name: displayName,
+    status: "invited",
+    password_change_required: true,
+    invited_by: (validated.user as any).id,
+    invited_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  let account: any = null;
+  if (existing?.id) {
+    const updated = await supabaseJson(`/staff_accounts?id=eq.${encodeURIComponent(existing.id)}`, {
+      method: "PATCH",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(accountBody)
+    });
+    account = Array.isArray(updated) ? updated[0] : null;
+  } else {
+    const inserted = await supabaseJson("/staff_accounts?on_conflict=location_id,user_id", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+      body: JSON.stringify([accountBody])
+    });
+    account = Array.isArray(inserted) ? inserted[0] : null;
+  }
+
+  await logAuditEvent(reusedExistingLogin ? "staff_login_relinked" : "staff_login_created", (validated.user as any).id, { email, userId, legacyEmployeeId, displayName }, locationId);
+  return json(200, {
+    ok: true,
+    staff: {
+      id: account?.id || "",
+      userId,
+      email,
+      legacyEmployeeId,
+      displayName,
+      status: "invited",
+      passwordChangeRequired: true
+    },
+    temporaryPassword: password,
+    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    reusedExistingLogin
+  });
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
@@ -698,6 +880,7 @@ Deno.serve(async (request) => {
     if (path === "/auth/refresh" && request.method === "POST") return await handleRefresh(request);
     if (path === "/auth/change-password" && request.method === "POST") return await handleChangePassword(request);
     if (path === "/staff/login" && request.method === "POST") return await handleStaffLogin(request);
+    if (path === "/staff/change-password" && request.method === "POST") return await handleStaffChangePassword(request);
     if (path === "/auth/session" && request.method === "GET") {
       const result = await validateSession(request);
       return json(result.ok ? 200 : result.status || 401, result);
@@ -712,6 +895,8 @@ Deno.serve(async (request) => {
     if (path === "/managers/invite" && request.method === "POST") return await handleInviteManager(request);
     if (path === "/managers/role" && request.method === "POST") return await handleUpdateManager(request);
     if (path === "/managers/remove" && request.method === "POST") return await handleRemoveManager(request);
+    if (path === "/staff-accounts" && request.method === "GET") return await handleListStaffAccounts(request);
+    if (path === "/staff-accounts/invite" && request.method === "POST") return await handleInviteStaff(request);
     if (path === "/parse-time-off-pdf") return json(501, { error: "PDF request-off imports still require the local Shift Bay server for now." });
     return json(404, { error: `Unknown Shift Bay API route: ${path}` });
   } catch (error) {

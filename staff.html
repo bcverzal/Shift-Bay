@@ -74,7 +74,26 @@
     </section>
   </main>
 
+  <dialog id="staffPasswordDialog" class="staff-password-dialog">
+    <form id="staffPasswordForm" class="staff-card staff-password-card">
+      <h2>Create Your Password</h2>
+      <p class="staff-muted">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
+      <label>
+        New password
+        <input id="newStaffPassword" type="password" autocomplete="new-password" required>
+      </label>
+      <label>
+        Confirm password
+        <input id="confirmStaffPassword" type="password" autocomplete="new-password" required>
+      </label>
+      <div id="staffPasswordMessage" class="staff-message" hidden></div>
+      <div class="staff-password-actions">
+        <button id="staffPasswordSubmit" type="submit" class="staff-primary">Save Password</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="shift-bay-config.js"></script>
-  <script src="staff.js"></script>
+  <script src="staff.js?v=shiftbay-20260716-staff-access"></script>
 </body>
 </html>

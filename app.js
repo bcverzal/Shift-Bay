@@ -94,6 +94,7 @@ let dayFocusSortMode = loadDayFocusSortMode();
 let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
 let employeeFormCleanSnapshot = "";
+let employeeNewProfileDraft = false;
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
 const collapsedTemplateDays = loadCollapsedTemplateDays();
@@ -723,18 +724,26 @@ function storageStatusLabel(status) {
     error: "Cloud save issue",
     local: "LOCAL MODE"
   };
-  return labels[status] || "Storage";
+  const label = labels[status] || "Storage";
+  if (SERVER_STORAGE_ENABLED && IS_LOCAL_TEST_HOST) {
+    if (status === "error") return "Cloud issue | Local app";
+    if (status === "local") return "LOCAL MODE";
+    return label + " | Local app";
+  }
+  return label;
 }
 
 function storageStatusTitle() {
-  if (storageStatusDetail) return storageStatusDetail;
-  if (storageStatus === "saved") return "Cloud connected. Schedule data is saving to Supabase.";
-  if (storageStatus === "saving") return "Saving schedule changes to Supabase.";
+  const localCloudPrefix = SERVER_STORAGE_ENABLED && IS_LOCAL_TEST_HOST
+    ? "This is the local Shift Bay app, but it is connected to the shared Supabase cloud for the selected location."
+    : "";
+  if (storageStatusDetail) return [localCloudPrefix, storageStatusDetail].filter(Boolean).join(" ");
+  if (storageStatus === "saved") return [localCloudPrefix, "Cloud connected. Schedule data is saving to Supabase."].filter(Boolean).join(" ");
+  if (storageStatus === "saving") return [localCloudPrefix, "Saving schedule changes to Supabase."].filter(Boolean).join(" ");
   if (storageStatus === "local") return IS_LOCAL_TEST_HOST ? "LOCAL TEST MODE: changes are only in this browser and will not sync to the cloud." : "LOCAL MODE: changes are only on this computer and will not sync.";
   if (storageStatus === "error") return "Cloud storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
-
 function updateStorageStatus() {
   const button = $("storageStatusBtn");
   const label = $("storageStatusText");
@@ -2524,7 +2533,7 @@ function openIssueEmployeeShortcut(issue, action = issueEmployeeShortcut(issue))
   loadEmployee(employee.id);
   activateTab("employees");
   showScheduleReturnButton();
-  window.setTimeout(() => focusEmployeeProfileTarget(action?.targetId), 80);
+  window.setTimeout(() => focusEmployeeProfileTarget(action?.targetId, issue), 80);
 }
 
 function captureScheduleReturnContext(issue = {}) {
@@ -2664,7 +2673,7 @@ function renderTabs() {
     tab.onclick = async () => {
       if (!(await requestActivateTab(tab.dataset.tab))) return;
       if (tab.dataset.tab === "monthly") renderMonthly();
-      if (tab.dataset.tab === "floorplans") renderFloorPlan();
+      if (tab.dataset.tab === "floorplans") { syncFloorPlanDateToActiveWeek({ force: true }); renderFloorPlan(); }
     };
   });
 }
@@ -2699,6 +2708,62 @@ function updateCompactPreviewButton() {
   button.classList.toggle("active", isCompactPreview);
 }
 
+function enterDayFocus(dateKey = selectedCell?.date || formatDateKey(currentDate)) {
+  focusedDateKey = dateKey;
+  selectedCell = null;
+  selectedShiftId = null;
+  renderSchedule();
+}
+
+function exitDayFocus() {
+  focusedDateKey = "";
+  renderSchedule();
+}
+
+function updateScheduleViewToggle() {
+  const toggle = $("scheduleViewToggle");
+  if (!toggle) return;
+  toggle.hidden = document.body.classList.contains("compact-preview");
+  $("weekViewBtn")?.classList.toggle("active", !focusedDateKey);
+  $("dayViewBtn")?.classList.toggle("active", Boolean(focusedDateKey));
+  if ($("dayViewBtn")) $("dayViewBtn").title = `Open Day View for ${displayDate(parseDateKey(selectedCell?.date || formatDateKey(currentDate)))}`;
+}
+
+function scheduleRailWidgetElements() {
+  return ["scheduleViewToggle", "printFilters", "dayFocusToolRail", "roleJumpStrip"]
+    .map((id) => $(id))
+    .filter((element) => element && !element.hidden);
+}
+
+function layoutScheduleRail() {
+  const schedulePanel = $("schedule");
+  if (!schedulePanel?.classList.contains("active") || document.body.classList.contains("compact-preview")) return;
+  window.requestAnimationFrame(() => {
+    const panelRect = schedulePanel.getBoundingClientRect();
+    if (!panelRect.width || !panelRect.height) return;
+    const anchorElements = [
+      schedulePanel.querySelector(":scope > .toolbar"),
+      $("stagedShiftInfo"),
+      $("conflictBanner"),
+      $("appNotice")
+    ].filter((element) => element && !element.hidden);
+    const anchorBottom = anchorElements.reduce((bottom, element) => {
+      const rect = element.getBoundingClientRect();
+      return Math.max(bottom, rect.bottom - panelRect.top);
+    }, 0);
+    const widgets = scheduleRailWidgetElements();
+    const gap = 8;
+    const railInset = 2;
+    const totalHeight = widgets.reduce((sum, element, index) => sum + element.offsetHeight + (index ? gap : 0), 0);
+    const maxStart = Math.max(railInset, schedulePanel.clientHeight - totalHeight - railInset);
+    let cursor = Math.min(Math.max(Math.round(anchorBottom + gap), railInset), maxStart);
+    widgets.forEach((element) => {
+      element.style.left = "0px";
+      element.style.top = `${cursor}px`;
+      cursor += element.offsetHeight + gap;
+    });
+  });
+}
 function renderScheduleControls() {
   $("weekPicker").value = formatDateKey(currentDate);
   const dates = weekDates();
@@ -2707,6 +2772,7 @@ function renderScheduleControls() {
   $("quickTemplate").innerHTML = state.templates.map((template) => `<option value="${template.id}">${template.name}</option>`).join("");
   if ($("problemFocusBtn")) $("problemFocusBtn").textContent = state.settings.problemFocusMode ? "Show All Shifts" : "Focus Problems";
   renderUnassignedShiftTray();
+  updateScheduleViewToggle();
   applyScheduleZoom();
 }
 
@@ -2949,10 +3015,10 @@ function renderOpenShiftRoleJump(shifts) {
   if (openShiftBayRoleFocusId && !roleCounts.has(openShiftBayRoleFocusId)) openShiftBayRoleFocusId = "";
   target.hidden = false;
   target.innerHTML = `
-    <span><span class="rail-label-short">BAY</span><span class="rail-label-full">Shift Bay</span></span>
-    <button type="button" class="${openShiftBayRoleFocusId ? "" : "selected"}" data-open-shift-role-jump="" title="Show all Shift Bay roles">All</button>
+    <span><span class="rail-label-short">FOCUS</span><span class="rail-label-full">Focus</span></span>
+    <button type="button" class="${openShiftBayRoleFocusId ? "" : "selected"}" data-open-shift-role-jump="" data-role-tooltip="All">All</button>
     ${roles.map((role) => `
-      <button type="button" class="${openShiftBayRoleFocusId === role.id ? "selected" : ""}" data-open-shift-role-jump="${role.id}" style="--role-color:${role.color || "#2563eb"}" title="Move ${escapeHtml(role.name)} shifts to the front of the Shift Bay">
+      <button type="button" class="${openShiftBayRoleFocusId === role.id ? "selected" : ""}" data-open-shift-role-jump="${role.id}" style="--role-color:${role.color || "#2563eb"}" data-role-tooltip="${escapeHtml(role.name)}">
         ${escapeHtml(role.name)} <strong>${roleCounts.get(role.id) || 0}</strong>
       </button>
     `).join("")}
@@ -3865,6 +3931,7 @@ function recentEmployeesForStagedShift(stagedShift) {
 
 function setScheduleZoom(nextZoom) {
   state.settings.scheduleZoom = Math.min(1.5, Math.max(0.65, Math.round(nextZoom * 20) / 20));
+  updateScheduleViewToggle();
   applyScheduleZoom();
   saveState();
 }
@@ -3999,12 +4066,9 @@ function renderFilters() {
 
 function updateGridFilterRailState() {
   const filterDetails = $("scheduleFiltersDetails");
-  const filters = $("printFilters");
   const isOpen = Boolean(filterDetails?.open);
   document.body.classList.toggle("grid-filters-open", isOpen);
-  if (!isOpen || !filterDetails || !filters) return;
-  const openTop = filters.offsetTop + filterDetails.offsetHeight + 8;
-  document.documentElement.style.setProperty("--role-jump-open-top", `${openTop}px`);
+  layoutScheduleRail();
 }
 
 function markGridFiltersChanged() {
@@ -4040,6 +4104,7 @@ function renderSchedule() {
     renderUnavailableEmployeesList([]);
     renderWeeklyRoleSummary();
     renderIssueIndicator();
+    layoutScheduleRail();
     return;
   }
   if ($("printFilters")) $("printFilters").hidden = false;
@@ -4055,6 +4120,7 @@ function renderSchedule() {
   renderUnavailableEmployeesList(unavailableEmployees);
   renderWeeklyRoleSummary();
   renderIssueIndicator();
+  layoutScheduleRail();
 }
 
 function renderDayFocusSchedule(grid, employees, dateKey, selectedRoleId = "") {
@@ -4364,8 +4430,7 @@ function renderDayFocusHeader(date, employees) {
   head.querySelector("[data-day-focus-prev]").onclick = () => moveFocusedDay(-1);
   head.querySelector("[data-day-focus-next]").onclick = () => moveFocusedDay(1);
   head.querySelector("[data-exit-day-focus]").onclick = () => {
-    focusedDateKey = "";
-    renderSchedule();
+    exitDayFocus();
   };
   return head;
 }
@@ -5090,19 +5155,7 @@ function renderDayFocusToolRail() {
 }
 
 function positionDayFocusRails() {
-  const rail = $("dayFocusToolRail");
-  const schedulePanel = $("schedule");
-  if (!rail || !schedulePanel || rail.hidden || !focusedDateKey) return;
-  window.requestAnimationFrame(() => {
-    const panelRect = schedulePanel.getBoundingClientRect();
-    const firstRoleHeader = schedulePanel.querySelector(".day-focus-role-group");
-    const roleHeaderRect = firstRoleHeader?.getBoundingClientRect();
-    const fallbackTop = 190;
-    const railTop = roleHeaderRect ? Math.max(138, Math.round(roleHeaderRect.top - panelRect.top + 6)) : fallbackTop;
-    const roleTop = railTop + (rail.offsetHeight || 124) + 8;
-    document.documentElement.style.setProperty("--day-focus-tool-rail-top", `${railTop}px`);
-    document.documentElement.style.setProperty("--role-jump-day-focus-top", `${roleTop}px`);
-  });
+  layoutScheduleRail();
 }
 function renderRoleJumpStrip(selectedRoleId = "") {
   const strip = $("roleJumpStrip");
@@ -5872,22 +5925,24 @@ function renderDayHeader(date) {
       <span class="closer-day-indicator ${closerStatus.className}" title="${closerStatus.title}">
         CL ${closerStatus.scheduled}/${closerStatus.required}
       </span>
+      <button type="button" class="day-view-button" data-day-focus-date="${dateKey}" title="Open Day View for ${displayDate(date)}">Day</button>
     </div>
   `);
-  div.dataset.tooltip = "Double-click to focus this day.";
+  div.dataset.tooltip = "Open Day View for this date.";
   wireProjectionPopover(div, dateKey);
   div.ondblclick = (event) => {
     if (event.target.closest("button, input, select, .projection-popover")) return;
     event.stopPropagation();
-    focusedDateKey = dateKey;
-    selectedCell = null;
-    selectedShiftId = null;
-    renderSchedule();
+    enterDayFocus(dateKey);
   };
   div.querySelector("[data-coverage-date]").onclick = (event) => {
     event.stopPropagation();
     openCoverageDialog(dateKey);
   };
+  div.querySelector("[data-day-focus-date]")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    enterDayFocus(dateKey);
+  });
   return div;
 }
 
@@ -6571,6 +6626,8 @@ function renderShiftCard(shift, options = {}) {
   if (pendingDeleteShiftId === shift.id) card.classList.add("pending-delete");
   card.draggable = false;
   card.dataset.shiftId = shift.id;
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
   card.style.setProperty("--shift-color", shiftColor(shift));
   const end = shift.untilVolume ? "Until Volume" : shift.end;
   const coveredMeals = getMealsForShift(shift).join(", ");
@@ -6582,10 +6639,17 @@ function renderShiftCard(shift, options = {}) {
   if (trainingBadges) card.classList.add("has-training-badge");
   const flexBadge = shift.isFlexDouble ? `<span class="shift-trait-badge flex-double-badge" title="Flex Double">Flex</span>` : "";
   const lunchCloserBadge = shift.isLunchCloser ? `<span class="shift-trait-badge lunch-closer-badge" title="Lunch closer">Lunch CL</span>` : "";
+  const selectedActions = (!options.ghost && selectedShiftId === shift.id && pendingDeleteShiftId !== shift.id) ? `
+    <div class="shift-action-strip" aria-label="Selected shift actions">
+      <button type="button" data-shift-action="edit" title="Edit shift">Edit</button>
+      <button type="button" data-shift-action="copy" title="Copy shift">Copy</button>
+      <button type="button" data-shift-action="delete" title="Delete or move shift">Delete</button>
+    </div>
+  ` : "";
   card.innerHTML = `
-    <button class="delete-start-button" type="button" title="Delete or move this shift" aria-label="Start delete options">×</button>
     <div class="shift-title"><span>${escapeHtml(titleText)}</span><span class="shift-dept">${escapeHtml(shift.department || "")}</span></div>
     ${flexBadge}${lunchCloserBadge}
+    ${selectedActions}
     ${options.ghost ? "" : `<button class="closer-toggle ${shift.isCloser ? "active" : ""}" type="button" title="${shift.isCloser ? "Marked as closer shift" : "Mark as closer shift"}" aria-label="${shift.isCloser ? "Unmark closer shift" : "Mark closer shift"}">Close</button>`}
     ${showShiftLabel ? `<div class="shift-notes">${escapeHtml(rawShiftLabel)}</div>` : ""}
     <div class="shift-time">${shift.start} - ${end}</div>
@@ -6634,6 +6698,12 @@ function renderShiftCard(shift, options = {}) {
       selectedCell = { employeeId: shift.employeeId, date: shift.date };
       openShiftDialog(shift);
     };
+    card.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      card.click();
+      if (event.key === "Enter") openShiftDialog(shift);
+    };
     return card;
   }
   const deleteStartButton = card.querySelector(".delete-start-button");
@@ -6681,6 +6751,23 @@ function renderShiftCard(shift, options = {}) {
       }
     };
   }
+  card.querySelectorAll("[data-shift-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectedShiftId = shift.id;
+      selectedTimeOffRequestId = null;
+      selectedUnassignedShiftId = null;
+      selectedCell = { employeeId: shift.employeeId, date: shift.date };
+      const action = button.dataset.shiftAction;
+      if (action === "edit") openShiftDialog(shift);
+      if (action === "copy") copySelectedShift();
+      if (action === "delete") {
+        pendingDeleteShiftId = shift.id;
+        pendingDeleteUnassignedShiftId = null;
+        renderSchedulePreservingGridScroll();
+      }
+    });
+  });
   const closerToggle = card.querySelector(".closer-toggle");
   if (closerToggle) {
     closerToggle.onclick = (event) => {
@@ -6740,6 +6827,13 @@ function renderShiftCard(shift, options = {}) {
     beginMouseAssignedShiftDrag(event, card, shift);
   };
   card.title = `${displayName(employee)} ${role?.name || ""}${issueMessages.length ? `\n${issueMessages.join("\n")}` : ""}`;
+  card.setAttribute("aria-label", `${displayName(employee)} ${role?.name || "Shift"} ${shift.start} to ${end}. Press Enter to edit, or Space to select actions.`);
+  card.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (event.key === "Enter") openShiftDialog(shift);
+    else card.click();
+  };
   return card;
 }
 
@@ -7454,6 +7548,10 @@ function renderEmployees() {
         return haystack.includes(search);
       })
     : employees;
+  if (!selectedEmployee && !employeeNewProfileDraft && filteredEmployees.length) {
+    loadEmployee(filteredEmployees[0].id);
+    return renderEmployees();
+  }
   if ($("archiveEmployeeBtn")) $("archiveEmployeeBtn").hidden = Boolean(selectedEmployee?.archived);
   if ($("restoreEmployeeBtn")) $("restoreEmployeeBtn").hidden = !selectedEmployee?.archived;
   renderEmployeeRoster(filteredEmployees, selectedEmployee);
@@ -7769,6 +7867,7 @@ function parseWeeklyAvailability() {
 function loadEmployee(id) {
   const employee = employeeById(id);
   if (!employee) return;
+  employeeNewProfileDraft = false;
   $("employeeId").value = employee.id;
   $("firstName").value = employee.firstName;
   $("lastName").value = employee.lastName;
@@ -7821,6 +7920,7 @@ function activateEmployeeProfileTab(tabName = "profile") {
 }
 
 function resetEmployeeForm() {
+  employeeNewProfileDraft = true;
   $("employeeForm").reset();
   $("employeeId").value = "";
   $("employeeActive").checked = true;
@@ -9819,9 +9919,18 @@ function printStaffingAnalysis() {
   window.print();
 }
 
+function syncFloorPlanDateToActiveWeek(options = {}) {
+  const input = $("floorPlanDate");
+  if (!input) return;
+  const activeKey = formatDateKey(currentDate);
+  const activeWeekKeys = new Set(weekDateKeys());
+  if (options.force || !input.value || !activeWeekKeys.has(input.value)) {
+    input.value = activeKey;
+  }
+}
 function renderFloorPlan(options = {}) {
   if (!$("floorPlanDate")) return;
-  if (!$("floorPlanDate").value) $("floorPlanDate").value = formatDateKey(currentDate);
+  syncFloorPlanDateToActiveWeek();
   const dateKey = $("floorPlanDate").value;
   const period = $("floorPlanPeriod").value || "all";
   const noteWarnings = [];
@@ -10577,6 +10686,152 @@ async function removeManagerAccess(userId) {
     await loadManagerAccess();
   } catch (error) {
     setManagerAccessMessage(error.message || "Could not remove manager access.");
+  }
+}
+function staffAccountStatusLabel(status = "") {
+  const labels = { invited: "Invited", active: "Active", disabled: "Disabled" };
+  return labels[String(status).toLowerCase()] || status || "Invited";
+}
+
+function staffAccessEmployees() {
+  return [...state.employees]
+    .filter((employee) => employee.active !== false && !employee.archived)
+    .sort((a, b) => fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
+}
+
+function populateStaffInviteEmployees() {
+  const select = $("staffInviteEmployee");
+  if (!select) return;
+  const employees = staffAccessEmployees();
+  select.innerHTML = employees.length
+    ? employees.map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(fullEmployeeName(employee))}</option>`).join("")
+    : `<option value="">No active employees</option>`;
+}
+
+function setStaffAccessMessage(message = "") {
+  const target = $("staffAccessMessage");
+  if (target) target.textContent = message;
+}
+
+function renderTemporaryStaffLogin(details = null) {
+  const target = $("staffTempLogin");
+  if (!target) return;
+  if (!details?.temporaryPassword) {
+    target.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+  const loginUrl = details.loginUrl || `${window.location.origin}/staff.html`;
+  target.hidden = false;
+  target.innerHTML = [
+    `<strong>${details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
+    `<div>Employee: <code>${escapeHtml(details.displayName || "")}</code></div>`,
+    `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
+    `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
+    `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
+    "<small>No email was sent. Share this password directly and the staff member will create a permanent password at first sign-in.</small>"
+  ].join("");
+}
+
+function renderStaffAccessList(staff = []) {
+  const target = $("staffAccessList");
+  if (!target) return;
+  if (!staff.length) {
+    target.innerHTML = `<p class="hint">No staff logins are linked yet.</p>`;
+    return;
+  }
+  target.innerHTML = `
+    <div class="staff-access-list">
+      ${staff.map((account) => {
+        const employee = account.legacyEmployeeId ? employeeById(account.legacyEmployeeId) : null;
+        const name = employee ? fullEmployeeName(employee) : account.displayName || "Unlinked staff";
+        return `
+          <section class="staff-access-card">
+            <div class="staff-access-person">
+              <strong>${escapeHtml(name)}</strong>
+              <small>${escapeHtml(account.email || account.userId || "No email")}</small>
+            </div>
+            <span>${escapeHtml(account.legacyEmployeeId || "")}</span>
+            <span class="staff-access-status">${staffAccountStatusLabel(account.status)}</span>
+            <span class="manager-access-added">${account.invitedAt ? escapeHtml(new Date(account.invitedAt).toLocaleDateString()) : ""}</span>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function loadStaffAccess() {
+  setStaffAccessMessage("Loading staff access...");
+  try {
+    const result = await fetchJson("/api/staff-accounts", {
+      cache: "no-store",
+      headers: authRequestHeaders()
+    });
+    if (result.schemaReady === false) {
+      renderStaffAccessList([]);
+      setStaffAccessMessage("Run the staff account schema before creating staff logins.");
+      return;
+    }
+    renderStaffAccessList(Array.isArray(result.staff) ? result.staff : []);
+    setStaffAccessMessage("Create staff logins here. Temporary passwords are meant to be shared directly for now.");
+  } catch (error) {
+    setStaffAccessMessage(error.message || "Could not load staff access.");
+    renderStaffAccessList([]);
+  }
+}
+
+async function openStaffAccess() {
+  if (!["owner", "manager"].includes(String(currentUser?.role || "").toLowerCase())) return;
+  populateStaffInviteEmployees();
+  renderTemporaryStaffLogin(null);
+  $("staffAccessDialog")?.showModal();
+  await loadStaffAccess();
+}
+
+async function sendStaffInvite(event) {
+  event.preventDefault();
+  const button = $("sendStaffInviteBtn");
+  const employeeId = $("staffInviteEmployee")?.value;
+  const employee = employeeById(employeeId);
+  const email = $("staffInviteEmail")?.value.trim();
+  if (!employee) {
+    setStaffAccessMessage("Choose an employee first.");
+    return;
+  }
+  if (!email) {
+    setStaffAccessMessage("Enter an email address first.");
+    return;
+  }
+  renderTemporaryStaffLogin(null);
+  if (button) { button.disabled = true; button.textContent = "Creating..."; }
+  const name = fullEmployeeName(employee);
+  try {
+    const result = await fetchJson("/api/staff-accounts/invite", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        email,
+        legacyEmployeeId: employee.id,
+        displayName: name
+      })
+    });
+    $("staffInviteEmail").value = "";
+    renderTemporaryStaffLogin({
+      email,
+      displayName: name,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl,
+      reusedExistingLogin: Boolean(result.reusedExistingLogin)
+    });
+    setStaffAccessMessage(result.reusedExistingLogin
+      ? `Existing login for ${email} was linked to ${name} and given a new temporary password.`
+      : `Login created for ${name}. Share the temporary password manually.`);
+    await loadStaffAccess();
+  } catch (error) {
+    setStaffAccessMessage(error.message || "Could not create staff login.");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "Create Login"; }
   }
 }
 async function importEmployeesFromFile(event) {
@@ -11922,6 +12177,8 @@ function wireEvents() {
   $("prevWeekBtn").onclick = () => { setCurrentWeek(addDays(currentDate, -7)); renderAll(); };
   $("nextWeekBtn").onclick = () => { setCurrentWeek(addDays(currentDate, 7)); renderAll(); };
   $("weekPicker").onchange = () => { setCurrentWeek(parseDateKey($("weekPicker").value)); renderAll(); };
+  $("weekViewBtn")?.addEventListener("click", exitDayFocus);
+  $("dayViewBtn")?.addEventListener("click", () => enterDayFocus());
   $("issueBtn").onclick = (event) => {
     event.stopPropagation();
     toggleIssuePopover();
@@ -11934,6 +12191,7 @@ function wireEvents() {
   });
   window.addEventListener("resize", () => {
     if (issuePopoverOpen) positionIssuePopover();
+    layoutScheduleRail();
   });
   window.addEventListener("scroll", () => {
     if (issuePopoverOpen) positionIssuePopover();
@@ -12063,6 +12321,9 @@ function wireEvents() {
   $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
   $("closeManagerAccessBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
   $("managerInviteForm")?.addEventListener("submit", sendManagerInvite);
+  $("staffAccessBtn")?.addEventListener("click", openStaffAccess);
+  $("closeStaffAccessBtn")?.addEventListener("click", () => $("staffAccessDialog").close());
+  $("staffInviteForm")?.addEventListener("submit", sendStaffInvite);
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
     $("archiveAllEmployeesBtn").hidden = !$("revealArchiveAllEmployees").checked;
@@ -12213,6 +12474,7 @@ function wireEvents() {
     if (callWeekly || weeklyPanelOpen) {
       weeklyAvailability[weeklyAvailabilityWeekKey] = parseWeeklyAvailability();
     }
+    employeeNewProfileDraft = false;
     const employee = {
       id,
       firstName,

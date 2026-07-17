@@ -481,6 +481,11 @@ summary:focus-visible {
   margin-right: 18px;
 }
 
+#staffAccessDialog .manager-access-editor > :not(h2):not(.form-actions) {
+  margin-left: 18px;
+  margin-right: 18px;
+}
+
 .modal-close-button {
   position: absolute;
   top: 13px;
@@ -510,6 +515,10 @@ summary:focus-visible {
 .manager-invite-grid input,
 .manager-invite-grid select {
   min-height: 38px;
+}
+
+.staff-invite-grid {
+  grid-template-columns: minmax(190px, 0.9fr) minmax(230px, 1.1fr) 118px;
 }
 
 .manager-temp-login {
@@ -594,15 +603,60 @@ summary:focus-visible {
   font-weight: 700;
 }
 
+.staff-access-list {
+  display: grid;
+  gap: 8px;
+}
+
+.staff-access-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.9fr) 86px 92px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #c7d7ea;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8fe 100%);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.staff-access-person {
+  min-width: 0;
+}
+
+.staff-access-person strong,
+.staff-access-person small {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.staff-access-person small,
+.staff-access-status {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.staff-access-status {
+  justify-self: start;
+  border: 1px solid #bed3f1;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #f5faff;
+}
+
 @media (max-width: 680px) {
-  .manager-access-card {
+  .manager-access-card,
+  .staff-access-card {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
 }
 
 @media (max-width: 720px) {
-  .manager-invite-grid {
+  .manager-invite-grid,
+  .staff-invite-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -930,11 +984,63 @@ body:has(#schedule.panel.active):not(.compact-preview) #conflictBanner {
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) #printFilters,
+body:has(#schedule.panel.active):not(.compact-preview) #scheduleViewToggle,
 body:has(#schedule.panel.active):not(.compact-preview) #dayFocusToolRail,
 body:has(#schedule.panel.active):not(.compact-preview) #roleJumpStrip {
   position: absolute;
-  left: 0;
+  left: 3px;
   z-index: 45;
+  box-sizing: border-box;
+}
+
+.schedule-view-toggle {
+  flex: 0 0 auto;
+  width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 0 4px 66px;
+  padding: 3px;
+  border: 1px solid rgba(147, 174, 214, 0.82);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(226, 239, 255, 0.9));
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+body:has(#schedule.panel.active):not(.compact-preview) .schedule-view-toggle {
+  display: inline-grid;
+  width: 46px;
+  margin: 0;
+  gap: 5px;
+  padding: 6px 5px;
+  justify-items: center;
+  z-index: 48;
+}
+
+.schedule-view-toggle button {
+  min-height: 28px;
+  padding: 4px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: #35506e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+body:has(#schedule.panel.active):not(.compact-preview) .schedule-view-toggle button {
+  width: 34px;
+  min-height: 26px;
+  padding: 3px 0;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.schedule-view-toggle button.active {
+  color: #fff;
+  background: linear-gradient(180deg, #397cff, #2059d9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 5px 12px rgba(37, 99, 235, 0.24);
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) #printFilters {
@@ -984,7 +1090,7 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
   justify-self: center;
 }
 .open-shifts-wrap:has(.open-shift-role-jump:not([hidden])) .open-shifts-head > div:first-child {
-  padding-left: 44px;
+  padding-left: 0;
 }
 
 
@@ -1148,22 +1254,21 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
 
 .open-shift-role-jump {
   position: absolute;
-  left: 8px;
-  top: 8px;
-  z-index: 25;
-  display: grid;
-  align-items: start;
-  justify-items: center;
-  gap: 5px;
-  width: 38px;
-  max-height: 38px;
-  padding: 5px;
-  overflow: hidden;
+  left: 12px;
+  top: 10px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(38vw, 430px);
+  height: 32px;
+  padding: 4px 6px;
+  overflow: visible;
   border: 1px solid rgba(37, 99, 235, 0.34);
   border-radius: 999px;
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.96) 0%, rgba(219, 234, 254, 0.96) 100%);
   box-shadow: 0 7px 18px rgba(29, 78, 216, 0.16);
-  transition: width 180ms ease, max-height 180ms ease, border-radius 180ms ease, box-shadow 180ms ease;
+  transition: box-shadow 140ms ease, border-color 140ms ease;
 }
 
 .open-shift-role-jump[hidden] {
@@ -1173,49 +1278,41 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
 .open-shift-role-jump:hover,
 .open-shift-role-jump:focus-within,
 .open-shift-role-jump.rail-expanded {
-  width: min(210px, calc(100vw - 72px));
-  max-height: min(340px, calc(100vh - 190px));
-  border-radius: 14px;
-  overflow: visible;
-  box-shadow: 0 18px 38px rgba(29, 78, 216, 0.2);
+  border-color: rgba(37, 99, 235, 0.48);
+  box-shadow: 0 10px 22px rgba(29, 78, 216, 0.18);
 }
 
 .open-shift-role-jump span {
-  display: grid;
-  min-height: 26px;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #1d4ed8;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 950;
   letter-spacing: 0;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .open-shift-role-jump .rail-label-full {
-  display: none;
-}
-
-.open-shift-role-jump:hover .rail-label-full,
-.open-shift-role-jump:focus-within .rail-label-full,
-.open-shift-role-jump.rail-expanded .rail-label-full {
   display: inline;
 }
 
-.open-shift-role-jump:hover .rail-label-short,
-.open-shift-role-jump:focus-within .rail-label-short,
-.open-shift-role-jump.rail-expanded .rail-label-short {
+.open-shift-role-jump .rail-label-short {
   display: none;
 }
 
 .open-shift-role-jump button {
   --role-color: #2563eb;
   position: relative;
-  width: 27px;
-  min-width: 27px;
-  height: 27px;
-  min-height: 27px;
+  display: grid;
+  place-items: center;
+  height: 22px;
+  width: 24px;
+  min-width: 24px;
+  min-height: 22px;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid color-mix(in srgb, var(--role-color) 70%, #ffffff);
   border-radius: 999px;
   background: linear-gradient(180deg, #ffffff 0%, color-mix(in srgb, var(--role-color) 12%, #ffffff) 100%);
@@ -1226,30 +1323,57 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
   box-shadow: 0 3px 8px rgba(15, 23, 42, 0.12);
 }
 
+.open-shift-role-jump button[data-role-tooltip]::before {
+  content: attr(data-role-tooltip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  z-index: 80;
+  min-width: max-content;
+  max-width: 150px;
+  padding: 5px 8px;
+  border: 1px solid rgba(147, 174, 214, 0.9);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fbff 0%, #e7f0ff 100%);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.1;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -3px);
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.open-shift-role-jump button[data-role-tooltip]:hover::before,
+.open-shift-role-jump button[data-role-tooltip]:focus-visible::before {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.open-shift-role-jump button[data-open-shift-role-jump=""] {
+  width: auto;
+  min-width: 32px;
+  padding: 0 8px;
+  color: #1d4ed8;
+  font-size: 10px;
+}
+
 .open-shift-role-jump button::after {
   content: "";
   position: absolute;
-  inset: 6px;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   background: var(--role-color);
+  transform: translate(-50%, -50%);
 }
 
-.open-shift-role-jump:hover button,
-.open-shift-role-jump:focus-within button,
-.open-shift-role-jump.rail-expanded button {
-  width: 100%;
-  min-width: 0;
-  height: 24px;
-  min-height: 24px;
-  padding: 3px 8px;
-  color: #1f2937;
-  font-size: 11px;
-  text-align: left;
-}
-
-.open-shift-role-jump:hover button::after,
-.open-shift-role-jump:focus-within button::after,
-.open-shift-role-jump.rail-expanded button::after {
+.open-shift-role-jump button[data-open-shift-role-jump=""]::after {
   display: none;
 }
 
@@ -1265,13 +1389,16 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
   box-shadow: 0 3px 9px color-mix(in srgb, var(--role-color) 28%, transparent);
 }
 
+.open-shift-role-jump button.selected::after {
+  background: #ffffff;
+}
+
 .open-shift-role-jump:not(:hover):not(:focus-within):not(.rail-expanded) button.selected {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 4px 10px rgba(15, 23, 42, 0.15);
 }
 
 .open-shift-role-jump button strong {
-  margin-left: 3px;
-  font-size: 10px;
+  display: none;
 }
 .unassigned-shift-tray {
   min-width: 240px;
@@ -1544,8 +1671,6 @@ body.dragging-open-shift .open-shifts-title .open-bay-icon::after {
   transform: translate(-50%, -50%) rotate(-45deg);
 }
 
-.shift-card:hover .delete-start-button,
-.shift-card.selected .delete-start-button,
 .unassigned-shift-card:hover .delete-start-button,
 .unassigned-shift-card.selected .delete-start-button {
   opacity: 1;
@@ -2059,8 +2184,8 @@ body.shift-bay-expanded .unassigned-shift-card small {
   align-content: start;
   justify-items: center;
   gap: 5px;
-  width: 56px;
-  padding: 7px 6px;
+  width: 46px;
+  padding: 6px 5px;
   border: 1px solid rgba(37, 99, 235, 0.18);
   border-radius: 999px;
   background: rgba(239, 246, 255, 0.95);
@@ -2070,7 +2195,6 @@ body.shift-bay-expanded .unassigned-shift-card small {
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail {
-  top: var(--day-focus-tool-rail-top, 166px);
   z-index: 48;
 }
 
@@ -2083,7 +2207,7 @@ body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focu
 
 .day-focus-tool-rail > span {
   display: grid;
-  width: 42px;
+  width: 34px;
   min-height: 22px;
   place-items: center;
   color: var(--muted);
@@ -2109,10 +2233,10 @@ body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focu
 
 .day-focus-tool-button {
   display: grid;
-  width: 42px;
+  width: 34px;
   min-height: 26px;
   place-items: center;
-  padding: 3px 5px;
+  padding: 3px 0;
   border: 1px solid rgba(37, 99, 235, 0.25);
   border-radius: 999px;
   background: linear-gradient(180deg, #ffffff 0%, #eaf2ff 100%);
@@ -2137,17 +2261,16 @@ body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focu
   text-shadow: 0 1px 1px rgba(15, 23, 42, 0.22);
 }
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
-  top: var(--role-jump-default-top, 223px);
-  width: 44px;
+  width: 46px;
   max-width: none;
   display: grid;
   align-content: start;
   align-items: center;
   justify-items: center;
-  gap: 6px;
+  gap: 7px;
   max-height: min(420px, calc(100vh - 270px));
   margin: 0;
-  padding: 7px 6px;
+  padding: 7px 5px;
   border-radius: 999px;
   overflow: hidden;
   transition: top 180ms ease, width 180ms ease, max-height 180ms ease, border-radius 180ms ease, box-shadow 180ms ease;
@@ -2156,13 +2279,6 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
 
 body:has(#schedule.panel.active):not(.compact-preview):has(.day-focus-grid) .schedule-grid {
   margin-left: 66px;
-}
-
-body:has(#schedule.panel.active):not(.compact-preview):has(.day-focus-grid) .role-jump-strip {
-  top: var(--role-jump-day-focus-top, 300px);
-}
-body.grid-filters-open:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip {
-  top: var(--role-jump-open-top, 440px);
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip:hover,
@@ -2177,14 +2293,14 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip.rail-exp
 
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip > span {
   display: grid;
-  width: 30px;
+  width: 34px;
   min-height: 30px;
   place-items: center;
   text-align: center;
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip .rail-label-short {
-  transform: translateX(-2px);
+  transform: none;
 }
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip .rail-label-full {
   display: none;
@@ -2205,9 +2321,9 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip.rail-exp
 body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip button {
   display: grid;
   place-items: center;
-  width: 30px;
+  width: 34px;
   height: 30px;
-  min-width: 30px;
+  min-width: 34px;
   min-height: 30px;
   padding: 0;
   overflow: hidden;
@@ -2247,7 +2363,7 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip:not(.rai
   width: 14px;
   height: 14px;
   place-self: center;
-  transform: translateY(3px);
+  transform: none;
   border-radius: 999px;
   background: var(--role-color, #64748b);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
@@ -2420,7 +2536,6 @@ body:has(#schedule.panel.active):not(.compact-preview) .role-jump-strip:not(.rai
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) .filters {
-  top: 174px;
   width: 44px;
   margin: 0;
 }
@@ -3135,6 +3250,15 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
 .day-focus-timebar-shift.pending-delete {
   opacity: 0.5;
   filter: grayscale(0.35);
+}
+
+.day-focus-timebar-shift.pending-delete > * {
+  pointer-events: none;
+}
+
+.day-focus-timebar-shift.pending-delete .day-focus-delete-options,
+.day-focus-timebar-shift.pending-delete .day-focus-delete-options * {
+  pointer-events: auto;
 }
 
 .day-focus-delete-options {
@@ -3865,6 +3989,24 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
   padding: calc(3px * var(--schedule-zoom, 1)) calc(7px * var(--schedule-zoom, 1));
   font-size: calc(10px * var(--schedule-zoom, 1));
   line-height: 1.1;
+}
+
+.day-view-button {
+  grid-column: 2;
+  justify-self: end;
+  min-width: calc(34px * var(--schedule-zoom, 1));
+  min-height: calc(21px * var(--schedule-zoom, 1));
+  padding: calc(3px * var(--schedule-zoom, 1)) calc(7px * var(--schedule-zoom, 1));
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #ffffff 0%, #dbeafe 100%);
+  color: #1d4ed8;
+  font-size: calc(10px * var(--schedule-zoom, 1));
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.day-view-button:hover {
+  background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
 }
 
 .closer-day-indicator {
@@ -4650,6 +4792,40 @@ body.problem-focus .shift-card.has-issue {
   filter: none;
 }
 
+.shift-action-strip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  z-index: 8;
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  padding: 3px;
+  border: 1px solid rgba(147, 197, 253, 0.84);
+  border-radius: 999px;
+  background: rgba(239, 246, 255, 0.94);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.18);
+  text-shadow: none;
+}
+
+.shift-action-strip button {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: #1e3a8a;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.shift-action-strip button:hover {
+  background: #dbeafe;
+  transform: none;
+}
+
 .shift-card:active {
   cursor: grabbing;
   transform: scale(0.99);
@@ -4814,6 +4990,15 @@ body.problem-focus .shift-card.has-issue {
   inset: 0;
   z-index: 1;
   background: rgba(31, 41, 55, 0.62);
+}
+
+.shift-card.pending-delete > * {
+  pointer-events: none;
+}
+
+.shift-card.pending-delete .shift-delete-options,
+.shift-card.pending-delete .shift-delete-options * {
+  pointer-events: auto;
 }
 
 .shift-delete-options {
@@ -5735,6 +5920,20 @@ legend {
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.profile-field-flash {
+  animation: profile-field-flash 2200ms ease both;
+}
+
+@keyframes profile-field-flash {
+  0%, 100% {
+    box-shadow: none;
+  }
+  14%, 72% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.24), 0 8px 18px rgba(37, 99, 235, 0.12);
+    background: rgba(239, 246, 255, 0.94);
+  }
 }
 
 .availability-day .small-button {
@@ -7141,6 +7340,7 @@ body.compact-preview .schedule-grid,
 body.compact-preview .role-jump-strip,
 body.compact-preview .weekly-role-summary,
 body.compact-preview .unavailable-employees-list,
+body.compact-preview #scheduleViewToggle,
 body.compact-preview #printFilters,
 body.compact-preview #conflictBanner {
   display: none !important;
@@ -7432,6 +7632,11 @@ dialog {
 
 #managerAccessDialog {
   width: min(720px, calc(100vw - 28px));
+  max-height: calc(100vh - 24px);
+}
+
+#staffAccessDialog {
+  width: min(820px, calc(100vw - 28px));
   max-height: calc(100vh - 24px);
 }
 
@@ -8744,7 +8949,7 @@ select {
 /* Keep the single-day utility rail stable; expanding here steals space from the day board. */
 body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:hover,
 body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focus-within {
-  width: 56px;
+  width: 46px;
   border-radius: 999px;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
@@ -8763,7 +8968,7 @@ body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focu
 
 .day-focus-tool-rail:hover .day-focus-tool-button,
 .day-focus-tool-rail:focus-within .day-focus-tool-button {
-  width: 42px;
+  width: 34px;
   min-height: 26px;
   font-size: 10px;
 }

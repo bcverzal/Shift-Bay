@@ -17,6 +17,9 @@ const signOutButton = document.getElementById("staffSignOut");
 const demoPreviewCard = document.getElementById("demoPreviewCard");
 const demoEmployeeSelect = document.getElementById("demoEmployeeSelect");
 const demoPreviewButton = document.getElementById("demoPreviewButton");
+const staffPasswordDialog = document.getElementById("staffPasswordDialog");
+const staffPasswordForm = document.getElementById("staffPasswordForm");
+const staffPasswordMessage = document.getElementById("staffPasswordMessage");
 
 let demoState = null;
 
@@ -33,6 +36,12 @@ function selectedLocationId() {
 function setMessage(message) {
   loginMessage.hidden = !message;
   loginMessage.textContent = message || "";
+}
+
+function setPasswordMessage(message) {
+  if (!staffPasswordMessage) return;
+  staffPasswordMessage.hidden = !message;
+  staffPasswordMessage.textContent = message || "";
 }
 
 function readSession() {
@@ -89,6 +98,26 @@ async function signIn(email, password) {
   return body.profile || body;
 }
 
+async function changeStaffPassword(password) {
+  const result = await staffFetch("/api/staff/change-password", {
+    method: "POST",
+    body: JSON.stringify({ password })
+  });
+  return result.profile || result;
+}
+
+function showPasswordDialog() {
+  if (!staffPasswordDialog?.open) staffPasswordDialog?.showModal();
+  setPasswordMessage("");
+  document.getElementById("newStaffPassword")?.focus();
+}
+
+function hidePasswordDialog() {
+  staffPasswordDialog?.close();
+  if (staffPasswordForm) staffPasswordForm.reset();
+  setPasswordMessage("");
+}
+
 function showSignedOut() {
   loginCard.hidden = false;
   staffApp.hidden = true;
@@ -98,6 +127,11 @@ function showSignedOut() {
 function showSignedIn(profile) {
   loginCard.hidden = true;
   staffApp.hidden = false;
+  if (profile?.user?.passwordChangeRequired) {
+    showPasswordDialog();
+  } else {
+    hidePasswordDialog();
+  }
   const email = profile?.user?.email || "Signed in";
   const displayName = profile?.account?.display_name || "";
   staffIdentity.textContent = displayName ? `${displayName} (${email})` : email;
@@ -202,8 +236,45 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
+staffPasswordDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+});
+
+staffPasswordForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = document.getElementById("newStaffPassword")?.value || "";
+  const confirm = document.getElementById("confirmStaffPassword")?.value || "";
+  if (password.length < 8) {
+    setPasswordMessage("Use at least 8 characters.");
+    return;
+  }
+  if (password !== confirm) {
+    setPasswordMessage("The passwords do not match.");
+    return;
+  }
+  const button = document.getElementById("staffPasswordSubmit");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Saving...";
+  }
+  try {
+    setPasswordMessage("Saving password...");
+    await changeStaffPassword(password);
+    hidePasswordDialog();
+    await loadStaffProfile();
+  } catch (error) {
+    setPasswordMessage(error.message || "Could not save password.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Save Password";
+    }
+  }
+});
+
 signOutButton.addEventListener("click", () => {
   writeSession(null);
+  hidePasswordDialog();
   showSignedOut();
   loadDemoPreviewOptions();
 });

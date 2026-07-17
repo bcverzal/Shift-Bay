@@ -15,6 +15,7 @@
 
 ## Core Workflow Polish
 
+- [ ] Run a dedicated UI/UX simplification pass using Design Parser/Mobbin/Emil-style principles: reduce competing colors, reduce simultaneous information density, respect Miller's Law, make one primary action obvious per surface, and treat animation as functional feedback rather than decoration.
 - [ ] Make warning notifications fully reliable: next/previous arrows, Show, dismiss, restore dismissed warnings, and shortcut-to-fix.
 - [ ] Continue redesigning Shift Detail so it is shorter, wider, easier to scan, and less error-prone.
 - [ ] Add a Metadata tab to Shift Detail showing when the shift/open shift was created, last edited, how it was created (manual, template, coverage, copied, imported), and who created/edited it once shift-level audit fields are consistently stored.
@@ -31,6 +32,7 @@
 - [ ] Create a hotkey/help menu and review the full scheduling workflow for useful keyboard shortcuts.
 - [ ] Redesign employee profiles into clear tabs/sections so availability, training, roles, pay, notes, history, and future added data stay easy to find.
 - [ ] Revisit the first-pass employee profile tabs later when employee self-service profiles become part of the product.
+- [ ] Fix employee profile selection/dirty-state behavior: the first employee should not always appear selected, selected/focused roster cards should update consistently, and switching employees after merely opening the tab should not trigger an unsaved-changes warning.
 - [ ] Rework the overall Employees page layout later: reconsider the long side roster, improve search/selection flow, and design the profile area so employee details are easier to scan without wasted space.
 - [ ] Create a stable baseline copy/version once the current workflow passes review.
 - [ ] Revisit faint grid cell divider lines: decide whether to keep them, soften them, remove them for single-entry cells, or show them only on hover/active rows.
