@@ -3560,7 +3560,11 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
 
 .day-focus-open-name.expanded,
 .day-focus-open-cell.expanded {
-  min-height: 64px !important;
+  min-height: calc(44px + (var(--eligible-rows, 1) * 24px)) !important;
+}
+
+.day-focus-open-cell.expanded {
+  overflow: visible;
 }
 
 .day-focus-open-name {
@@ -3669,6 +3673,7 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
 }
 
 .day-focus-open-eligible > div button {
+  position: relative;
   padding: 3px 8px;
   border: 1px solid #86efac;
   border-radius: 999px;
@@ -3677,6 +3682,37 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   font-size: 10px;
   font-weight: 850;
   box-shadow: 0 2px 5px rgba(5, 150, 105, 0.14);
+}
+
+.day-focus-open-eligible > div button[data-chip-tip]::after {
+  content: attr(data-chip-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  width: max-content;
+  max-width: 280px;
+  padding: 7px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eaf2ff 100%);
+  color: #1e293b;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.25;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 2px);
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.day-focus-open-eligible > div button[data-chip-tip]:hover::after,
+.day-focus-open-eligible > div button[data-chip-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .day-focus-open-eligible em {
@@ -7338,6 +7374,7 @@ fieldset .checkbox {
 
 body.compact-preview .schedule-grid,
 body.compact-preview .role-jump-strip,
+body.compact-preview .day-focus-tool-rail,
 body.compact-preview .weekly-role-summary,
 body.compact-preview .unavailable-employees-list,
 body.compact-preview #scheduleViewToggle,
@@ -8363,6 +8400,7 @@ dialog .time-picker {
   }
 
   body.printing-grid .role-jump-strip,
+  body.printing-grid .day-focus-tool-rail,
   body.printing-grid .weekly-role-summary,
   body.printing-grid .unavailable-employees-list,
   body.printing-grid #printFilters,
@@ -8438,6 +8476,7 @@ dialog .time-picker {
   }
 
   body.printing-simple .role-jump-strip,
+  body.printing-simple .day-focus-tool-rail,
   body.printing-simple .weekly-role-summary,
   body.printing-simple .unavailable-employees-list,
   body.printing-simple #printFilters,

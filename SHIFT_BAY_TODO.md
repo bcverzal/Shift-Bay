@@ -22,12 +22,15 @@
 - [ ] Decide whether the shift name field is useful enough to keep or should be removed entirely.
 - [ ] Ensure deleting/unassigning shifts never causes the grid to jump unexpectedly.
 - [ ] Extend copy/stretch interactions to RO and Block cards: Shift+drag should stretch/copy them across days like normal shift cards, ROs should support the same behavior if they do not already, and both RO and Block cards should support copy/paste.
+- [ ] Add a quick shortcut in single-day view to unassign a selected shift back to the Shift Bay without opening the full Shift Detail dialog.
 - [ ] Improve Shift Bay usability when there are many shifts: filtering, sorting, selection, and template-add flows.
 - [ ] Add "Add to Template" from the Shift Detail box: open a small template picker, then add a generic version of that shift to the chosen template using the shift's day of week, role, start time, and end time.
 - [ ] Rework the Shift Bay jump-to-role toolbar when sorting by role so it fits cleanly without scrollbars or crowding the bay controls; the first CSS pass did not fully fix it.
 - [ ] Add an emergency-only visibility mode for selected Shift Bay shifts: keep emergency-only people out of the main bay recommendation panel, but allow a deliberate filter/toggle that highlights emergency-only options in the grid and single-day view, likely using a red treatment similar to the green clean-fit highlight.
 - [ ] Rework the grid jump-to-role rail expansion so it does not cover the employee header/role section content and feels intentionally placed.
 - [ ] Fine tune the single-day view rails and open-shift expand/collapse buttons for spacing, alignment, hover behavior, and visual polish.
+- [x] In single-day view, when suggested staff chips for an unassigned Shift Bay row wrap to a second line, expand that specific shift row so all suggested staff remain visible instead of rendering behind the row below.
+- [x] In single-day view, add app-styled rollovers on suggested employee chips showing that employee's scheduled shift count for the week, role breakdown, and number of closing shifts so managers can balance assignments without jumping back to weekly view.
 - [ ] Add a subtle completion/progress celebration for the Shift Bay: when a large batch of shifts is added and the week is close to covered, animate a gold left-to-right highlight across the bay.
 - [ ] Create a hotkey/help menu and review the full scheduling workflow for useful keyboard shortcuts.
 - [ ] Redesign employee profiles into clear tabs/sections so availability, training, roles, pay, notes, history, and future added data stay easy to find.
@@ -36,12 +39,14 @@
 - [ ] Rework the overall Employees page layout later: reconsider the long side roster, improve search/selection flow, and design the profile area so employee details are easier to scan without wasted space.
 - [ ] Create a stable baseline copy/version once the current workflow passes review.
 - [ ] Revisit faint grid cell divider lines: decide whether to keep them, soften them, remove them for single-entry cells, or show them only on hover/active rows.
+- [x] Temporarily remove shift labels from the main weekly grid: hide them on shift cards and in the far-left employee column, then revisit later if labels can be redesigned to add clear value.
 
 ## Scheduling Logic
 
 - [ ] Add emergency-only role eligibility for employees who can fill a role but should not be recommended for it.
 - [ ] Support role training by meal period, not just broad role-wide training.
 - [ ] Refine lunch closer logic and warnings.
+- [ ] Refine flex-shift behavior: if a flex shift is later shortened or changed so it no longer behaves like a flex, automatically clear the flex flag or ask the user whether to remove it so floor plans do not print incorrect flex markers.
 - [ ] Improve clopen detection and eventually suggest rearrangements to avoid clopens.
 - [ ] Rebuild Quick Training as a guided workflow that creates or links actual training shifts without marking employees fully trained too early.
 - [ ] Rebuild employee suggestion scoring later using seniority, sales data, shift performance, doubles, closing ability, and learned scheduling patterns.
@@ -51,10 +56,13 @@
 - [ ] Build a floor-plan designer inside Shift Bay so users can create their own floor plans instead of relying on a prebuilt hardcoded image.
 - [ ] Add floor-plan section assignment tools: split sections based on the number of servers, allow quick manual adjustments, and support giving stronger servers larger or more valuable sections.
 - [ ] Review floor-plan notes with real examples for double, BQT, BAR, trainer, trainee, flex, closer, and lunch closer shifts.
+- [ ] Add a checkbox next to shift notes so the user can choose whether that note should print on the floor chart/floor plan.
 - [ ] Keep floor-plan notes short enough to print clearly without overlap.
 - [ ] Add print role order controls for compact print views.
 - [ ] Confirm floor plans print in correct orientation when mixed with compact schedule pages.
 - [ ] Confirm compact employee-by-role and compact employee-all-roles reports do not split employee rows across pages.
+- [x] Fix Print Week so the day/week switcher rail/widget does not appear on the first printed page.
+- [ ] Investigate whether Shift Bay can control or suggest default PDF filenames from print flows, such as compact schedule, print week, completed week, Ctuit entry list, and floor plans.
 
 ## Ctuit Entry Assistant
 
@@ -75,6 +83,7 @@
 - [ ] Support employees trained at multiple locations, including cross-location role eligibility, availability, released shifts, open Shift Bay shifts, and approval rules.
 - [ ] Add owner-only demo data tools for sandbox locations: reset demo data, generate fake schedules, and clone templates/settings safely.
 - [ ] Make backup/export and last-saved status extremely visible and reassuring.
+- [ ] Add account/session security behavior so closing the browser window logs the user out, or provide a clear setting for shared-office PCs where sessions should not remain signed in after close.
 - [ ] Confirm shared server storage behavior across laptop and office PC.
 - [ ] Plan baseline/update version folders so experimental work does not disrupt the usable scheduler.
 - [ ] Eventually prepare for packaged desktop app or more formal server setup.

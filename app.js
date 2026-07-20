@@ -4313,10 +4313,32 @@ function dayFocusEligibleEmployeesForOpenShift(openShift) {
     .sort((a, b) => displayName(a.employee).localeCompare(displayName(b.employee)));
 }
 
+function dayFocusEmployeeWeekSummary(employee, dateKey) {
+  const weekStart = startOfWeek(parseDateKey(dateKey), state.settings.weekStart);
+  const weekStartKey = formatDateKey(weekStart);
+  const weekEndKey = formatDateKey(addDays(weekStart, 6));
+  const shifts = state.shifts.filter((shift) =>
+    shift.employeeId === employee.id &&
+    shift.date >= weekStartKey &&
+    shift.date <= weekEndKey &&
+    visibleShift(shift)
+  );
+  const roleCounts = new Map();
+  shifts.forEach((shift) => {
+    const roleName = roleById(shift.roleId)?.name || "Other";
+    roleCounts.set(roleName, (roleCounts.get(roleName) || 0) + 1);
+  });
+  const roleText = [...roleCounts.entries()].map(([roleName, count]) => `${roleName} ${count}`).join(", ") || "No shifts yet";
+  const closeCount = shifts.filter((shift) => shift.isCloser).length;
+  return `${shifts.length} shift${shifts.length === 1 ? "" : "s"} this week | ${roleText} | ${closeCount} close${closeCount === 1 ? "" : "s"}`;
+}
+
 function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
   openShifts.forEach((openShift) => {
     const roleColor = role.color || shiftColor(openShift);
     const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
+    const eligibleCount = expanded ? dayFocusEligibleEmployeesForOpenShift(openShift).length : 0;
+    const eligibleRows = expanded ? Math.min(4, Math.max(1, Math.ceil(Math.max(eligibleCount, 1) / 7))) : 1;
     const labelCell = cell(`day-focus-open-name ${expanded ? "expanded" : ""}`, `
       <div class="day-focus-open-label" style="--role-color:${roleColor}">
         <div>
@@ -4327,6 +4349,10 @@ function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
       </div>
     `);
     const timelineCell = cell(`day-cell day-focus-open-cell ${expanded ? "expanded" : ""}`, renderDayFocusOpenShiftTimeline(openShift, role));
+    if (expanded) {
+      labelCell.style.setProperty("--eligible-rows", eligibleRows);
+      timelineCell.style.setProperty("--eligible-rows", eligibleRows);
+    }
     timelineCell.dataset.date = dateKey;
     timelineCell.dataset.openShiftId = openShift.id;
     grid.append(labelCell);
@@ -4362,7 +4388,7 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
-    ? eligible.map((item) => `<button type="button" data-day-open-assign="${item.employee.id}" title="Assign this open shift to ${escapeHtml(displayName(item.employee))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
+    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
     : `<em>No clean fits</em>`;
   return `
     <div class="day-focus-row-timebar day-focus-open-timebar-wrap">
@@ -5575,7 +5601,7 @@ function renderGroupedEmployeeRows(grid, employees, dates, selectedRoleId = "") 
 }
 
 function renderEmployeeScheduleRow(grid, employee, dates, groupRole = null) {
-  const nameCell = renderEmployeeNameCell(employee, groupRole);
+  const nameCell = renderEmployeeNameCell(employee, groupRole, { hideScheduleLabels: true });
   const dayCells = dates.map((date) => renderEmployeeDayCell(employee, date, groupRole));
   const rowHeight = Math.max(
     118,
@@ -5591,7 +5617,7 @@ function renderEmployeeScheduleRow(grid, employee, dates, groupRole = null) {
 }
 
 function renderEmployeeNameCell(employee, groupRole = null, options = {}) {
-  const meta = employee.mealTraining?.join(", ") || "";
+  const meta = options.hideScheduleLabels ? "" : (employee.mealTraining?.join(", ") || "");
   const labor = employeeWeekLabor(employee.id);
   const payrollLine = `<div class="employee-labor-summary">${formatHours(labor.hours)} hrs | ${formatRate(labor.payroll)} projected</div>`;
   const groupLine = groupRole ? `<div class="employee-meta">${groupRole.name} group</div>` : "";
@@ -5737,7 +5763,7 @@ function renderEmployeeDayCell(employee, date, groupRole = null) {
   dayCell.insertAdjacentHTML("beforeend", renderUnavailableBadge(employee, dateKey));
   visibleDayShifts.forEach((shift) => {
       const isGhost = groupRole && shift.roleId !== groupRole.id;
-      dayCell.append(renderShiftCard(shift, { ghost: isGhost }));
+      dayCell.append(renderShiftCard(shift, { ghost: isGhost, hideScheduleLabels: true }));
     });
   if (pendingTrayWarning?.employeeId === employee.id && pendingTrayWarning.date === dateKey) {
     dayCell.append(renderPendingTrayWarning());
@@ -6615,7 +6641,8 @@ function renderShiftCard(shift, options = {}) {
   const roleName = role?.name || "";
   const rawShiftLabel = cleanCell(shift.shiftLabel);
   const titleText = roleName || rawShiftLabel || "Role";
-  const showShiftLabel = Boolean(state.settings.showShiftNameFields) && rawShiftLabel && rawShiftLabel !== titleText && !/regular\s+week/i.test(rawShiftLabel);
+  const hideScheduleLabels = Boolean(options.hideScheduleLabels);
+  const showShiftLabel = !hideScheduleLabels && Boolean(state.settings.showShiftNameFields) && rawShiftLabel && rawShiftLabel !== titleText && !/regular\s+week/i.test(rawShiftLabel);
   const card = document.createElement("div");
   card.className = "shift-card";
   if (options.ghost) card.classList.add("ghost-shift-card");
@@ -6633,7 +6660,7 @@ function renderShiftCard(shift, options = {}) {
   const coveredMeals = getMealsForShift(shift).join(", ");
   const rawNoteText = cleanCell(shift.notes);
   const noteText = /^training$/i.test(rawNoteText) ? "" : rawNoteText;
-  const detailText = options.ghost ? "Also scheduled" : (noteText || coveredMeals);
+  const detailText = options.ghost ? "Also scheduled" : (noteText || (hideScheduleLabels ? "" : coveredMeals));
   const detailClass = noteText && !options.ghost ? "shift-notes shift-note-badge" : "shift-notes";
   const trainingBadges = trainingBadgesForShift(shift).map((badge) => `<div class="training-badge">${badge}</div>`).join("");
   if (trainingBadges) card.classList.add("has-training-badge");
@@ -6653,7 +6680,7 @@ function renderShiftCard(shift, options = {}) {
     ${options.ghost ? "" : `<button class="closer-toggle ${shift.isCloser ? "active" : ""}" type="button" title="${shift.isCloser ? "Marked as closer shift" : "Mark as closer shift"}" aria-label="${shift.isCloser ? "Unmark closer shift" : "Mark closer shift"}">Close</button>`}
     ${showShiftLabel ? `<div class="shift-notes">${escapeHtml(rawShiftLabel)}</div>` : ""}
     <div class="shift-time">${shift.start} - ${end}</div>
-    <div class="${detailClass}">${noteText && !options.ghost ? `Note: ${escapeHtml(noteText)}` : escapeHtml(detailText)}</div>
+    ${detailText ? `<div class="${detailClass}">${noteText && !options.ghost ? `Note: ${escapeHtml(noteText)}` : escapeHtml(detailText)}</div>` : ""}
     ${trainingBadges}
     ${pendingDeleteShiftId === shift.id ? `
       <div class="shift-delete-options" aria-label="Choose what to do with this shift">
@@ -10011,15 +10038,11 @@ function floorPlanFirstNameCounts(shifts) {
 function floorPlanShiftTime(shift, employee) {
   const start = floorPlanTimeNumber(shift.start);
   if (shift.isCloser) return `${start} - CL`;
+  if (shift.isLunchCloser || employee?.alwaysPrintFloorEndTime) {
+    const end = floorPlanTimeNumber(shift.end);
+    return end ? `${start} - ${end}` : start;
+  }
   if (shift.isFlexDouble || shift.untilVolume) return `${start} - ?`;
-  if (shift.isLunchCloser) {
-    const end = floorPlanTimeNumber(shift.end);
-    return end ? `${start} - ${end}` : start;
-  }
-  if (employee?.alwaysPrintFloorEndTime) {
-    const end = floorPlanTimeNumber(shift.end);
-    return end ? `${start} - ${end}` : start;
-  }
   return start;
 }
 
@@ -10178,7 +10201,7 @@ function shiftMatchesFloorPlanPeriod(shift, period) {
   if (range.start == null || range.end == null) return false;
   const sortedPeriods = [...periods].sort((a, b) => a.startMinutes - b.startMinutes);
   const dinner = sortedPeriods.find((mealPeriod) => mealPeriod.name === "Dinner");
-  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes : false);
+  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes || range.end > dinner.startMinutes : false);
   if (period === "am") return dinner ? range.start < dinner.startMinutes : true;
   const startsInNamedPeriod = (names) => sortedPeriods
     .filter((mealPeriod) => names.includes(mealPeriod.name))
