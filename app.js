@@ -2306,12 +2306,15 @@ function employeeFormSnapshot() {
   const form = $("employeeForm");
   if (!form) return "";
   const values = Array.from(form.querySelectorAll("input, select, textarea"))
-    .filter((field) => field.type !== "file")
-    .map((field) => ({
-      key: field.name || field.id || field.dataset?.availabilityDay || field.dataset?.weeklyAvailabilityDay || "field",
-      id: field.id || "",
-      value: field.type === "checkbox" || field.type === "radio" ? Boolean(field.checked) : field.value
-    }));
+    .filter((field) => field.type !== "file" && field.id !== "weeklyAvailabilityWeek")
+    .map((field, index) => {
+      const dataKey = Object.entries(field.dataset || {})
+        .find(([key]) => /availability|rule|pay|training|role|department/i.test(key));
+      return {
+        key: field.id || field.name || (dataKey ? `${dataKey[0]}:${dataKey[1]}` : `field:${index}`),
+        value: field.type === "checkbox" || field.type === "radio" ? Boolean(field.checked) : field.value
+      };
+    });
   values.push({ key: "weeklyAvailabilityVisible", value: !Boolean($("weeklyAvailabilityFieldset")?.hidden) });
   return JSON.stringify(values);
 }
