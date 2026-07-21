@@ -8236,6 +8236,30 @@ dialog .time-picker {
     display: none !important;
   }
 
+  /* View controls belong to the working screen only and must never bleed into print layouts. */
+  body.printing-grid .header-actions,
+  body.printing-simple .header-actions,
+  body.printing-ctuit-entry .header-actions,
+  body.printing-floor-week .header-actions,
+  body.printing-call-weekly .header-actions,
+  body.printing-grid .day-focus-tool-rail,
+  body.printing-simple .day-focus-tool-rail,
+  body.printing-ctuit-entry .day-focus-tool-rail,
+  body.printing-floor-week .day-focus-tool-rail,
+  body.printing-call-weekly .day-focus-tool-rail,
+  body.printing-grid .role-jump-strip,
+  body.printing-simple .role-jump-strip,
+  body.printing-ctuit-entry .role-jump-strip,
+  body.printing-floor-week .role-jump-strip,
+  body.printing-call-weekly .role-jump-strip,
+  body.printing-grid .open-shifts-wrap,
+  body.printing-simple .open-shifts-wrap,
+  body.printing-ctuit-entry .open-shifts-wrap,
+  body.printing-floor-week .open-shifts-wrap,
+  body.printing-call-weekly .open-shifts-wrap {
+    display: none !important;
+  }
+
   main {
     display: block !important;
     height: auto !important;
@@ -8520,6 +8544,14 @@ dialog .time-picker {
     page-break-inside: auto !important;
     break-before: auto !important;
     page-break-before: auto !important;
+  }
+
+  /* Leave a practical binder-punch gutter on compact schedule printouts. */
+  body.printing-simple:not(.printing-ctuit-entry) .print-view {
+    box-sizing: border-box;
+    width: calc(100% - 0.35in) !important;
+    margin-left: 0.35in !important;
+    margin-right: 0 !important;
   }
 
   body.printing-simple .print-view h2 {

@@ -94,6 +94,7 @@ let dayFocusSortMode = loadDayFocusSortMode();
 let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
 let employeeFormCleanSnapshot = "";
+let employeeFormDirty = false;
 let employeeNewProfileDraft = false;
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
@@ -2319,13 +2320,18 @@ function employeeFormSnapshot() {
   return JSON.stringify(values);
 }
 
+function markEmployeeFormDirty() {
+  employeeFormDirty = true;
+}
+
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
+  employeeFormDirty = false;
 }
 
 function employeeFormHasUnsavedChanges() {
   const form = $("employeeForm");
-  if (!form || !employeeFormCleanSnapshot) return false;
+  if (!form || !employeeFormCleanSnapshot || !employeeFormDirty) return false;
   return employeeFormSnapshot() !== employeeFormCleanSnapshot;
 }
 
@@ -7718,6 +7724,7 @@ function availabilityPresetForDay(dayIndex, preset, weekKey = currentWeekKey()) 
 function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = currentWeekKey()) {
   const input = document.querySelector(inputSelector);
   if (!input) return;
+  markEmployeeFormDirty();
   input.value = availabilityPresetForDay(dayIndex, preset, weekKey);
   input.focus();
   input.select?.();
@@ -7832,6 +7839,7 @@ function wireWeeklyRuleButtons() {
 }
 
 function addWeeklyRuleRow() {
+  markEmployeeFormDirty();
   const placeholder = $("weeklyRuleEditor").querySelector(".hint");
   if (placeholder) $("weeklyRuleEditor").innerHTML = "";
   $("weeklyRuleEditor").insertAdjacentHTML("beforeend", weeklyRuleRow());
@@ -7839,6 +7847,7 @@ function addWeeklyRuleRow() {
 }
 
 function setAvailabilityInputs(selector, value) {
+  markEmployeeFormDirty();
   document.querySelectorAll(selector).forEach((input) => {
     input.value = value;
   });
@@ -12474,6 +12483,12 @@ function wireEvents() {
     });
   };
 
+  $("employeeForm").addEventListener("input", (event) => {
+    if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
+  });
+  $("employeeForm").addEventListener("change", (event) => {
+    if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
+  });
   $("employeeForm").onsubmit = (event) => {
     event.preventDefault();
     pushUndo();
@@ -12564,6 +12579,7 @@ function wireEvents() {
     setWeeklyAvailabilityWeek($("weeklyAvailabilityWeek").value);
   };
   $("useActiveScheduleWeekBtn").onclick = () => {
+    markEmployeeFormDirty();
     setWeeklyAvailabilityWeek(currentWeekKey());
   };
   $("employeeCallWeekly").onchange = () => {
@@ -12572,6 +12588,7 @@ function wireEvents() {
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
   };
   $("toggleWeeklyAvailabilityBtn").onclick = () => {
+    markEmployeeFormDirty();
     $("employeeCallWeekly").checked = true;
     if (!employeeWeeklyAvailabilityWeekKey) setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
     $("weeklyAvailabilityFieldset").hidden = !$("weeklyAvailabilityFieldset").hidden;
