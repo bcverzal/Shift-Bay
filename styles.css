@@ -8260,6 +8260,19 @@ dialog .time-picker {
     display: none !important;
   }
 
+  body.printing-grid #scheduleViewToggle,
+  body.printing-simple #scheduleViewToggle,
+  body.printing-ctuit-entry #scheduleViewToggle,
+  body.printing-floor-week #scheduleViewToggle,
+  body.printing-call-weekly #scheduleViewToggle,
+  body.printing-grid .week-switcher,
+  body.printing-simple .week-switcher,
+  body.printing-ctuit-entry .week-switcher,
+  body.printing-floor-week .week-switcher,
+  body.printing-call-weekly .week-switcher {
+    display: none !important;
+  }
+
   main {
     display: block !important;
     height: auto !important;
