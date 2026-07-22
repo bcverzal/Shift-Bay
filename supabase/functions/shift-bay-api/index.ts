@@ -8,6 +8,8 @@
 // - SHIFT_BAY_LOCATION_ID
 // - SHIFT_BAY_DOCUMENT_KEY optional, defaults to primary
 // - SHIFT_BAY_SITE_URL optional, defaults to hosted Shift Bay URL
+// - RESEND_API_KEY required for invitation email delivery
+// - RESEND_FROM_EMAIL optional, defaults to invites@send.shift-bay.com
 
 type JsonRecord = Record<string, unknown>;
 
@@ -28,8 +30,10 @@ function config() {
     anonKey: env("SUPABASE_ANON_KEY"),
     serviceRoleKey: env("SUPABASE_SERVICE_ROLE_KEY"),
     locationId: env("SHIFT_BAY_LOCATION_ID"),
-    siteUrl: env("SHIFT_BAY_SITE_URL", "https://shift-bay.netlify.app"),
-    documentKey: env("SHIFT_BAY_DOCUMENT_KEY", "primary")
+    siteUrl: env("SHIFT_BAY_SITE_URL", "https://shift-bay.com"),
+    documentKey: env("SHIFT_BAY_DOCUMENT_KEY", "primary"),
+    resendApiKey: env("RESEND_API_KEY"),
+    resendFrom: env("RESEND_FROM_EMAIL", "Shift Bay <invites@send.shift-bay.com>")
   };
 }
 
@@ -108,6 +112,81 @@ function temporaryPassword() {
   const second = pickRandom(words.filter((word) => word !== first));
   const capitalized = first.charAt(0).toUpperCase() + first.slice(1);
   return `${capitalized}${pickRandom(symbols)}${second}`;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function sendInviteEmail({
+  email,
+  displayName,
+  role,
+  temporaryPassword: password,
+  loginUrl,
+  isStaff = false
+}: {
+  email: string;
+  displayName: string;
+  role: string;
+  temporaryPassword: string;
+  loginUrl: string;
+  isStaff?: boolean;
+}) {
+  const cfg = config();
+  if (!cfg.resendApiKey) {
+    return { sent: false, reason: "RESEND_API_KEY is not configured." };
+  }
+
+  const safeName = escapeHtml(displayName || email);
+  const safeRole = escapeHtml(role);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
+  const safeLoginUrl = escapeHtml(loginUrl);
+  const subject = isStaff ? "Your Shift Bay staff login" : "You are invited to Shift Bay";
+  const text = [
+    `Hello ${displayName || email},`,
+    "",
+    isStaff ? "You have been invited to view your schedule in Shift Bay." : `You have been invited to Shift Bay as a ${role}.`,
+    `Login: ${email}`,
+    `Temporary password: ${password}`,
+    `Open Shift Bay: ${loginUrl}`,
+    "",
+    "You will be asked to create a permanent password the first time you sign in."
+  ].join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1e2a3a;max-width:560px">
+      <h1 style="color:#214391">Shift Bay</h1>
+      <p>Hello ${safeName},</p>
+      <p>${isStaff ? "You have been invited to view your schedule in Shift Bay." : `You have been invited to Shift Bay as a <strong>${safeRole}</strong>.`}</p>
+      <p><strong>Login:</strong> ${safeEmail}<br><strong>Temporary password:</strong> ${safePassword}</p>
+      <p><a href="${safeLoginUrl}" style="display:inline-block;background:#2864e8;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Open Shift Bay</a></p>
+      <p>You will be asked to create a permanent password the first time you sign in.</p>
+    </div>`;
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ from: cfg.resendFrom, to: [email], subject, text, html })
+    });
+    const body = await response.text();
+    const parsed = body ? JSON.parse(body) : {};
+    if (!response.ok) {
+      const message = parsed?.message || parsed?.error || `Resend returned ${response.status}.`;
+      return { sent: false, reason: message };
+    }
+    return { sent: true, id: parsed?.id || "" };
+  } catch (error) {
+    return { sent: false, reason: String((error as Error)?.message || "Resend could not be reached.") };
+  }
 }
 
 function dataUpdatedAt(payload: any) {
@@ -343,10 +422,20 @@ async function handleStaffMe(request: Request) {
 
   const locationId = selectedLocationFromRequest(request) || config().locationId;
   try {
-    const rows = await supabaseJson(
-      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,created_at,updated_at`,
-      { headers: serviceHeaders() }
-    );
+    let rows: any[];
+    try {
+      rows = await supabaseJson(
+        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,phone_visibility,created_at,updated_at`,
+        { headers: serviceHeaders() }
+      );
+    } catch (error) {
+      if (!String((error as Error)?.message || "").toLowerCase().includes("phone_visibility")) throw error;
+      rows = await supabaseJson(
+        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,created_at,updated_at`,
+        { headers: serviceHeaders() }
+      );
+      rows = (Array.isArray(rows) ? rows : []).map((row: any) => ({ ...row, phone_visibility: "managers_only" }));
+    }
     const account = Array.isArray(rows) ? rows[0] : null;
     return json(200, {
       ok: true,
@@ -371,6 +460,77 @@ async function handleStaffMe(request: Request) {
     }
     throw error;
   }
+}
+
+function dateKeyFromDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function dateFromKey(value: string) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDaysToKey(value: string, days: number) {
+  const date = dateFromKey(value);
+  if (!date) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return dateKeyFromDate(date);
+}
+
+function staffWeekStart(value: string, weekStart: number) {
+  const requested = dateFromKey(value);
+  const date = requested || new Date();
+  const day = date.getUTCDay();
+  const offset = (day - Number(weekStart || 0) + 7) % 7;
+  date.setUTCDate(date.getUTCDate() - offset);
+  return dateKeyFromDate(date);
+}
+
+async function handleStaffSchedule(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, profile);
+  if (!profile.linked || !profile.account) {
+    return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+  }
+
+  const row = await loadDocumentRow("*", profile.locationId);
+  if (!row) return json(404, { ok: false, error: "No scheduler data has been created for this location yet." });
+
+  const state = (row.state || {}) as any;
+  const weekStart = staffWeekStart(new URL(request.url).searchParams.get("weekStart") || "", Number(state.settings?.weekStart || 0));
+  const weekEnd = addDaysToKey(weekStart, 6);
+  const employeeId = String(profile.account.legacy_employee_id || profile.account.employee_id || "");
+  const roles = new Map((Array.isArray(state.roles) ? state.roles : []).map((role: any) => [String(role.id), role]));
+  const shifts = (Array.isArray(state.shifts) ? state.shifts : [])
+    .filter((shift: any) => String(shift.employeeId || "") === employeeId && String(shift.date || "") >= weekStart && String(shift.date || "") <= weekEnd)
+    .sort((a: any, b: any) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.start || "").localeCompare(String(b.start || "")))
+    .map((shift: any) => {
+      const role = roles.get(String(shift.roleId)) || {};
+      return {
+        id: shift.id || "",
+        date: shift.date || "",
+        start: shift.start || "",
+        end: shift.end || "",
+        role: role.name || shift.role || "Shift",
+        department: shift.department || role.department || "",
+        isCloser: Boolean(shift.isCloser),
+        isFlexDouble: Boolean(shift.isFlexDouble),
+        isLunchCloser: Boolean(shift.isLunchCloser)
+      };
+    });
+
+  return json(200, {
+    ok: true,
+    locationId: profile.locationId,
+    employee: { id: employeeId, displayName: profile.account.display_name || profile.user.email || "Staff" },
+    weekStart,
+    weekEnd,
+    shifts
+  });
 }
 
 async function handleLogin(request: Request) {
@@ -450,6 +610,25 @@ async function handleStaffChangePassword(request: Request) {
     }
   );
   return json(200, { ok: true, user: { ...(profile.user || {}), passwordChangeRequired: false } });
+}
+
+async function handleStaffPrivacy(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, profile);
+  if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+  const body = await request.json().catch(() => ({}));
+  const phoneVisibility = String(body.phoneVisibility || "").trim();
+  if (!["managers_only", "all_staff"].includes(phoneVisibility)) {
+    return json(400, { ok: false, error: "Choose whether your phone number is visible to managers only or all staff." });
+  }
+  const rows = await supabaseJson(`/staff_accounts?id=eq.${encodeURIComponent(profile.account.id)}`, {
+    method: "PATCH",
+    headers: serviceHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify({ phone_visibility: phoneVisibility, updated_at: new Date().toISOString() })
+  });
+  const account = Array.isArray(rows) ? rows[0] : null;
+  return json(200, { ok: true, phoneVisibility: account?.phone_visibility || phoneVisibility });
 }
 
 async function handleChangePassword(request: Request) {
@@ -683,8 +862,24 @@ async function handleInviteManager(request: Request) {
       password_change_required: true
     }])
   });
+  const emailResult = await sendInviteEmail({
+    email,
+    displayName: email,
+    role,
+    temporaryPassword: password,
+    loginUrl: cfg.siteUrl
+  });
   await logAuditEvent(reusedExistingLogin ? "manager_login_relinked" : "manager_login_created", (validated.user as any).id, { email, role, userId }, locationId);
-  return json(200, { ok: true, manager: { userId, email, role }, temporaryPassword: password, loginUrl: cfg.siteUrl, reusedExistingLogin });
+  return json(200, {
+    ok: true,
+    manager: { userId, email, role },
+    temporaryPassword: password,
+    loginUrl: cfg.siteUrl,
+    reusedExistingLogin,
+    inviteEmailSent: emailResult.sent,
+    inviteEmailId: emailResult.id || "",
+    inviteEmailError: emailResult.sent ? "" : emailResult.reason || ""
+  });
 }
 
 async function handleUpdateManager(request: Request) {
@@ -853,6 +1048,14 @@ async function handleInviteStaff(request: Request) {
     account = Array.isArray(inserted) ? inserted[0] : null;
   }
 
+  const emailResult = await sendInviteEmail({
+    email,
+    displayName,
+    role: "staff",
+    temporaryPassword: password,
+    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    isStaff: true
+  });
   await logAuditEvent(reusedExistingLogin ? "staff_login_relinked" : "staff_login_created", (validated.user as any).id, { email, userId, legacyEmployeeId, displayName }, locationId);
   return json(200, {
     ok: true,
@@ -867,7 +1070,10 @@ async function handleInviteStaff(request: Request) {
     },
     temporaryPassword: password,
     loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
-    reusedExistingLogin
+    reusedExistingLogin,
+    inviteEmailSent: emailResult.sent,
+    inviteEmailId: emailResult.id || "",
+    inviteEmailError: emailResult.sent ? "" : emailResult.reason || ""
   });
 }
 
@@ -881,12 +1087,14 @@ Deno.serve(async (request) => {
     if (path === "/auth/change-password" && request.method === "POST") return await handleChangePassword(request);
     if (path === "/staff/login" && request.method === "POST") return await handleStaffLogin(request);
     if (path === "/staff/change-password" && request.method === "POST") return await handleStaffChangePassword(request);
+    if (path === "/staff/privacy" && request.method === "PATCH") return await handleStaffPrivacy(request);
     if (path === "/auth/session" && request.method === "GET") {
       const result = await validateSession(request);
       return json(result.ok ? 200 : result.status || 401, result);
     }
     if (path === "/locations" && request.method === "GET") return await handleListLocations(request);
     if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request);
+    if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
     if (path === "/status" && request.method === "GET") return await handleStatus(request);
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);

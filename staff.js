@@ -13,6 +13,12 @@ const loginMessage = document.getElementById("staffLoginMessage");
 const staffIdentity = document.getElementById("staffIdentity");
 const staffStatus = document.getElementById("staffStatus");
 const staffScheduleList = document.getElementById("staffScheduleList");
+const staffWeekTitle = document.getElementById("staffWeekTitle");
+const previousWeekButton = document.getElementById("staffPreviousWeek");
+const nextWeekButton = document.getElementById("staffNextWeek");
+const refreshScheduleButton = document.getElementById("staffRefreshSchedule");
+const saveStaffPrivacyButton = document.getElementById("saveStaffPrivacy");
+const staffPrivacyMessage = document.getElementById("staffPrivacyMessage");
 const signOutButton = document.getElementById("staffSignOut");
 const demoPreviewCard = document.getElementById("demoPreviewCard");
 const demoEmployeeSelect = document.getElementById("demoEmployeeSelect");
@@ -22,6 +28,8 @@ const staffPasswordForm = document.getElementById("staffPasswordForm");
 const staffPasswordMessage = document.getElementById("staffPasswordMessage");
 
 let demoState = null;
+let currentStaffWeekStart = "";
+let currentStaffProfile = null;
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
@@ -42,6 +50,19 @@ function setPasswordMessage(message) {
   if (!staffPasswordMessage) return;
   staffPasswordMessage.hidden = !message;
   staffPasswordMessage.textContent = message || "";
+}
+
+function setPrivacyMessage(message) {
+  if (!staffPrivacyMessage) return;
+  staffPrivacyMessage.hidden = !message;
+  staffPrivacyMessage.textContent = message || "";
+}
+
+function setPhoneVisibility(value) {
+  const selected = value === "all_staff" ? "all_staff" : "managers_only";
+  document.querySelectorAll("input[name=phoneVisibility]").forEach((input) => {
+    input.checked = input.value === selected;
+  });
 }
 
 function readSession() {
@@ -132,6 +153,9 @@ function showSignedIn(profile) {
   } else {
     hidePasswordDialog();
   }
+  currentStaffProfile = profile;
+  setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
+  setPrivacyMessage("");
   const email = profile?.user?.email || "Signed in";
   const displayName = profile?.account?.display_name || "";
   staffIdentity.textContent = displayName ? `${displayName} (${email})` : email;
@@ -141,9 +165,10 @@ function showSignedIn(profile) {
   } else if (!profile?.linked) {
     staffStatus.textContent = "This login is not linked to an employee profile yet. A manager will need to connect it before the staff portal can show schedule details.";
   } else {
-    staffStatus.textContent = "Staff profile linked. Schedule, request-off, and availability tools can be enabled next.";
+    staffStatus.textContent = "Staff profile linked. Loading your schedule...";
   }
   renderScheduleList([]);
+  loadStaffSchedule();
 }
 
 function roleNameById(roleId) {
@@ -152,6 +177,30 @@ function roleNameById(roleId) {
 
 function employeeName(employee) {
   return [employee?.nickname || employee?.firstName, employee?.lastName].filter(Boolean).join(" ").trim() || "Employee";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>\"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[character]));
+}
+
+function addDays(dateKey, days) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatWeekRange(startKey, endKey) {
+  if (!startKey || !endKey) return "This week";
+  const start = new Date(`${startKey}T12:00:00`);
+  const end = new Date(`${endKey}T12:00:00`);
+  return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function formatStaffDate(dateKey) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  return date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 }
 
 function formatShiftLine(shift) {
@@ -164,12 +213,42 @@ function formatShiftLine(shift) {
 function renderScheduleList(shifts) {
   if (!staffScheduleList) return;
   if (!shifts.length) {
-    staffScheduleList.innerHTML = "<p>No upcoming shifts are available in this preview yet.</p>";
+    staffScheduleList.innerHTML = "<div class=\"staff-empty-state\"><strong>No shifts scheduled</strong><span>This week is currently clear.</span></div>";
     return;
   }
-  staffScheduleList.innerHTML = shifts
-    .map((shift) => `<div class="staff-shift-row"><strong>${roleNameById(shift.roleId)}</strong><span>${shift.date || ""}</span><span>${[shift.start, shift.end].filter(Boolean).join(" - ")}</span></div>`)
-    .join("");
+  const grouped = new Map();
+  shifts.forEach((shift) => {
+    if (!grouped.has(shift.date)) grouped.set(shift.date, []);
+    grouped.get(shift.date).push(shift);
+  });
+  staffScheduleList.innerHTML = [...grouped.entries()].map(([date, dayShifts]) => `
+    <section class="staff-day-group">
+      <h3>${escapeHtml(formatStaffDate(date))}</h3>
+      ${dayShifts.map((shift) => {
+        const flags = [shift.isCloser ? "Closer" : "", shift.isFlexDouble ? "Flex" : "", shift.isLunchCloser ? "Lunch closer" : ""].filter(Boolean);
+        return `<div class="staff-shift-row">
+          <div><strong>${escapeHtml(shift.role)}</strong>${shift.department ? `<small>${escapeHtml(shift.department)}</small>` : ""}</div>
+          <span>${escapeHtml([shift.start, shift.end].filter(Boolean).join(" - ") || "Time to be posted")}</span>
+          ${flags.length ? `<em>${escapeHtml(flags.join(" · "))}</em>` : ""}
+        </div>`;
+      }).join("")}
+    </section>`).join("");
+}
+
+async function loadStaffSchedule() {
+  if (!readSession()?.access_token || !currentStaffProfile?.linked) return;
+  try {
+    const query = currentStaffWeekStart ? `?weekStart=${encodeURIComponent(currentStaffWeekStart)}` : "";
+    const result = await staffFetch(`/api/staff/schedule${query}`);
+    currentStaffWeekStart = result.weekStart || currentStaffWeekStart;
+    if (staffWeekTitle) staffWeekTitle.textContent = formatWeekRange(result.weekStart, result.weekEnd);
+    renderScheduleList(result.shifts || []);
+    staffStatus.classList.add("is-ready");
+    staffStatus.textContent = "Your schedule is up to date. Request-off and availability tools will appear here as they are enabled.";
+  } catch (error) {
+    staffStatus.classList.remove("is-ready");
+    staffStatus.textContent = error.message || "Could not load your schedule.";
+  }
 }
 
 function showDemoPreview(employee) {
@@ -181,7 +260,14 @@ function showDemoPreview(employee) {
   staffIdentity.textContent = `${employeeName(employee)} (demo preview)`;
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";
-  renderScheduleList(shifts);
+  renderScheduleList(shifts.map((shift) => ({
+    ...shift,
+    role: roleNameById(shift.roleId),
+    department: shift.department || "",
+    isCloser: Boolean(shift.isCloser),
+    isFlexDouble: Boolean(shift.isFlexDouble),
+    isLunchCloser: Boolean(shift.isLunchCloser)
+  })));
 }
 
 function normalizeStateEnvelope(envelope) {
@@ -274,6 +360,8 @@ staffPasswordForm?.addEventListener("submit", async (event) => {
 
 signOutButton.addEventListener("click", () => {
   writeSession(null);
+  currentStaffProfile = null;
+  currentStaffWeekStart = "";
   hidePasswordDialog();
   showSignedOut();
   loadDemoPreviewOptions();
@@ -282,6 +370,39 @@ signOutButton.addEventListener("click", () => {
 demoPreviewButton?.addEventListener("click", () => {
   const employee = (demoState?.employees || []).find((item) => item.id === demoEmployeeSelect.value);
   if (employee) showDemoPreview(employee);
+});
+
+previousWeekButton?.addEventListener("click", () => {
+  if (!currentStaffWeekStart) return;
+  currentStaffWeekStart = addDays(currentStaffWeekStart, -7);
+  loadStaffSchedule();
+});
+
+nextWeekButton?.addEventListener("click", () => {
+  if (!currentStaffWeekStart) return;
+  currentStaffWeekStart = addDays(currentStaffWeekStart, 7);
+  loadStaffSchedule();
+});
+
+refreshScheduleButton?.addEventListener("click", () => loadStaffSchedule());
+
+saveStaffPrivacyButton?.addEventListener("click", async () => {
+  const selected = document.querySelector("input[name=phoneVisibility]:checked")?.value || "managers_only";
+  saveStaffPrivacyButton.disabled = true;
+  setPrivacyMessage("Saving...");
+  try {
+    const result = await staffFetch("/api/staff/privacy", {
+      method: "PATCH",
+      body: JSON.stringify({ phoneVisibility: selected })
+    });
+    if (currentStaffProfile?.account) currentStaffProfile.account.phone_visibility = result.phoneVisibility || selected;
+    setPhoneVisibility(result.phoneVisibility || selected);
+    setPrivacyMessage("Privacy setting saved.");
+  } catch (error) {
+    setPrivacyMessage(error.message || "Could not save privacy setting.");
+  } finally {
+    saveStaffPrivacyButton.disabled = false;
+  }
 });
 
 loadStaffProfile().then(loadDemoPreviewOptions);

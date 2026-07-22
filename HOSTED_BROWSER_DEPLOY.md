@@ -13,7 +13,7 @@ The local laptop and office PC setup can keep working while this hosted version 
 Production hosted URL:
 
 ```text
-https://shift-bay.netlify.app
+https://shift-bay.com
 ```
 
 ## Supabase Edge Function
@@ -38,9 +38,12 @@ SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_ROLE_KEY=<service role key>
 SHIFT_BAY_LOCATION_ID=f477e013-0dee-470b-b2c6-595cef195b31
 SHIFT_BAY_DOCUMENT_KEY=primary
+SHIFT_BAY_SITE_URL=https://shift-bay.com
+RESEND_API_KEY=<Resend API key>
+RESEND_FROM_EMAIL=Shift Bay <invites@send.shift-bay.com>
 ```
 
-Never place the service-role key in any browser file.
+Never place the service-role key or Resend API key in any browser file. Invitation emails contain the current temporary login details; the user is required to create a permanent password at first sign-in.
 
 ## Deploy Order
 

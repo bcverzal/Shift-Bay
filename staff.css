@@ -222,10 +222,64 @@ button:disabled {
   background: linear-gradient(180deg, #ffffff, var(--staff-panel));
 }
 
+.staff-panel:first-child {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.staff-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.staff-panel-heading h2 {
+  margin-bottom: 4px;
+}
+
+.staff-panel-subtitle {
+  margin: 0;
+  color: var(--staff-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.staff-week-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.staff-icon-button {
+  width: 38px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.staff-refresh-button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
 .staff-list {
   display: grid;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.staff-day-group {
+  display: grid;
+  gap: 6px;
+}
+
+.staff-day-group h3 {
+  margin: 8px 0 0;
+  color: #1d3f9a;
+  font-size: 14px;
 }
 
 .staff-shift-row {
@@ -238,6 +292,81 @@ button:disabled {
   padding: 10px;
   background: #fff;
   font-size: 13px;
+}
+
+.staff-shift-row > div {
+  display: grid;
+  gap: 3px;
+}
+
+.staff-shift-row small {
+  color: var(--staff-muted);
+  font-size: 11px;
+}
+
+.staff-shift-row em {
+  color: #1d3f9a;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  text-align: right;
+}
+
+.staff-empty-state {
+  display: grid;
+  gap: 4px;
+  border: 1px dashed #b9cce7;
+  border-radius: 10px;
+  padding: 16px;
+  color: var(--staff-muted);
+}
+
+.staff-empty-state strong {
+  color: var(--staff-ink);
+}
+
+.staff-privacy-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.staff-privacy-panel p {
+  margin-bottom: 0;
+  color: var(--staff-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.staff-choice-group {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.staff-choice-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.staff-choice-group input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--staff-blue);
+}
+
+.staff-inline-message {
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: #075c38;
+  background: #edfff5;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .staff-password-dialog {
@@ -283,5 +412,23 @@ button:disabled {
   .staff-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .staff-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .staff-week-actions {
+    justify-content: flex-end;
+  }
+
+  .staff-shift-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .staff-shift-row em {
+    grid-column: 1 / -1;
+    text-align: left;
   }
 }

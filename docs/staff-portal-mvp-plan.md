@@ -304,13 +304,14 @@ The manager scheduler can continue using the JSON schedule document at first, wh
 
 - Add staff role type.
 - Link Supabase auth users to employee records.
-- Add staff-only login flow or portal route.
-- Ensure staff cannot access manager scheduler.
+- [x] Add staff-only login flow or portal route.
+- [x] Ensure staff cannot access manager scheduler.
 
 ### Step 2: My Schedule
 
-- Show upcoming shifts for linked employee.
-- Include role, date, start/end time, location, and notes allowed for staff.
+- [x] Show the selected schedule week for a linked employee.
+- [x] Include role, date, and start/end time without exposing manager-only notes.
+- [ ] Include a location label in the staff header.
 
 ### Step 3: Request Off Submission
 

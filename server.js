@@ -221,15 +221,21 @@ async function staffAccountForUser(request) {
   const config = supabaseServerConfig();
   const locationId = selectedLocationFromRequest(request) || config.locationId;
   try {
-    const rows = await supabaseJson(
-      `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,created_at,updated_at`,
-      {
-        headers: {
-          apikey: config.serviceRoleKey,
-          Authorization: `Bearer ${config.serviceRoleKey}`
-        }
-      }
-    );
+    const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+    let rows;
+    try {
+      rows = await supabaseJson(
+        `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,phone_visibility,created_at,updated_at`,
+        { headers }
+      );
+    } catch (error) {
+      if (!String(error?.message || "").toLowerCase().includes("phone_visibility")) throw error;
+      rows = await supabaseJson(
+        `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,created_at,updated_at`,
+        { headers }
+      );
+      rows = (Array.isArray(rows) ? rows : []).map((row) => ({ ...row, phone_visibility: "managers_only" }));
+    }
     const account = Array.isArray(rows) ? rows[0] : null;
     return {
       ok: true,
@@ -254,6 +260,98 @@ async function staffAccountForUser(request) {
     }
     throw error;
   }
+}
+
+function staffDateFromKey(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function staffDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function staffAddDays(value, days) {
+  const date = staffDateFromKey(value);
+  if (!date) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return staffDateKey(date);
+}
+
+function staffWeekStart(value, weekStart) {
+  const requested = staffDateFromKey(value);
+  const date = requested || new Date();
+  const offset = (date.getUTCDay() - Number(weekStart || 0) + 7) % 7;
+  date.setUTCDate(date.getUTCDate() - offset);
+  return staffDateKey(date);
+}
+
+async function staffScheduleForUser(request) {
+  const profile = await staffAccountForUser(request);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account) {
+    return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  }
+  const locationId = profile.locationId;
+  const config = supabaseServerConfig();
+  const rows = await supabaseJson(
+    `${config.url}/rest/v1/scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.primary&select=state,saved_at,updated_at`,
+    { headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` } }
+  );
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return { ok: false, status: 404, error: "No scheduler data has been created for this location yet." };
+  const state = row.state || {};
+  const weekStart = staffWeekStart(new URL(request.url).searchParams.get("weekStart") || "", Number(state.settings?.weekStart || 0));
+  const weekEnd = staffAddDays(weekStart, 6);
+  const employeeId = String(profile.account.legacy_employee_id || profile.account.employee_id || "");
+  const roles = new Map((Array.isArray(state.roles) ? state.roles : []).map((role) => [String(role.id), role]));
+  const shifts = (Array.isArray(state.shifts) ? state.shifts : [])
+    .filter((shift) => String(shift.employeeId || "") === employeeId && String(shift.date || "") >= weekStart && String(shift.date || "") <= weekEnd)
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.start || "").localeCompare(String(b.start || "")))
+    .map((shift) => {
+      const role = roles.get(String(shift.roleId)) || {};
+      return {
+        id: shift.id || "",
+        date: shift.date || "",
+        start: shift.start || "",
+        end: shift.end || "",
+        role: role.name || shift.role || "Shift",
+        department: shift.department || role.department || "",
+        isCloser: Boolean(shift.isCloser),
+        isFlexDouble: Boolean(shift.isFlexDouble),
+        isLunchCloser: Boolean(shift.isLunchCloser)
+      };
+    });
+  return {
+    ok: true,
+    locationId,
+    employee: { id: employeeId, displayName: profile.account.display_name || profile.user.email || "Staff" },
+    weekStart,
+    weekEnd,
+    shifts
+  };
+}
+
+async function staffPrivacyForUser(request) {
+  const profile = await staffAccountForUser(request);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account?.id) return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  const phoneVisibility = String(body.phoneVisibility || "").trim();
+  if (!["managers_only", "all_staff"].includes(phoneVisibility)) {
+    return { ok: false, status: 400, error: "Choose whether your phone number is visible to managers only or all staff." };
+  }
+  const config = supabaseServerConfig();
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(profile.account.id)}`, {
+    method: "PATCH",
+    headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}`, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ phone_visibility: phoneVisibility, updated_at: new Date().toISOString() })
+  });
+  const account = Array.isArray(rows) ? rows[0] : null;
+  return { ok: true, phoneVisibility: account?.phone_visibility || phoneVisibility };
 }
 
 async function requireCloudUser(request, response) {
@@ -909,6 +1007,24 @@ async function handleApi(request, response) {
       sendJson(response, result.ok ? 200 : result.status || 401, result);
     } catch (error) {
       sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff profile." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/schedule" && request.method === "GET") {
+    try {
+      const result = await staffScheduleForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff schedule." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/privacy" && request.method === "PATCH") {
+    try {
+      const result = await staffPrivacyForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not save phone privacy setting." });
     }
     return;
   }

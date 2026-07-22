@@ -13,6 +13,7 @@ create table if not exists public.staff_accounts (
   legacy_employee_id text not null default '',
   display_name text not null default '',
   status text not null default 'active' check (status in ('invited', 'active', 'disabled')),
+  phone_visibility text not null default 'managers_only' check (phone_visibility in ('managers_only', 'all_staff')),
   invited_by uuid references auth.users(id) on delete set null,
   invited_at timestamptz,
   activated_at timestamptz,

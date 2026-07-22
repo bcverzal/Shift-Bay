@@ -54,11 +54,20 @@
 
       <section class="staff-grid">
         <article class="staff-panel">
-          <h2>My Schedule</h2>
+          <div class="staff-panel-heading">
+            <div>
+              <h2>My Schedule</h2>
+              <p id="staffWeekTitle" class="staff-panel-subtitle">This week</p>
+            </div>
+            <div class="staff-week-actions">
+              <button type="button" id="staffPreviousWeek" class="staff-icon-button" aria-label="Previous week" title="Previous week">&#8249;</button>
+              <button type="button" id="staffNextWeek" class="staff-icon-button" aria-label="Next week" title="Next week">&#8250;</button>
+              <button type="button" id="staffRefreshSchedule" class="staff-secondary staff-refresh-button">Refresh</button>
+            </div>
+          </div>
           <div id="staffScheduleList" class="staff-list">
             <p>Upcoming shifts will show here after this login is linked to an employee profile.</p>
           </div>
-          <button type="button" class="staff-secondary" disabled>View Shifts</button>
         </article>
         <article class="staff-panel">
           <h2>Request Off</h2>
@@ -69,6 +78,18 @@
           <h2>Availability</h2>
           <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
           <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+        </article>
+        <article class="staff-panel staff-privacy-panel">
+          <div>
+            <h2>Phone privacy</h2>
+            <p>Choose who may see your phone number in the staff directory. Managers can always see it for scheduling.</p>
+          </div>
+          <fieldset id="staffPhoneVisibility" class="staff-choice-group">
+            <label><input type="radio" name="phoneVisibility" value="managers_only" checked> Managers only</label>
+            <label><input type="radio" name="phoneVisibility" value="all_staff"> All staff</label>
+          </fieldset>
+          <button type="button" id="saveStaffPrivacy" class="staff-primary">Save privacy setting</button>
+          <div id="staffPrivacyMessage" class="staff-inline-message" role="status" hidden></div>
         </article>
       </section>
     </section>
