@@ -3057,7 +3057,7 @@ function renderUnassignedShiftCard(shift) {
   const showSkipped = Boolean(shift.skippedAt) && currentWeekOpenShifts().length > 1;
   return `
     <div class="unassigned-shift-card ${selectedUnassignedShiftId === shift.id ? "selected" : ""} ${pendingDeleteUnassignedShiftId === shift.id ? "pending-delete" : ""} ${showSkipped ? "skipped" : ""}" draggable="false" data-unassigned-shift-id="${shift.id}" style="--shift-color:${shiftColor(shift)}">
-      <button class="delete-start-button" type="button" title="Delete this bay shift" aria-label="Start delete bay shift">×</button>
+      <button class="delete-start-button" type="button" title="Delete this bay shift" aria-label="Start delete bay shift">Ã—</button>
       <strong>${role?.name || "Role"}${shift.isCloser ? " | Close" : ""}${shift.isFlexDouble ? " | Flex" : ""}${shift.training?.isTraining ? " | Training" : ""}</strong>
       <span>${displayDate(parseDateKey(shift.date))}</span>
       <em>${shift.start} - ${shift.untilVolume ? "Vol" : shift.end}</em>
@@ -6161,7 +6161,7 @@ function renderTimeOffBadge(request) {
   badge.title = tooltip;
   badge.dataset.tooltip = tooltip;
   badge.innerHTML = `
-    <button class="delete-start-button" type="button" title="Delete this ${deleteLabel}" aria-label="Start delete ${deleteLabel}">�</button>
+    <button class="delete-start-button" type="button" title="Delete this ${deleteLabel}" aria-label="Start delete ${deleteLabel}">×</button>
     <strong>${shortLabel}</strong>
     ${isScheduleBlock(request) ? `<span>${escapeHtml(scheduleBlockType(request))}</span>` : ""}
     ${pendingDeleteTimeOffRequestId === request.id ? `
@@ -10587,11 +10587,13 @@ function renderTemporaryManagerLogin(details = null) {
   const loginUrl = details.loginUrl || "https://shift-bay.netlify.app";
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
+    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    "<small>No email was sent. Share this password directly and have the manager log in at the URL above.</small>"
+    details.inviteEmailSent
+      ? "<small>The email includes these login details. Keep this panel available as a backup until the manager confirms receipt.</small>"
+      : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
 }
 
@@ -10678,11 +10680,17 @@ async function sendManagerInvite(event) {
       email,
       temporaryPassword: result.temporaryPassword,
       loginUrl: result.loginUrl,
-      reusedExistingLogin: Boolean(result.reusedExistingLogin)
+      reusedExistingLogin: Boolean(result.reusedExistingLogin),
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
     });
     setManagerAccessMessage(result.reusedExistingLogin
-      ? `Existing login for ${email} was relinked and given a new temporary password.`
-      : `Login created for ${email}. Share the temporary password manually.`);
+      ? result.inviteEmailSent
+        ? `Existing login for ${email} was relinked and the invitation email was sent.`
+        : `Existing login for ${email} was relinked. Email delivery was unavailable.`
+      : result.inviteEmailSent
+        ? `Login created for ${email}. The invitation email was sent.`
+        : `Login created for ${email}. Email delivery was unavailable.`);
     await loadManagerAccess();
   } catch (error) {
     setManagerAccessMessage(error.message || "Could not create manager login.");
@@ -10759,12 +10767,14 @@ function renderTemporaryStaffLogin(details = null) {
   const loginUrl = details.loginUrl || `${window.location.origin}/staff.html`;
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
+    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
     `<div>Employee: <code>${escapeHtml(details.displayName || "")}</code></div>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    "<small>No email was sent. Share this password directly and the staff member will create a permanent password at first sign-in.</small>"
+    details.inviteEmailSent
+      ? "<small>The email includes these login details. Keep this panel available as a backup until the staff member confirms receipt.</small>"
+      : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
 }
 
@@ -10857,11 +10867,17 @@ async function sendStaffInvite(event) {
       displayName: name,
       temporaryPassword: result.temporaryPassword,
       loginUrl: result.loginUrl,
-      reusedExistingLogin: Boolean(result.reusedExistingLogin)
+      reusedExistingLogin: Boolean(result.reusedExistingLogin),
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
     });
     setStaffAccessMessage(result.reusedExistingLogin
-      ? `Existing login for ${email} was linked to ${name} and given a new temporary password.`
-      : `Login created for ${name}. Share the temporary password manually.`);
+      ? result.inviteEmailSent
+        ? `Existing login for ${email} was linked to ${name} and the invitation email was sent.`
+        : `Existing login for ${email} was linked to ${name}. Email delivery was unavailable.`
+      : result.inviteEmailSent
+        ? `Login created for ${name}. The invitation email was sent.`
+        : `Login created for ${name}. Email delivery was unavailable.`);
     await loadStaffAccess();
   } catch (error) {
     setStaffAccessMessage(error.message || "Could not create staff login.");
@@ -10978,11 +10994,11 @@ function parseScheduleHistoryLooseText(text, sourceName) {
   const shifts = [];
   text.split(/\r?\n/).forEach((line) => {
     const dateMatch = line.match(/\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/);
-    const timeMatch = line.match(/\b\d{1,2}(?::\d{2})?\s*(?:a|am|p|pm)?\s*[-–]\s*\d{1,2}(?::\d{2})?\s*(?:a|am|p|pm)?\b/i);
+    const timeMatch = line.match(/\b\d{1,2}(?::\d{2})?\s*(?:a|am|p|pm)?\s*[-â€“]\s*\d{1,2}(?::\d{2})?\s*(?:a|am|p|pm)?\b/i);
     if (!dateMatch || !timeMatch) return;
     const role = state.roles.find((item) => new RegExp(`\\b${item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(line));
     if (!role) return;
-    const [startRaw, endRaw] = timeMatch[0].split(/[-–]/).map(cleanCell);
+    const [startRaw, endRaw] = timeMatch[0].split(/[-â€“]/).map(cleanCell);
     const dateKey = parseHistoryDate(dateMatch[0]);
     const nameText = cleanImportedName(line.replace(dateMatch[0], "").replace(timeMatch[0], "").replace(role.name, ""));
     const employee = matchHistoryEmployee(nameText);

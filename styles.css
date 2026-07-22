@@ -608,6 +608,24 @@ summary:focus-visible {
   gap: 8px;
 }
 
+#staffAccessDialog .manager-access-editor {
+  width: min(820px, calc(100vw - 32px));
+}
+
+#staffAccessDialog #staffAccessMessage {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid #f4c7c3;
+  border-radius: 8px;
+  background: #fff6f5;
+  color: #9f2d25;
+  font-weight: 700;
+}
+
+#staffAccessDialog #staffAccessList {
+  margin-top: 10px;
+}
+
 .staff-access-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(170px, 0.9fr) 86px 92px;
