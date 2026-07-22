@@ -74,12 +74,26 @@
           <p>This will become the staff-facing request-off form with manager approval.</p>
           <button type="button" class="staff-secondary" disabled>Create Request</button>
         </article>
-        <article class="staff-panel">
-          <h2>Availability</h2>
-          <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
-          <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+       <article class="staff-panel">
+         <h2>Availability</h2>
+         <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
+         <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+       </article>
+       <article class="staff-panel staff-directory-panel">
+         <h2>Staff Directory</h2>
+          <p class="staff-panel-subtitle">Phone numbers follow each person’s privacy setting.</p>
+         <div id="staffDirectoryList" class="staff-directory-list"></div>
+       </article>
+        <article class="staff-panel staff-profile-panel">
+          <h2>My Profile</h2>
+          <p class="staff-panel-subtitle">Update your contact details. Scheduling roles and training remain manager-controlled.</p>
+          <label>Preferred name<input id="staffPreferredName" type="text" maxlength="80"></label>
+          <label>Phone number<input id="staffPhoneNumber" type="tel" maxlength="40"></label>
+          <label>Contact preference<select id="staffContactPreference"><option value="in_app">In-app</option><option value="sms">SMS</option><option value="email">Email</option></select></label>
+          <button type="button" id="saveStaffProfile" class="staff-primary">Save profile</button>
+          <div id="staffProfileMessage" class="staff-inline-message" role="status" hidden></div>
         </article>
-        <article class="staff-panel staff-privacy-panel">
+       <article class="staff-panel staff-privacy-panel">
           <div>
             <h2>Phone privacy</h2>
             <p>Choose who may see your phone number in the staff directory. Managers can always see it for scheduling.</p>

@@ -425,13 +425,13 @@ async function handleStaffMe(request: Request) {
     let rows: any[];
     try {
       rows = await supabaseJson(
-        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,phone_visibility,created_at,updated_at`,
+        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,phone_visibility,created_at,updated_at`,
         { headers: serviceHeaders() }
       );
     } catch (error) {
       if (!String((error as Error)?.message || "").toLowerCase().includes("phone_visibility")) throw error;
       rows = await supabaseJson(
-        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,created_at,updated_at`,
+        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,created_at,updated_at`,
         { headers: serviceHeaders() }
       );
       rows = (Array.isArray(rows) ? rows : []).map((row: any) => ({ ...row, phone_visibility: "managers_only" }));
@@ -958,6 +958,39 @@ async function handleListStaffAccounts(request: Request) {
 }
 
 async function handleRemoveStaffAccount(request: Request) {
+async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
+
+async function handleStaffDirectory(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, profile);
+  if (!profile.linked || !profile.account) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+
+  const row = await loadDocumentRow("*", profile.locationId);
+  const state = (row?.state || {}) as any;
+  const employees = Array.isArray(state.employees) ? state.employees : [];
+  const accountRows = await supabaseJson(
+    "/staff_accounts?location_id=eq." + encodeURIComponent(profile.locationId) + "&select=legacy_employee_id,phone,phone_visibility,status,display_name",
+    { headers: serviceHeaders() }
+  );
+  const accounts = new Map((Array.isArray(accountRows) ? accountRows : []).map((account: any) => [String(account.legacy_employee_id || ""), account]));
+  const currentEmployeeId = String(profile.account.legacy_employee_id || profile.account.employee_id || "");
+  const entries = employees
+    .filter((employee: any) => employee.active !== false && !employee.archived)
+    .map((employee: any) => {
+      const id = String(employee.id || "");
+      const account = accounts.get(id) || {};
+      const phoneVisible = id === currentEmployeeId || account.phone_visibility === "all_staff";
+      return {
+        displayName: [employee.nickname || employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee",
+        phone: phoneVisible ? String(account.phone || employee.phone || "") : "",
+        phoneVisible
+      };
+    })
+    .sort((a: any, b: any) => a.displayName.localeCompare(b.displayName));
+  return json(200, { ok: true, entries });
+}
+
   const validated = await requireEditor(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
@@ -1133,7 +1166,9 @@ Deno.serve(async (request) => {
     }
     if (path === "/locations" && request.method === "GET") return await handleListLocations(request);
     if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request);
-    if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
+   if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
+   if (path === "/staff/directory" && request.method === "GET") return await handleStaffDirectory(request);
+    if (path === "/staff/profile" && request.method === "PATCH") return await handleStaffProfileUpdate(request);
     if (path === "/status" && request.method === "GET") return await handleStatus(request);
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);

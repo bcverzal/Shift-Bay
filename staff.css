@@ -331,6 +331,12 @@ button:disabled {
   gap: 12px;
 }
 
+.staff-profile-panel { display: grid; align-content: start; gap: 10px; }
+.staff-profile-panel label { display: grid; gap: 5px; color: var(--staff-muted); font-size: 12px; font-weight: 800; }
+.staff-directory-list { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.staff-directory-row { display: flex; justify-content: space-between; gap: 16px; padding: 8px 10px; border: 1px solid #c7d7ea; border-radius: 8px; background: #f7faff; }
+.staff-directory-row span { color: var(--staff-muted); font-size: 13px; }
+
 .staff-privacy-panel p {
   margin-bottom: 0;
   color: var(--staff-muted);

@@ -13,6 +13,12 @@ const loginMessage = document.getElementById("staffLoginMessage");
 const staffIdentity = document.getElementById("staffIdentity");
 const staffStatus = document.getElementById("staffStatus");
 const staffScheduleList = document.getElementById("staffScheduleList");
+const staffDirectoryList = document.getElementById("staffDirectoryList");
+const staffPreferredName = document.getElementById("staffPreferredName");
+const staffPhoneNumber = document.getElementById("staffPhoneNumber");
+const staffContactPreference = document.getElementById("staffContactPreference");
+const saveStaffProfileButton = document.getElementById("saveStaffProfile");
+const staffProfileMessage = document.getElementById("staffProfileMessage");
 const staffWeekTitle = document.getElementById("staffWeekTitle");
 const previousWeekButton = document.getElementById("staffPreviousWeek");
 const nextWeekButton = document.getElementById("staffNextWeek");
@@ -154,8 +160,11 @@ function showSignedIn(profile) {
     hidePasswordDialog();
   }
   currentStaffProfile = profile;
-  setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
-  setPrivacyMessage("");
+ setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
+  if (staffPreferredName) staffPreferredName.value = profile?.account?.preferred_name || "";
+  if (staffPhoneNumber) staffPhoneNumber.value = profile?.account?.phone || "";
+  if (staffContactPreference) staffContactPreference.value = profile?.account?.contact_preference || "in_app";
+ setPrivacyMessage("");
   const email = profile?.user?.email || "Signed in";
   const displayName = profile?.account?.display_name || "";
   staffIdentity.textContent = displayName ? `${displayName} (${email})` : email;
@@ -167,8 +176,9 @@ function showSignedIn(profile) {
   } else {
     staffStatus.textContent = "Staff profile linked. Loading your schedule...";
   }
-  renderScheduleList([]);
-  loadStaffSchedule();
+ renderScheduleList([]);
+ loadStaffSchedule();
+  loadStaffDirectory();
 }
 
 function roleNameById(roleId) {
@@ -300,8 +310,9 @@ async function loadStaffProfile() {
     return;
   }
   try {
-    const profile = await staffFetch("/api/staff/me");
-    showSignedIn(profile);
+   const profile = await staffFetch("/api/staff/me");
+   showSignedIn(profile);
+    await loadStaffDirectory();
   } catch (error) {
     writeSession(null);
     showSignedOut();
@@ -404,5 +415,26 @@ saveStaffPrivacyButton?.addEventListener("click", async () => {
     saveStaffPrivacyButton.disabled = false;
   }
 });
+
+async function loadStaffDirectory() {
+saveStaffProfileButton && saveStaffProfileButton.addEventListener("click", async function () { const result = await staffFetch("/api/staff/profile", { method: "PATCH", body: JSON.stringify({ preferredName: staffPreferredName ? staffPreferredName.value : "", phone: staffPhoneNumber ? staffPhoneNumber.value : "", contactPreference: staffContactPreference ? staffContactPreference.value : "in_app" }) }); if (currentStaffProfile && currentStaffProfile.account && result.profile) { currentStaffProfile.account.preferred_name = result.profile.preferredName; currentStaffProfile.account.phone = result.profile.phone; currentStaffProfile.account.contact_preference = result.profile.contactPreference; } if (staffProfileMessage) { staffProfileMessage.hidden = false; staffProfileMessage.textContent = "Profile saved."; } await loadStaffDirectory(); });
+  if (!staffDirectoryList || !currentStaffProfile || !currentStaffProfile.linked) return;
+  try {
+    const result = await staffFetch("/api/staff/directory");
+    staffDirectoryList.textContent = "";
+    (result.entries || []).forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "staff-directory-row";
+      const name = document.createElement("strong");
+      name.textContent = entry.displayName || "Employee";
+      const phone = document.createElement("span");
+      phone.textContent = entry.phoneVisible && entry.phone ? entry.phone : "Phone hidden";
+      row.append(name, phone);
+      staffDirectoryList.appendChild(row);
+    });
+  } catch (error) {
+    staffDirectoryList.textContent = String(error.message || "Could not load the staff directory.");
+  }
+}
 
 loadStaffProfile().then(loadDemoPreviewOptions);
