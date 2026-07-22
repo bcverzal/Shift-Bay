@@ -957,7 +957,6 @@ async function handleListStaffAccounts(request: Request) {
   }
 }
 
-async function handleRemoveStaffAccount(request: Request) {
 async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
 
 async function handleStaffDirectory(request: Request) {
@@ -991,6 +990,7 @@ async function handleStaffDirectory(request: Request) {
   return json(200, { ok: true, entries });
 }
 
+async function handleRemoveStaffAccount(request: Request) {
   const validated = await requireEditor(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
