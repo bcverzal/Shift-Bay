@@ -933,7 +933,7 @@ async function handleListStaffAccounts(request: Request) {
   const locationId = (validated.user as any).locationId;
   try {
     const rows = await supabaseJson(
-      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,status,password_change_required,invited_at,activated_at,created_at,updated_at&order=display_name.asc`,
+      `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,status,phone_visibility,password_change_required,invited_at,activated_at,created_at,updated_at&order=display_name.asc`,
       { headers: serviceHeaders() }
     );
     const staff = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => ({
@@ -943,6 +943,7 @@ async function handleListStaffAccounts(request: Request) {
       legacyEmployeeId: row.legacy_employee_id,
       displayName: row.display_name,
       status: row.status,
+      phoneVisibility: row.phone_visibility || "managers_only",
       passwordChangeRequired: Boolean(row.password_change_required),
       invitedAt: row.invited_at,
       activatedAt: row.activated_at,
@@ -954,6 +955,44 @@ async function handleListStaffAccounts(request: Request) {
     if (isMissingStaffSchema(error)) return json(200, { ok: true, schemaReady: false, staff: [] });
     throw error;
   }
+}
+
+async function handleRemoveStaffAccount(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const locationId = (validated.user as any).locationId;
+  const body = await request.json().catch(() => ({}));
+  const accountId = String(body.accountId || "").trim();
+  const userId = String(body.userId || "").trim();
+  if (!accountId || !userId) return json(400, { ok: false, error: "Staff account details are required." });
+
+  const rows = await supabaseJson(
+    "/staff_accounts?id=eq." + encodeURIComponent(accountId) +
+      "&location_id=eq." + encodeURIComponent(locationId) +
+      "&select=id,user_id,legacy_employee_id,display_name",
+    { headers: serviceHeaders() }
+  );
+  const account = Array.isArray(rows) ? rows[0] : null;
+  if (!account) return json(404, { ok: false, error: "That staff login is no longer linked to this location." });
+  if (String(account.user_id || "") !== userId) return json(400, { ok: false, error: "The staff login details did not match." });
+
+  const otherLinks = await supabaseJson("/staff_accounts?user_id=eq." + encodeURIComponent(userId) + "&select=id,location_id", { headers: serviceHeaders() });
+  const userDeleted = !Array.isArray(otherLinks) || otherLinks.length <= 1;
+  if (userDeleted) {
+    await authAdminJson("/admin/users/" + encodeURIComponent(userId), { method: "DELETE" });
+  }
+  await supabaseJson(
+    "/staff_accounts?id=eq." + encodeURIComponent(accountId) +
+      "&location_id=eq." + encodeURIComponent(locationId),
+    { method: "DELETE", headers: serviceHeaders({ Prefer: "return=minimal" }) }
+  ).catch(() => null);
+  await logAuditEvent("staff_login_removed", (validated.user as any).id, {
+    userId,
+    legacyEmployeeId: account.legacy_employee_id || "",
+    displayName: account.display_name || ""
+  }, locationId);
+  return json(200, { ok: true, userDeleted });
 }
 
 async function handleInviteStaff(request: Request) {
@@ -1105,6 +1144,7 @@ Deno.serve(async (request) => {
     if (path === "/managers/remove" && request.method === "POST") return await handleRemoveManager(request);
     if (path === "/staff-accounts" && request.method === "GET") return await handleListStaffAccounts(request);
     if (path === "/staff-accounts/invite" && request.method === "POST") return await handleInviteStaff(request);
+    if (path === "/staff-accounts/remove" && request.method === "POST") return await handleRemoveStaffAccount(request);
     if (path === "/parse-time-off-pdf") return json(501, { error: "PDF request-off imports still require the local Shift Bay server for now." });
     return json(404, { error: `Unknown Shift Bay API route: ${path}` });
   } catch (error) {

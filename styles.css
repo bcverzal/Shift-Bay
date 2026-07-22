@@ -641,7 +641,7 @@ summary:focus-visible {
 
 .staff-access-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.9fr) 86px 92px;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.7fr) 86px 132px 92px auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -675,6 +675,21 @@ summary:focus-visible {
   border-radius: 999px;
   padding: 4px 9px;
   background: #f5faff;
+}
+
+.staff-access-privacy {
+  color: #35527a;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.staff-access-remove {
+  justify-self: end;
+  border-color: #efb4b4;
+  color: #a52d2d;
+  background: #fff7f7;
+  white-space: nowrap;
 }
 
 @media (max-width: 680px) {

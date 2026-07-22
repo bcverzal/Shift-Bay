@@ -10736,6 +10736,10 @@ function staffAccountStatusLabel(status = "") {
   return labels[String(status).toLowerCase()] || status || "Invited";
 }
 
+function staffPhoneVisibilityLabel(value = "managers_only") {
+  return String(value).toLowerCase() === "all_staff" ? "Phone: All staff" : "Phone: Managers only";
+}
+
 function staffAccessEmployees() {
   return [...state.employees]
     .filter((employee) => employee.active !== false && !employee.archived)
@@ -10798,12 +10802,48 @@ function renderStaffAccessList(staff = []) {
             </div>
             <span>${escapeHtml(account.legacyEmployeeId || "")}</span>
             <span class="staff-access-status">${staffAccountStatusLabel(account.status)}</span>
+            <span class="staff-access-privacy">${escapeHtml(staffPhoneVisibilityLabel(account.phoneVisibility))}</span>
             <span class="manager-access-added">${account.invitedAt ? escapeHtml(new Date(account.invitedAt).toLocaleDateString()) : ""}</span>
+            <button type="button" class="staff-access-remove" data-staff-remove="${escapeHtml(account.id || "")}" data-staff-user-id="${escapeHtml(account.userId || "")}">Remove Login</button>
           </section>
         `;
       }).join("")}
     </div>
   `;
+  target.querySelectorAll("[data-staff-remove]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await removeStaffLogin(button.dataset.staffRemove, button.dataset.staffUserId, button);
+    });
+  });
+}
+
+async function removeStaffLogin(accountId, userId, button) {
+  if (!accountId || !userId) {
+    setStaffAccessMessage("This staff login is missing its account details and cannot be removed safely.");
+    return;
+  }
+  const confirmed = await showAppConfirm({
+    title: "Remove Staff Login",
+    message: "This removes the staff portal login and its link to the employee. The employee profile and schedule will remain.",
+    confirmText: "Remove Login",
+    cancelText: "Keep Login"
+  });
+  if (!confirmed) return;
+  if (button) button.disabled = true;
+  setStaffAccessMessage("Removing staff login...");
+  try {
+    await fetchJson("/api/staff-accounts/remove", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ accountId, userId })
+    });
+    renderTemporaryStaffLogin(null);
+    setStaffAccessMessage("Staff portal login removed. The employee profile was kept.");
+    await loadStaffAccess();
+  } catch (error) {
+    setStaffAccessMessage(error.message || "Could not remove staff login.");
+    if (button) button.disabled = false;
+  }
 }
 
 async function loadStaffAccess() {
