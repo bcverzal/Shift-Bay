@@ -628,10 +628,10 @@ summary:focus-visible {
 #staffAccessDialog #staffAccessMessage {
   margin-top: 10px;
   padding: 8px 10px;
-  border: 1px solid #f4c7c3;
+  border: 1px solid #c7dcf7;
   border-radius: 8px;
-  background: #fff6f5;
-  color: #9f2d25;
+  background: #f2f7ff;
+  color: #35527a;
   font-weight: 700;
 }
 
@@ -641,7 +641,7 @@ summary:focus-visible {
 
 .staff-access-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.7fr) 86px 132px 92px auto;
+  grid-template-columns: minmax(0, 1fr) 86px 132px 92px auto;
   gap: 10px;
   align-items: center;
   padding: 10px;

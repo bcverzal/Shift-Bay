@@ -10800,7 +10800,6 @@ function renderStaffAccessList(staff = []) {
               <strong>${escapeHtml(name)}</strong>
               <small>${escapeHtml(account.email || account.userId || "No email")}</small>
             </div>
-            <span>${escapeHtml(account.legacyEmployeeId || "")}</span>
             <span class="staff-access-status">${staffAccountStatusLabel(account.status)}</span>
             <span class="staff-access-privacy">${escapeHtml(staffPhoneVisibilityLabel(account.phoneVisibility))}</span>
             <span class="manager-access-added">${account.invitedAt ? escapeHtml(new Date(account.invitedAt).toLocaleDateString()) : ""}</span>
