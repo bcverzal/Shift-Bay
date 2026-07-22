@@ -904,7 +904,7 @@
 
   <dialog id="staffAccessDialog">
     <form id="staffInviteForm" method="dialog" class="editor modal-editor manager-access-editor">
-      <button id="closeStaffAccessBtn" class="modal-close-button" type="button" aria-label="Close">&times;</button>
+      <button id="closeStaffAccessBtn" class="modal-close-button" type="button" aria-label="Close" onclick="this.closest('dialog')?.close()">&times;</button>
       <h2>Staff Access</h2>
       <p class="hint">Link staff logins to employee profiles. When Resend is configured, the invitation includes the login details and first-login password change instructions.</p>
       <div class="manager-invite-grid staff-invite-grid">
