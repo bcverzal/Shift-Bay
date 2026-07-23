@@ -437,6 +437,19 @@ async function handleStaffMe(request: Request) {
       rows = (Array.isArray(rows) ? rows : []).map((row: any) => ({ ...row, phone_visibility: "managers_only" }));
     }
     const account = Array.isArray(rows) ? rows[0] : null;
+    let employee: any = null;
+    if (account) {
+      const row = await loadDocumentRow("*", locationId);
+      const state = (row?.state || {}) as any;
+      const employeeId = String(account.legacy_employee_id || account.employee_id || "");
+      const employeeRow = (Array.isArray(state.employees) ? state.employees : []).find((item: any) => String(item.id || "") === employeeId);
+      if (employeeRow) {
+        employee = {
+          id: employeeRow.id,
+          displayName: [employeeRow.nickname || employeeRow.firstName, employeeRow.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee"
+        };
+      }
+    }
     return json(200, {
       ok: true,
       schemaReady: true,
@@ -444,6 +457,7 @@ async function handleStaffMe(request: Request) {
       user: { ...(validated.user as any), passwordChangeRequired: Boolean(account?.password_change_required) },
       locationId,
       account: account || null,
+      employee,
       message: account ? "" : "No staff employee profile is linked to this login yet."
     });
   } catch (error) {

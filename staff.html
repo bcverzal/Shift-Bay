@@ -48,6 +48,13 @@
           <p id="staffIdentity" class="staff-muted">Signed in</p>
         </div>
         <div class="staff-header-actions">
+          <div id="demoPortalSwitcher" class="staff-demo-switcher" hidden>
+            <label>
+              Preview employee
+              <select id="demoPortalEmployeeSelect"></select>
+            </label>
+            <button type="button" id="demoPortalPreviewButton" class="staff-secondary">View</button>
+          </div>
           <button type="button" id="staffReturnManager" class="staff-secondary" hidden>Manager view</button>
           <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
         </div>
@@ -75,6 +82,7 @@
           <div class="staff-panel-heading">
             <div>
               <h2>My Schedule</h2>
+              <p id="staffScheduleEmployee" class="staff-panel-subtitle"></p>
               <p id="staffWeekTitle" class="staff-panel-subtitle">This week</p>
             </div>
             <div class="staff-week-actions">
@@ -124,6 +132,7 @@
         <article class="staff-panel staff-profile-panel">
           <h2>My Profile</h2>
           <p class="staff-panel-subtitle">Update your contact details. Scheduling roles and training remain manager-controlled.</p>
+          <div id="staffVisibleProfile" class="staff-visible-profile"></div>
           <label>Preferred name<input id="staffPreferredName" type="text" maxlength="80"></label>
           <label>Phone number<input id="staffPhoneNumber" type="tel" maxlength="40"></label>
           <label>Contact preference<select id="staffContactPreference"><option value="in_app">In-app</option><option value="sms">SMS</option><option value="email">Email</option></select></label>

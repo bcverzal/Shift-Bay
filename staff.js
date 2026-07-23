@@ -14,12 +14,14 @@ const loginMessage = document.getElementById("staffLoginMessage");
 const staffIdentity = document.getElementById("staffIdentity");
 const staffStatus = document.getElementById("staffStatus");
 const staffScheduleList = document.getElementById("staffScheduleList");
+const staffScheduleEmployee = document.getElementById("staffScheduleEmployee");
 const staffDirectoryList = document.getElementById("staffDirectoryList");
 const staffPreferredName = document.getElementById("staffPreferredName");
 const staffPhoneNumber = document.getElementById("staffPhoneNumber");
 const staffContactPreference = document.getElementById("staffContactPreference");
 const saveStaffProfileButton = document.getElementById("saveStaffProfile");
 const staffProfileMessage = document.getElementById("staffProfileMessage");
+const staffVisibleProfile = document.getElementById("staffVisibleProfile");
 const staffWeekTitle = document.getElementById("staffWeekTitle");
 const previousWeekButton = document.getElementById("staffPreviousWeek");
 const nextWeekButton = document.getElementById("staffNextWeek");
@@ -31,6 +33,9 @@ const returnManagerButton = document.getElementById("staffReturnManager");
 const demoPreviewCard = document.getElementById("demoPreviewCard");
 const demoEmployeeSelect = document.getElementById("demoEmployeeSelect");
 const demoPreviewButton = document.getElementById("demoPreviewButton");
+const demoPortalSwitcher = document.getElementById("demoPortalSwitcher");
+const demoPortalEmployeeSelect = document.getElementById("demoPortalEmployeeSelect");
+const demoPortalPreviewButton = document.getElementById("demoPortalPreviewButton");
 const staffPasswordDialog = document.getElementById("staffPasswordDialog");
 const staffPasswordForm = document.getElementById("staffPasswordForm");
 const staffPasswordMessage = document.getElementById("staffPasswordMessage");
@@ -163,6 +168,7 @@ function hidePasswordDialog() {
 function showSignedOut() {
   loginCard.hidden = false;
   staffApp.hidden = true;
+  if (demoPortalSwitcher) demoPortalSwitcher.hidden = true;
   setMessage("");
 }
 
@@ -175,6 +181,7 @@ function showSignedIn(profile) {
     hidePasswordDialog();
   }
   currentStaffProfile = profile;
+  renderVisibleProfile({ profile });
  setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
   if (staffPreferredName) staffPreferredName.value = profile?.account?.preferred_name || "";
   if (staffPhoneNumber) staffPhoneNumber.value = profile?.account?.phone || "";
@@ -183,6 +190,7 @@ function showSignedIn(profile) {
   const email = profile?.user?.email || "Signed in";
   const displayName = profile?.account?.display_name || "";
   staffIdentity.textContent = displayName ? `${displayName} (${email})` : email;
+  if (staffScheduleEmployee) staffScheduleEmployee.textContent = displayName || profile?.employee?.displayName || "Your assigned schedule";
   staffStatus.classList.toggle("is-ready", Boolean(profile?.linked));
   if (!profile?.schemaReady) {
     staffStatus.textContent = "Staff portal database tables are not active yet. The login shell is ready, but staff requests cannot be saved until the schema is installed.";
@@ -203,6 +211,20 @@ function roleNameById(roleId) {
 
 function employeeName(employee) {
   return [employee?.nickname || employee?.firstName, employee?.lastName].filter(Boolean).join(" ").trim() || "Employee";
+}
+
+function renderVisibleProfile({ employee = null, profile = null } = {}) {
+  if (!staffVisibleProfile) return;
+  const account = profile?.account || {};
+  const displayName = employee ? employeeName(employee) : account.display_name || account.preferred_name || profile?.user?.email || "Employee";
+  const phone = employee ? (employee.phone || account.phone || "") : account.phone || "";
+  const contactPreference = account.contact_preference || "";
+  const rows = [
+    ["Name", displayName],
+    ["Phone", phone || "Not provided"],
+    ["Contact preference", contactPreference ? contactPreference.replace("_", " ") : "Not set"]
+  ];
+  staffVisibleProfile.innerHTML = `<div class="staff-visible-profile-heading">Information visible to you</div>${rows.map(([label, value]) => `<div class="staff-visible-profile-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}`;
 }
 
 function escapeHtml(value) {
@@ -337,6 +359,10 @@ function showDemoPreview(employee) {
   staffApp.hidden = false;
   if (returnManagerButton) returnManagerButton.hidden = false;
   staffIdentity.textContent = `${employeeName(employee)} (demo preview)`;
+  if (staffScheduleEmployee) staffScheduleEmployee.textContent = employeeName(employee);
+  if (demoEmployeeSelect) demoEmployeeSelect.value = employee.id;
+  if (demoPortalEmployeeSelect) demoPortalEmployeeSelect.value = employee.id;
+  renderVisibleProfile({ employee });
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";
   renderScheduleList(shifts.map((shift) => ({
@@ -364,8 +390,11 @@ async function loadDemoPreviewOptions() {
       .filter((employee) => employee.active !== false && !employee.archived)
       .sort((a, b) => employeeName(a).localeCompare(employeeName(b)));
     if (!employees.length) return;
-    demoEmployeeSelect.innerHTML = employees.map((employee) => `<option value="${employee.id}">${employeeName(employee)}</option>`).join("");
+    const options = employees.map((employee) => `<option value="${employee.id}">${employeeName(employee)}</option>`).join("");
+    demoEmployeeSelect.innerHTML = options;
+    if (demoPortalEmployeeSelect) demoPortalEmployeeSelect.innerHTML = options;
     demoPreviewCard.hidden = false;
+    if (demoPortalSwitcher) demoPortalSwitcher.hidden = !DEMO_PORTAL_MODE;
     if (DEMO_PORTAL_MODE) showDemoPreview(employees[0]);
   } catch (error) {
     demoPreviewCard.hidden = false;
@@ -454,6 +483,11 @@ returnManagerButton?.addEventListener("click", () => {
 
 demoPreviewButton?.addEventListener("click", () => {
   const employee = (demoState?.employees || []).find((item) => item.id === demoEmployeeSelect.value);
+  if (employee) showDemoPreview(employee);
+});
+
+demoPortalPreviewButton?.addEventListener("click", () => {
+  const employee = (demoState?.employees || []).find((item) => item.id === demoPortalEmployeeSelect?.value);
   if (employee) showDemoPreview(employee);
 });
 
