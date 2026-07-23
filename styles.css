@@ -9116,3 +9116,34 @@ body:has(#schedule.panel.active):not(.compact-preview) .day-focus-tool-rail:focu
   color: rgba(51, 65, 85, 0.58);
   font-size: 8px;
 }
+.staff-review-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #c7d8f0;
+  border-radius: 9px;
+  padding: 9px 11px;
+  background: #f7fbff;
+}
+
+.staff-review-row > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.staff-review-row span,
+.staff-review-row small {
+  color: #5b6b82;
+}
+
+.staff-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.staff-review-actions button {
+  min-height: 30px;
+  padding-inline: 10px;
+}

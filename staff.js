@@ -3,6 +3,7 @@ const MANAGER_SESSION_KEY = "shiftBay.supabaseSession.v1";
 const SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId.v1";
 const LEGACY_SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId";
 const DEMO_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
+const DEMO_PORTAL_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
 const STAFF_CONFIG = window.SHIFT_BAY_CONFIG || {};
 const STAFF_API_BASE = String(STAFF_CONFIG.apiBase || "").replace(/\/$/, "");
 
@@ -26,12 +27,20 @@ const refreshScheduleButton = document.getElementById("staffRefreshSchedule");
 const saveStaffPrivacyButton = document.getElementById("saveStaffPrivacy");
 const staffPrivacyMessage = document.getElementById("staffPrivacyMessage");
 const signOutButton = document.getElementById("staffSignOut");
+const returnManagerButton = document.getElementById("staffReturnManager");
 const demoPreviewCard = document.getElementById("demoPreviewCard");
 const demoEmployeeSelect = document.getElementById("demoEmployeeSelect");
 const demoPreviewButton = document.getElementById("demoPreviewButton");
 const staffPasswordDialog = document.getElementById("staffPasswordDialog");
 const staffPasswordForm = document.getElementById("staffPasswordForm");
 const staffPasswordMessage = document.getElementById("staffPasswordMessage");
+const staffRequestOffForm = document.getElementById("staffRequestOffForm");
+const staffRequestMessage = document.getElementById("staffRequestMessage");
+const staffRequestList = document.getElementById("staffRequestList");
+const staffAvailabilityForm = document.getElementById("staffAvailabilityForm");
+const staffAvailabilityMessage = document.getElementById("staffAvailabilityMessage");
+const staffAvailabilityDays = document.getElementById("staffAvailabilityDays");
+const staffAvailabilityWeekStart = document.getElementById("staffAvailabilityWeekStart");
 
 let demoState = null;
 let currentStaffWeekStart = "";
@@ -62,6 +71,12 @@ function setPrivacyMessage(message) {
   if (!staffPrivacyMessage) return;
   staffPrivacyMessage.hidden = !message;
   staffPrivacyMessage.textContent = message || "";
+}
+
+function setWorkflowMessage(element, message) {
+  if (!element) return;
+  element.hidden = !message;
+  element.textContent = message || "";
 }
 
 function setPhoneVisibility(value) {
@@ -179,6 +194,7 @@ function showSignedIn(profile) {
  renderScheduleList([]);
  loadStaffSchedule();
   loadStaffDirectory();
+  loadStaffWorkflow();
 }
 
 function roleNameById(roleId) {
@@ -261,12 +277,65 @@ async function loadStaffSchedule() {
   }
 }
 
+function renderAvailabilityDays(availability = {}) {
+  if (!staffAvailabilityDays) return;
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  staffAvailabilityDays.innerHTML = days.map((day, index) => {
+    const value = Array.isArray(availability[index])
+      ? availability[index].map((range) => `${range.start || ""}-${range.end || ""}`).join(", ")
+      : String(availability[index] || "");
+    return `<label><span>${day}</span><input data-staff-availability-day="${index}" value="${escapeHtml(value)}" placeholder="7a-2p, 5p-10p or blank"></label>`;
+  }).join("");
+}
+
+function readAvailabilityDays() {
+  const availability = {};
+  document.querySelectorAll("[data-staff-availability-day]").forEach((input) => {
+    availability[input.dataset.staffAvailabilityDay] = input.value.trim();
+  });
+  return availability;
+}
+
+function renderStaffRequests(requests = []) {
+  if (!staffRequestList) return;
+  if (!requests.length) {
+    staffRequestList.innerHTML = `<div class="staff-empty-state"><strong>No request-offs submitted</strong><span>Your submitted requests will appear here.</span></div>`;
+    return;
+  }
+  staffRequestList.innerHTML = requests.map((request) => {
+    const range = request.startDate === request.endDate ? request.startDate : `${request.startDate} - ${request.endDate}`;
+    const time = request.startTime && request.endTime ? ` | ${request.startTime} - ${request.endTime}` : " | Full day";
+    return `<div class="staff-workflow-row"><div><strong>${escapeHtml(range)}</strong><span>${escapeHtml(time)}</span>${request.note ? `<small>${escapeHtml(request.note)}</small>` : ""}</div><em class="staff-request-status status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</em></div>`;
+  }).join("");
+}
+
+async function loadStaffWorkflow() {
+  if (!currentStaffProfile?.linked) return;
+  try {
+    const requests = await staffFetch("/api/staff/request-offs");
+    renderStaffRequests(requests.requests || []);
+  } catch (error) {
+    setWorkflowMessage(staffRequestMessage, error.message || "Could not load request-offs.");
+  }
+  try {
+    const weekStart = staffAvailabilityWeekStart?.value || currentStaffWeekStart || "";
+    const result = await staffFetch(`/api/staff/availability${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`);
+    if (staffAvailabilityWeekStart && result.weekStart) staffAvailabilityWeekStart.value = result.weekStart;
+    renderAvailabilityDays(result.availability || {});
+    const note = document.getElementById("staffAvailabilityNote");
+    if (note) note.value = result.note || "";
+  } catch (error) {
+    setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not load availability.");
+  }
+}
+
 function showDemoPreview(employee) {
   const shifts = (demoState?.shifts || [])
     .filter((shift) => shift.employeeId === employee.id)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.start || "").localeCompare(String(b.start || "")));
   loginCard.hidden = true;
   staffApp.hidden = false;
+  if (returnManagerButton) returnManagerButton.hidden = false;
   staffIdentity.textContent = `${employeeName(employee)} (demo preview)`;
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";
@@ -297,6 +366,7 @@ async function loadDemoPreviewOptions() {
     if (!employees.length) return;
     demoEmployeeSelect.innerHTML = employees.map((employee) => `<option value="${employee.id}">${employeeName(employee)}</option>`).join("");
     demoPreviewCard.hidden = false;
+    if (DEMO_PORTAL_MODE) showDemoPreview(employees[0]);
   } catch (error) {
     demoPreviewCard.hidden = false;
     demoPreviewCard.innerHTML = `<h2>Demo Staff Preview</h2><p>Open the demo location in the manager app first, then return here to preview a fake staff member.</p>`;
@@ -378,6 +448,10 @@ signOutButton.addEventListener("click", () => {
   loadDemoPreviewOptions();
 });
 
+returnManagerButton?.addEventListener("click", () => {
+  window.location.href = "index.html";
+});
+
 demoPreviewButton?.addEventListener("click", () => {
   const employee = (demoState?.employees || []).find((item) => item.id === demoEmployeeSelect.value);
   if (employee) showDemoPreview(employee);
@@ -413,6 +487,64 @@ saveStaffPrivacyButton?.addEventListener("click", async () => {
     setPrivacyMessage(error.message || "Could not save privacy setting.");
   } finally {
     saveStaffPrivacyButton.disabled = false;
+  }
+});
+
+const staffTabButtons = [...document.querySelectorAll("[data-staff-tab]")];
+const staffSubtabButtons = [...document.querySelectorAll("[data-staff-subtab]")];
+const staffSubtabBars = [...document.querySelectorAll("[data-staff-subtabs]")];
+const staffPanels = [...document.querySelectorAll(".staff-grid > article")];
+
+function selectStaffTab(tabName) {
+  const visibleIndexes = tabName === "schedule" ? [0] : tabName === "directory" ? [3] : tabName === "information" ? [4, 5] : [1, 2];
+  staffPanels.forEach((panel, index) => { panel.hidden = !visibleIndexes.includes(index); });
+  staffTabButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.staffTab === tabName));
+  staffSubtabBars.forEach((bar) => { bar.hidden = bar.dataset.staffSubtabs !== tabName; });
+  const activeSubtab = tabName === "information" ? "profile" : tabName === "requests" ? "request-off" : "";
+  if (activeSubtab) selectStaffSubtab(activeSubtab);
+}
+
+function selectStaffSubtab(subtabName) {
+  staffSubtabButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.staffSubtab === subtabName));
+  const visibleIndexes = subtabName === "profile" ? [4] : subtabName === "privacy" ? [5] : subtabName === "request-off" ? [1] : [2];
+  staffPanels.forEach((panel, index) => {
+    if (visibleIndexes.includes(index)) panel.hidden = false;
+    else if (index !== 0 && index !== 3) panel.hidden = true;
+  });
+}
+
+staffTabButtons.forEach((button) => button.addEventListener("click", () => selectStaffTab(button.dataset.staffTab)));
+staffSubtabButtons.forEach((button) => button.addEventListener("click", () => selectStaffSubtab(button.dataset.staffSubtab)));
+selectStaffTab("schedule");
+
+staffRequestOffForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const startDate = document.getElementById("staffRequestStartDate")?.value || "";
+  const endDate = document.getElementById("staffRequestEndDate")?.value || startDate;
+  const startTime = document.getElementById("staffRequestStartTime")?.value || "";
+  const endTime = document.getElementById("staffRequestEndTime")?.value || "";
+  const note = document.getElementById("staffRequestNote")?.value || "";
+  setWorkflowMessage(staffRequestMessage, "Submitting...");
+  try {
+    await staffFetch("/api/staff/request-offs", { method: "POST", body: JSON.stringify({ startDate, endDate, startTime, endTime, note }) });
+    staffRequestOffForm.reset();
+    setWorkflowMessage(staffRequestMessage, "Request submitted for manager review.");
+    await loadStaffWorkflow();
+  } catch (error) {
+    setWorkflowMessage(staffRequestMessage, error.message || "Could not submit request-off.");
+  }
+});
+
+staffAvailabilityForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const weekStart = staffAvailabilityWeekStart?.value || "";
+  const note = document.getElementById("staffAvailabilityNote")?.value || "";
+  setWorkflowMessage(staffAvailabilityMessage, "Saving...");
+  try {
+    await staffFetch("/api/staff/availability", { method: "PUT", body: JSON.stringify({ weekStart, availability: readAvailabilityDays(), note }) });
+    setWorkflowMessage(staffAvailabilityMessage, "Availability submitted for manager review.");
+  } catch (error) {
+    setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not save availability.");
   }
 });
 

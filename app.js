@@ -1300,6 +1300,7 @@ function updateAccountUi() {
   const recent = $("recentActivityBtn");
   const managers = $("manageManagersBtn");
   const resetDemo = $("resetDemoDataBtn");
+  const sandboxStaffPortal = $("sandboxStaffPortalBtn");
   const sandboxBadge = $("sandboxBadge");
   renderLocationSwitcher();
   if (sandboxBadge) sandboxBadge.hidden = !isDemoLocation();
@@ -1314,6 +1315,7 @@ function updateAccountUi() {
     if (recent) recent.hidden = false;
     if (managers) managers.hidden = currentUser.role !== "owner";
     if (resetDemo) resetDemo.hidden = !(role === "owner" && isDemoLocation());
+    if (sandboxStaffPortal) sandboxStaffPortal.hidden = !isDemoLocation();
     return;
   }
   document.body.classList.remove("viewer-read-only");
@@ -1325,6 +1327,7 @@ function updateAccountUi() {
   if (recent) recent.hidden = authRequired;
   if (managers) managers.hidden = true;
   if (resetDemo) resetDemo.hidden = true;
+  if (sandboxStaffPortal) sandboxStaffPortal.hidden = true;
   if (sandboxBadge) sandboxBadge.hidden = true;
 }
 
@@ -10873,6 +10876,64 @@ async function openStaffAccess() {
   await loadStaffAccess();
 }
 
+function setStaffRequestsMessage(message = "") {
+  const target = $("staffRequestsMessage");
+  if (target) target.textContent = message;
+}
+
+function staffRequestEmployeeName(request) {
+  return fullEmployeeName(employeeById(request.legacyEmployeeId)) || request.legacyEmployeeId || "Staff member";
+}
+
+function renderStaffRequestsReview(requests = [], submissions = []) {
+  const requestTarget = $("staffRequestsList");
+  const availabilityTarget = $("staffAvailabilityReviewList");
+  if (requestTarget) {
+    requestTarget.innerHTML = requests.length ? requests.map((request) => `
+      <section class="staff-review-row">
+        <div><strong>${escapeHtml(staffRequestEmployeeName(request))}</strong><span>${escapeHtml(request.startDate)} - ${escapeHtml(request.endDate)}${request.startTime && request.endTime ? ` | ${escapeHtml(request.startTime)} - ${escapeHtml(request.endTime)}` : " | Full day"}</span>${request.note ? `<small>${escapeHtml(request.note)}</small>` : ""}</div>
+        <div class="staff-review-actions"><b>${escapeHtml(request.status)}</b>${request.status === "pending" ? `<button type="button" data-staff-request-review="${escapeHtml(request.id)}" data-review-status="approved">Approve</button><button type="button" data-staff-request-review="${escapeHtml(request.id)}" data-review-status="denied">Deny</button>` : ""}</div>
+      </section>`).join("") : `<p class="hint">No request-offs have been submitted.</p>`;
+    requestTarget.querySelectorAll("[data-staff-request-review]").forEach((button) => button.addEventListener("click", () => reviewStaffRequest(button.dataset.staffRequestReview, button.dataset.reviewStatus)));
+  }
+  if (availabilityTarget) {
+    availabilityTarget.innerHTML = submissions.length ? submissions.map((submission) => `
+      <section class="staff-review-row"><div><strong>${escapeHtml(staffRequestEmployeeName(submission))}</strong><span>Week of ${escapeHtml(submission.weekStart)} | ${escapeHtml(submission.status)}</span>${submission.note ? `<small>${escapeHtml(submission.note)}</small>` : ""}</div><code>${escapeHtml(JSON.stringify(submission.availability || {}))}</code></section>`).join("") : `<p class="hint">No availability submissions have been received.</p>`;
+  }
+}
+
+async function loadStaffRequestsReview() {
+  setStaffRequestsMessage("Loading staff requests...");
+  try {
+    const [requests, submissions] = await Promise.all([
+      fetchJson("/api/staff-requests", { cache: "no-store", headers: authRequestHeaders() }),
+      fetchJson("/api/staff-availability", { cache: "no-store", headers: authRequestHeaders() })
+    ]);
+    renderStaffRequestsReview(requests.requests || [], submissions.submissions || []);
+    setStaffRequestsMessage("Manager review queue");
+  } catch (error) {
+    setStaffRequestsMessage(error.message || "Could not load staff requests.");
+    renderStaffRequestsReview([], []);
+  }
+}
+
+async function openStaffRequests() {
+  if (!["owner", "manager"].includes(String(currentUser?.role || "").toLowerCase())) return;
+  $("staffRequestsDialog")?.showModal();
+  await loadStaffRequestsReview();
+}
+
+async function reviewStaffRequest(requestId, status) {
+  if (!requestId || !status) return;
+  setStaffRequestsMessage("Saving review...");
+  try {
+    await fetchJson("/api/staff-requests/review", { method: "POST", headers: authRequestHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ requestId, status }) });
+    await loadStaffRequestsReview();
+  } catch (error) {
+    setStaffRequestsMessage(error.message || "Could not review request-off.");
+  }
+}
+
 async function sendStaffInvite(event) {
   event.preventDefault();
   const button = $("sendStaffInviteBtn");
@@ -12414,6 +12475,11 @@ function wireEvents() {
   $("staffAccessBtn")?.addEventListener("click", openStaffAccess);
   $("closeStaffAccessBtn")?.addEventListener("click", () => $("staffAccessDialog").close());
   $("staffInviteForm")?.addEventListener("submit", sendStaffInvite);
+  $("staffRequestsBtn")?.addEventListener("click", openStaffRequests);
+  $("closeStaffRequestsBtn")?.addEventListener("click", () => $("staffRequestsDialog").close());
+  $("sandboxStaffPortalBtn")?.addEventListener("click", () => {
+    if (isDemoLocation()) window.location.href = "staff.html?demo=1";
+  });
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
     $("archiveAllEmployeesBtn").hidden = !$("revealArchiveAllEmployees").checked;

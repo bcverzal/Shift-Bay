@@ -44,6 +44,8 @@
           <button id="signInMenuBtn" class="account-menu-action" type="button">Sign in</button>
           <button id="recentActivityBtn" class="account-menu-action" type="button">Recent activity</button>
           <button id="manageManagersBtn" class="account-menu-action" type="button">Managers</button>
+          <button id="staffRequestsBtn" class="account-menu-action" type="button">Staff requests</button>
+          <button id="sandboxStaffPortalBtn" class="account-menu-action sandbox-reset-action" type="button" hidden>Employee portal preview</button>
           <button id="resetDemoDataBtn" class="account-menu-action sandbox-reset-action" type="button" hidden>Reset Demo Data</button>
           <button id="signOutBtn" class="account-menu-action account-menu-action-muted" type="button">Sign out</button>
         </div>
@@ -919,6 +921,21 @@
       <div id="staffTempLogin" class="manager-temp-login" hidden></div>
       <div id="staffAccessMessage" class="hint"></div>
       <div id="staffAccessList" class="analysis-table"></div>
+    </form>
+  </dialog>
+
+  <dialog id="staffRequestsDialog">
+    <form id="staffRequestsForm" method="dialog" class="editor modal-editor manager-access-editor">
+      <h2>Staff Requests</h2>
+      <p class="hint">Review request-offs and see weekly availability submissions for this location.</p>
+      <div id="staffRequestsMessage" class="hint"></div>
+      <h3>Request-offs</h3>
+      <div id="staffRequestsList" class="analysis-table"></div>
+      <h3>Availability submissions</h3>
+      <div id="staffAvailabilityReviewList" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="closeStaffRequestsBtn" type="button">Close</button>
+      </div>
     </form>
   </dialog>
 

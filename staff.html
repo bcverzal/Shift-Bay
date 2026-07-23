@@ -47,10 +47,28 @@
           </div>
           <p id="staffIdentity" class="staff-muted">Signed in</p>
         </div>
-        <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
+        <div class="staff-header-actions">
+          <button type="button" id="staffReturnManager" class="staff-secondary" hidden>Manager view</button>
+          <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
+        </div>
       </header>
 
       <div id="staffStatus" class="staff-status"></div>
+
+      <nav class="staff-tabs" aria-label="Staff portal sections">
+        <button type="button" class="staff-tab is-active" data-staff-tab="schedule">My Schedule</button>
+        <button type="button" class="staff-tab" data-staff-tab="directory">Staff Directory</button>
+        <button type="button" class="staff-tab" data-staff-tab="information">My Information</button>
+        <button type="button" class="staff-tab" data-staff-tab="requests">Requests &amp; Availability</button>
+      </nav>
+      <div class="staff-subtabs" data-staff-subtabs="information" hidden>
+        <button type="button" class="staff-subtab is-active" data-staff-subtab="profile">My Profile</button>
+        <button type="button" class="staff-subtab" data-staff-subtab="privacy">Phone Privacy</button>
+      </div>
+      <div class="staff-subtabs" data-staff-subtabs="requests" hidden>
+        <button type="button" class="staff-subtab is-active" data-staff-subtab="request-off">Request Off</button>
+        <button type="button" class="staff-subtab" data-staff-subtab="availability">Availability</button>
+      </div>
 
       <section class="staff-grid">
         <article class="staff-panel">
@@ -71,17 +89,36 @@
         </article>
         <article class="staff-panel">
           <h2>Request Off</h2>
-          <p>This will become the staff-facing request-off form with manager approval.</p>
-          <button type="button" class="staff-secondary" disabled>Create Request</button>
+          <p>Submit time off for manager review. Leave times blank for a full-day request.</p>
+          <form id="staffRequestOffForm" class="staff-workflow-form">
+            <div class="staff-form-row">
+              <label>Start date<input id="staffRequestStartDate" type="date" required></label>
+              <label>End date<input id="staffRequestEndDate" type="date" required></label>
+            </div>
+            <div class="staff-form-row">
+              <label>Start time<input id="staffRequestStartTime" type="time"></label>
+              <label>End time<input id="staffRequestEndTime" type="time"></label>
+            </div>
+            <label>Note<textarea id="staffRequestNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
+            <button type="submit" class="staff-primary">Submit Request Off</button>
+            <div id="staffRequestMessage" class="staff-inline-message" role="status" hidden></div>
+          </form>
+          <div id="staffRequestList" class="staff-workflow-list"></div>
         </article>
        <article class="staff-panel">
          <h2>Availability</h2>
-         <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
-         <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+         <p>Save the availability you can work for the week shown below.</p>
+         <form id="staffAvailabilityForm" class="staff-workflow-form">
+           <label>Week starting<input id="staffAvailabilityWeekStart" type="date" required></label>
+           <div id="staffAvailabilityDays" class="staff-availability-days"></div>
+           <label>Note<textarea id="staffAvailabilityNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
+           <button type="submit" class="staff-primary">Save Availability</button>
+           <div id="staffAvailabilityMessage" class="staff-inline-message" role="status" hidden></div>
+         </form>
        </article>
        <article class="staff-panel staff-directory-panel">
          <h2>Staff Directory</h2>
-          <p class="staff-panel-subtitle">Phone numbers follow each person’s privacy setting.</p>
+          <p class="staff-panel-subtitle">Phone numbers follow each person's privacy setting.</p>
          <div id="staffDirectoryList" class="staff-directory-list"></div>
        </article>
         <article class="staff-panel staff-profile-panel">

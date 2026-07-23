@@ -207,11 +207,68 @@ button:disabled {
   padding-bottom: 16px;
 }
 
+.staff-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.staff-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  border-bottom: 1px solid #c9d9ef;
+  padding: 0 4px 10px;
+}
+
+.staff-tab,
+.staff-subtab {
+  min-height: 36px;
+  padding-inline: 16px;
+  color: #426080;
+  background: transparent;
+  box-shadow: none;
+}
+
+.staff-tab.is-active,
+.staff-subtab.is-active {
+  color: #fff;
+  border-color: #1d5ad8;
+  background: linear-gradient(#397cff, #2059d9);
+}
+
+.staff-subtabs {
+  display: flex;
+  gap: 7px;
+  margin: 12px 0 0;
+  border: 1px solid #c5d7ee;
+  border-radius: 12px;
+  padding: 7px;
+  background: #eef6ff;
+}
+
+.staff-subtabs[hidden] {
+  display: none;
+}
+
 .staff-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-top: 18px;
+}
+
+.staff-grid > article[hidden] {
+  display: none;
+}
+
+.staff-panel-wide {
+  min-height: 0;
+}
+
+.staff-panel-narrow {
+  width: min(620px, 100%);
 }
 
 .staff-panel {
@@ -336,6 +393,82 @@ button:disabled {
 .staff-directory-list { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
 .staff-directory-row { display: flex; justify-content: space-between; gap: 16px; padding: 8px 10px; border: 1px solid #c7d7ea; border-radius: 8px; background: #f7faff; }
 .staff-directory-row span { color: var(--staff-muted); font-size: 13px; }
+
+.staff-workflow-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.staff-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+textarea {
+  width: 100%;
+  border: 1px solid #b9c8dc;
+  border-radius: 9px;
+  padding: 9px 12px;
+  resize: vertical;
+  font: inherit;
+}
+
+.staff-availability-days {
+  display: grid;
+  gap: 7px;
+}
+
+.staff-availability-days label {
+  display: grid;
+  grid-template-columns: 95px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.staff-availability-days label span {
+  color: var(--staff-ink);
+}
+
+.staff-workflow-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.staff-workflow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #c7d8f0;
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.staff-workflow-row > div {
+  display: grid;
+  gap: 3px;
+}
+
+.staff-workflow-row span,
+.staff-workflow-row small {
+  color: var(--staff-muted);
+}
+
+.staff-request-status {
+  color: #1d3f9a;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.staff-request-status.status-approved { color: #087344; }
+.staff-request-status.status-denied { color: #b12d2d; }
 
 .staff-privacy-panel p {
   margin-bottom: 0;

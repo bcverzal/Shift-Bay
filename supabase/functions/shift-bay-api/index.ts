@@ -533,6 +533,109 @@ async function handleStaffSchedule(request: Request) {
   });
 }
 
+function validDateKey(value: string) {
+  return Boolean(dateFromKey(String(value || "").trim()));
+}
+
+async function handleStaffRequestOffs(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, profile);
+  if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+  const accountId = encodeURIComponent(profile.account.id);
+  if (request.method === "GET") {
+    const rows = await supabaseJson(`/staff_request_offs?location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&select=id,start_date,end_date,start_time,end_time,note,status,created_at&order=start_date.asc,created_at.desc`, { headers: serviceHeaders() });
+    return json(200, { ok: true, requests: (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, startDate: row.start_date, endDate: row.end_date, startTime: row.start_time || "", endTime: row.end_time || "", note: row.note || "", status: row.status, createdAt: row.created_at })) });
+  }
+  const body = await request.json().catch(() => ({}));
+  const startDate = String(body.startDate || "").trim();
+  const endDate = String(body.endDate || startDate).trim();
+  const startTime = String(body.startTime || "").trim();
+  const endTime = String(body.endTime || "").trim();
+  const note = String(body.note || "").trim().slice(0, 240);
+  if (!validDateKey(startDate) || !validDateKey(endDate)) return json(400, { ok: false, error: "Choose a valid start and end date." });
+  if (endDate < startDate) return json(400, { ok: false, error: "The end date cannot be before the start date." });
+  if ((startTime && !endTime) || (!startTime && endTime)) return json(400, { ok: false, error: "Enter both times or leave both blank for a full-day request." });
+  const rows = await supabaseJson("/staff_request_offs", { method: "POST", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify([{ location_id: profile.locationId, staff_account_id: profile.account.id, legacy_employee_id: profile.account.legacy_employee_id || profile.account.employee_id || "", start_date: startDate, end_date: endDate, start_time: startTime, end_time: endTime, note, status: "pending" }]) });
+  await logAuditEvent("staff_request_off_submitted", profile.user.id, { startDate, endDate, startTime, endTime }, profile.locationId);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return json(201, { ok: true, request: { id: row?.id || "", startDate, endDate, startTime, endTime, note, status: "pending" } });
+}
+
+async function handleStaffAvailability(request: Request) {
+  const profileResponse = await handleStaffMe(request);
+  const profile = await profileResponse.json();
+  if (!profile.ok) return json(profile.status || 401, profile);
+  if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
+  const queryWeek = new URL(request.url).searchParams.get("weekStart") || "";
+  const weekStart = String((request.method === "PUT" ? (await request.clone().json().catch(() => ({}))).weekStart : queryWeek) || (request.method === "GET" ? staffWeekStart("", 0) : "")).trim();
+  if (!validDateKey(weekStart)) return json(400, { ok: false, error: "Choose a valid week start date." });
+  const accountId = encodeURIComponent(profile.account.id);
+  if (request.method === "GET") {
+    const rows = await supabaseJson(`/staff_availability_submissions?location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&week_start=eq.${encodeURIComponent(weekStart)}&select=week_start,availability,note,status,updated_at`, { headers: serviceHeaders() });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return json(200, { ok: true, weekStart, availability: row?.availability || {}, note: row?.note || "", status: row?.status || "" });
+  }
+  const body = await request.json().catch(() => ({}));
+  const availability = body.availability && typeof body.availability === "object" ? body.availability : {};
+  const note = String(body.note || "").trim().slice(0, 240);
+  const rows = await supabaseJson("/staff_availability_submissions?on_conflict=location_id,staff_account_id,week_start", { method: "POST", headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }), body: JSON.stringify([{ location_id: profile.locationId, staff_account_id: profile.account.id, legacy_employee_id: profile.account.legacy_employee_id || profile.account.employee_id || "", week_start: weekStart, availability, note, status: "submitted", updated_at: new Date().toISOString() }]) });
+  await logAuditEvent("staff_availability_submitted", profile.user.id, { weekStart }, profile.locationId);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return json(200, { ok: true, weekStart, availability: row?.availability || availability, note: row?.note || note, status: "submitted" });
+}
+
+async function handleManagerStaffRequests(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  const rows = await supabaseJson(`/staff_request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=id,staff_account_id,legacy_employee_id,start_date,end_date,start_time,end_time,note,status,created_at,reviewed_at&order=status.asc,start_date.asc`, { headers: serviceHeaders() });
+  return json(200, { ok: true, requests: (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, staffAccountId: row.staff_account_id, legacyEmployeeId: row.legacy_employee_id, startDate: row.start_date, endDate: row.end_date, startTime: row.start_time || "", endTime: row.end_time || "", note: row.note || "", status: row.status, createdAt: row.created_at, reviewedAt: row.reviewed_at })) });
+}
+
+async function handleManagerStaffAvailability(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  const rows = await supabaseJson(`/staff_availability_submissions?location_id=eq.${encodeURIComponent(locationId)}&select=id,staff_account_id,legacy_employee_id,week_start,availability,note,status,created_at,updated_at&order=week_start.asc,updated_at.desc`, { headers: serviceHeaders() });
+  return json(200, { ok: true, submissions: (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, staffAccountId: row.staff_account_id, legacyEmployeeId: row.legacy_employee_id, weekStart: row.week_start, availability: row.availability || {}, note: row.note || "", status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) });
+}
+
+async function handleReviewStaffRequest(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const body = await request.json().catch(() => ({}));
+  const requestId = String(body.requestId || "").trim();
+  const status = String(body.status || "").trim();
+  if (!requestId || !["approved", "denied", "cancelled"].includes(status)) return json(400, { ok: false, error: "A request and valid review status are required." });
+  const locationId = (validated.user as any).locationId;
+  const rows = await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}&select=*`, { headers: serviceHeaders() });
+  const requestRow = Array.isArray(rows) ? rows[0] : null;
+  if (!requestRow) return json(404, { ok: false, error: "Request-off not found." });
+  const reviewedAt = new Date().toISOString();
+  await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}`, { method: "PATCH", headers: serviceHeaders({ Prefer: "return=minimal" }), body: JSON.stringify({ status, reviewed_by: (validated.user as any).id, reviewed_at: reviewedAt, updated_at: reviewedAt }) });
+  if (status === "approved") await applyApprovedStaffRequest(locationId, requestRow);
+  await logAuditEvent("staff_request_off_reviewed", (validated.user as any).id, { requestId, status }, locationId);
+  return json(200, { ok: true, requestId, status });
+}
+
+async function applyApprovedStaffRequest(locationId: string, requestRow: any) {
+  const document = await loadDocumentRow("*", locationId);
+  if (!document?.state) return;
+  const state = { ...(document.state as any) };
+  const requests = Array.isArray(state.timeOffRequests) ? [...state.timeOffRequests] : [];
+  let date = String(requestRow.start_date || "");
+  const endDate = String(requestRow.end_date || date);
+  while (date && date <= endDate) {
+    const duplicate = requests.some((item: any) => String(item.employeeId || "") === String(requestRow.legacy_employee_id || "") && String(item.date || "") === date && String(item.source || "").toLowerCase() === "staff portal");
+    if (!duplicate) requests.push({ id: `staff-${requestRow.id}-${date}`, employeeId: requestRow.legacy_employee_id || "", date, start: requestRow.start_time || "", end: requestRow.end_time || "", daypart: requestRow.start_time ? "" : "All day", note: requestRow.note || "", source: "Staff portal" });
+    date = addDaysToKey(date, 1);
+  }
+  state.timeOffRequests = requests;
+  const savedAt = new Date().toISOString();
+  await supabaseJson("/scheduler_state_documents?on_conflict=location_id,document_key", { method: "POST", headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify([{ location_id: locationId, document_key: config().documentKey, schema_version: Number(document.schema_version || 1), state, saved_at: savedAt, updated_at: savedAt }]) });
+}
+
 async function handleLogin(request: Request) {
   const cfg = config();
   const body = await request.json().catch(() => ({}));
@@ -1168,6 +1271,11 @@ Deno.serve(async (request) => {
     if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request);
    if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
    if (path === "/staff/directory" && request.method === "GET") return await handleStaffDirectory(request);
+    if (path === "/staff/request-offs" && (request.method === "GET" || request.method === "POST")) return await handleStaffRequestOffs(request);
+    if (path === "/staff/availability" && (request.method === "GET" || request.method === "PUT")) return await handleStaffAvailability(request);
+    if (path === "/staff-requests" && request.method === "GET") return await handleManagerStaffRequests(request);
+    if (path === "/staff-availability" && request.method === "GET") return await handleManagerStaffAvailability(request);
+    if (path === "/staff-requests/review" && request.method === "POST") return await handleReviewStaffRequest(request);
     if (path === "/staff/profile" && request.method === "PATCH") return await handleStaffProfileUpdate(request);
     if (path === "/status" && request.method === "GET") return await handleStatus(request);
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
