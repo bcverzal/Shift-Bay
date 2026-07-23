@@ -5963,10 +5963,9 @@ function renderDayHeader(date) {
       <span class="closer-day-indicator ${closerStatus.className}" title="${closerStatus.title}">
         CL ${closerStatus.scheduled}/${closerStatus.required}
       </span>
-      <button type="button" class="day-view-button" data-day-focus-date="${dateKey}" title="Open Day View for ${displayDate(date)}">Day</button>
     </div>
   `);
-  div.dataset.tooltip = "Open Day View for this date.";
+  div.dataset.tooltip = "Double-click the date header to open Day View.";
   wireProjectionPopover(div, dateKey);
   div.ondblclick = (event) => {
     if (event.target.closest("button, input, select, .projection-popover")) return;
@@ -5977,10 +5976,6 @@ function renderDayHeader(date) {
     event.stopPropagation();
     openCoverageDialog(dateKey);
   };
-  div.querySelector("[data-day-focus-date]")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    enterDayFocus(dateKey);
-  });
   return div;
 }
 
@@ -11572,7 +11567,17 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         pageText.push(items.map((item) => cleanCell(item.str)).filter(Boolean).join("\n"));
       }
       const fallbackRequests = parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName);
-      results.push({ fileName, pages: document.numPages, requests: [...requests, ...fallbackRequests] });
+      const combinedRequests = [];
+      const seen = new Set();
+      [...requests, ...fallbackRequests].forEach((request) => {
+        const key = [request.firstName, request.lastName, request.date, request.daypart]
+          .map((value) => cleanCell(value).toLowerCase())
+          .join("|");
+        if (seen.has(key)) return;
+        seen.add(key);
+        combinedRequests.push(request);
+      });
+      results.push({ fileName, pages: document.numPages, requests: combinedRequests });
     } catch (error) {
       errors.push({ fileName, error: error.message || "Could not parse PDF." });
     }
@@ -11602,14 +11607,17 @@ function parseCtuitAvailabilityTimeOffText(text, fileName = "Ctuit RO PDF") {
   const dayNames = new Set(DAYS.map((day) => day.toLowerCase()));
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    const nameMatch = line.match(/^([A-Z][A-Za-z' -]+),\s*$/) || line.match(/^([A-Z][A-Za-z' -]+),\s*(?:Disallow|Approve|All Day|\d|Manager\b|$)/i);
+    const nameMatch = line.match(/^([A-Z][A-Za-z' -]+),\s*$/)
+      || line.match(/^([A-Z][A-Za-z' -]+),\s*(?:Disallow|Approve|All Day|\d|Manager\b|$)/i)
+      || line.match(/^([A-Z][A-Za-z' -]+),\s*[A-Z][A-Za-z' -]+?\d{1,2}\/\d{1,2}\/\d{4}/i);
     if (!nameMatch) continue;
     const lastName = cleanCell(nameMatch[1]);
     const previous = lines[index - 1] || "";
     const next = lines[index + 1] || "";
     const combined = [lines[index - 3], lines[index - 2], previous, line, next, lines[index + 2], lines[index + 3], lines[index + 4]].filter(Boolean).join(" ");
     const firstNameMatch = combined.match(new RegExp(`${lastName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},\\s*(?:Disallow\\s+)?([A-Z][A-Za-z' -]+?)(?:\\s+All\\s+Day|\\s+Manager\\b|\\s+Disallow|\\s+Approve|\\s+\\d|$)`, "i"));
-    const firstName = cleanCell(firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
+    const inlineFirstName = line.match(/^[A-Z][A-Za-z' -]+,\s*([A-Z][A-Za-z' -]+?)(?=\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+    const firstName = cleanCell(inlineFirstName || firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
     if (!firstName || dayNames.has(firstName.toLowerCase())) continue;
     const dateMatches = [...combined.matchAll(datePattern)].map((match) => normalizeImportDate(match[0])).filter(Boolean);
     const requestDate = dateMatches.find((dateKey) => {
