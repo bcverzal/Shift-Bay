@@ -2749,32 +2749,13 @@ function scheduleRailWidgetElements() {
 
 function layoutScheduleRail() {
   const schedulePanel = $("schedule");
-  if (!schedulePanel?.classList.contains("active") || document.body.classList.contains("compact-preview")) return;
-  window.requestAnimationFrame(() => {
-    const panelRect = schedulePanel.getBoundingClientRect();
-    if (!panelRect.width || !panelRect.height) return;
-    const anchorElements = [
-      schedulePanel.querySelector(":scope > .toolbar"),
-      $("stagedShiftInfo"),
-      $("conflictBanner"),
-      $("appNotice")
-    ].filter((element) => element && !element.hidden);
-    const anchorBottom = anchorElements.reduce((bottom, element) => {
-      const rect = element.getBoundingClientRect();
-      return Math.max(bottom, rect.bottom - panelRect.top);
-    }, 0);
-    const widgets = scheduleRailWidgetElements();
-    const gap = 8;
-    const railInset = 2;
-    const totalHeight = widgets.reduce((sum, element, index) => sum + element.offsetHeight + (index ? gap : 0), 0);
-    const maxStart = Math.max(railInset, schedulePanel.clientHeight - totalHeight - railInset);
-    let cursor = Math.min(Math.max(Math.round(anchorBottom + gap), railInset), maxStart);
-    widgets.forEach((element) => {
-      element.style.left = "0px";
-      element.style.top = `${cursor}px`;
-      cursor += element.offsetHeight + gap;
-    });
-  });
+  const rail = $("scheduleRail");
+  if (!schedulePanel?.classList.contains("active") || !rail || document.body.classList.contains("compact-preview")) return;
+  // Keep the rail intentionally stationary until its layout is redesigned.
+  // This prevents bay expansion, selection panels, and view switches from
+  // moving the widgets or leaving them stranded below the viewport.
+  rail.style.left = "3px";
+  rail.style.top = "300px";
 }
 function renderScheduleControls() {
   $("weekPicker").value = formatDateKey(currentDate);
@@ -3822,7 +3803,7 @@ function renderSelectedStagedShiftInfo() {
   }
   const role = roleById(shift.roleId);
   const candidates = stagedShiftCandidates(shift);
-  const recent = recentEmployeesForStagedShift(shift);
+  const historicalRecommendation = historicalRecommendationForOpenShift(shift, candidates);
   panel.hidden = false;
   panel.classList.remove("empty");
   panel.innerHTML = `
@@ -3834,12 +3815,102 @@ function renderSelectedStagedShiftInfo() {
       <button class="skip-open-shift-button" type="button" data-skip-open-shift title="Move this shift to the end of the Shift Bay without deleting it. Hotkey: S">Skip</button>
     </div>
     ${renderStagedCandidateSection("Best Fits", candidates.best, "best")}
-    ${renderRecentStagedSection(recent)}
+    ${historicalRecommendation ? renderHistoricalRecommendationSection(historicalRecommendation) : ""}
   `;
   panel.querySelectorAll("[data-stage-assign]").forEach((button) => {
     button.onclick = () => assignUnassignedShift(shift.id, button.dataset.stageAssign);
   });
   panel.querySelector("[data-skip-open-shift]")?.addEventListener("click", skipSelectedOpenShift);
+}
+
+// Keep recommendation inputs independent so future weights can be configured without rewriting candidate rules.
+const RECOMMENDATION_FACTORS = Object.freeze({
+  historicalRepeat: Object.freeze({ weight: 1, minimumWeeks: 2 })
+});
+
+function recommendationFactorWeight(key) {
+  const configured = Number(state.settings?.recommendationWeights?.[key]);
+  return Number.isFinite(configured) ? configured : RECOMMENDATION_FACTORS[key]?.weight || 0;
+}
+
+function historicalShiftMatchCount(stagedShift, employeeId) {
+  const targetDate = parseDateKey(stagedShift?.date);
+  if (!targetDate || !stagedShift?.roleId || !stagedShift?.start) return 0;
+  const targetDay = targetDate.getDay();
+  const targetStart = minutesFromTime(stagedShift.start);
+  const targetEnd = stagedShift.untilVolume ? "Until Volume" : normalizeTime(stagedShift.end);
+  const weeks = new Set();
+  historyShifts().forEach((shift) => {
+    if (String(shift.employeeId || "") !== String(employeeId || "")) return;
+    if (parseDateKey(shift.date)?.getDay() !== targetDay || shift.roleId !== stagedShift.roleId) return;
+    if (minutesFromTime(shift.start) !== targetStart) return;
+    const end = shift.untilVolume ? "Until Volume" : normalizeTime(shift.end);
+    if (end !== targetEnd) return;
+    if (Boolean(shift.isCloser) !== Boolean(stagedShift.isCloser)) return;
+    if (Boolean(shift.isFlexDouble) !== Boolean(stagedShift.isFlexDouble)) return;
+    if (shift.sourceWeekId || shift.sourceWeekStart) weeks.add(shift.sourceWeekId || shift.sourceWeekStart);
+  });
+  return weeks.size;
+}
+
+function historicalMostRecentMatchDate(stagedShift, employeeId) {
+  const targetDate = parseDateKey(stagedShift?.date);
+  if (!targetDate || !stagedShift?.roleId || !stagedShift?.start) return "";
+  const targetDay = targetDate.getDay();
+  const targetStart = minutesFromTime(stagedShift.start);
+  const targetEnd = stagedShift.untilVolume ? "Until Volume" : normalizeTime(stagedShift.end);
+  return historyShifts().reduce((latest, shift) => {
+    if (String(shift.employeeId || "") !== String(employeeId || "")) return latest;
+    if (parseDateKey(shift.date)?.getDay() !== targetDay || shift.roleId !== stagedShift.roleId) return latest;
+    if (minutesFromTime(shift.start) !== targetStart) return latest;
+    const end = shift.untilVolume ? "Until Volume" : normalizeTime(shift.end);
+    if (end !== targetEnd) return latest;
+    if (Boolean(shift.isCloser) !== Boolean(stagedShift.isCloser)) return latest;
+    if (Boolean(shift.isFlexDouble) !== Boolean(stagedShift.isFlexDouble)) return latest;
+    const candidate = String(shift.date || shift.sourceWeekStart || "");
+    return candidate > latest ? candidate : latest;
+  }, "");
+}
+
+function recommendationFactorsForOpenShift(stagedShift, employee) {
+  const historicalWeeks = historicalShiftMatchCount(stagedShift, employee.id);
+  const weight = recommendationFactorWeight("historicalRepeat");
+  return [{
+    key: "historicalRepeat",
+    label: "Repeated historical assignment",
+    value: historicalWeeks,
+    weight,
+    score: historicalWeeks * weight
+  }];
+}
+
+function historicalRecommendationForOpenShift(stagedShift, candidates = stagedShiftCandidates(stagedShift)) {
+  const minimumWeeks = RECOMMENDATION_FACTORS.historicalRepeat.minimumWeeks;
+  return candidates.best
+    .map((item) => ({
+      ...item,
+      factors: recommendationFactorsForOpenShift(stagedShift, item.employee),
+      historicalWeeks: historicalShiftMatchCount(stagedShift, item.employee.id),
+      historicalMostRecentDate: historicalMostRecentMatchDate(stagedShift, item.employee.id)
+    }))
+    .filter((item) => item.historicalWeeks >= minimumWeeks)
+    .sort((a, b) => b.factors.reduce((sum, factor) => sum + factor.score, 0) - a.factors.reduce((sum, factor) => sum + factor.score, 0)
+      || b.historicalWeeks - a.historicalWeeks
+      || b.historicalMostRecentDate.localeCompare(a.historicalMostRecentDate)
+      || displayName(a.employee).localeCompare(displayName(b.employee)))[0] || null;
+}
+
+function renderHistoricalRecommendationSection(recommendation) {
+  return `
+    <div class="staged-info-section staged-info-history-recommendation">
+      <span>Schedule pattern</span>
+      <div>
+        <button type="button" data-stage-assign="${escapeHtml(recommendation.employee.id)}" title="Repeated schedule pattern">
+          ${escapeHtml(displayName(recommendation.employee))} <small>${recommendation.historicalWeeks} repeated weeks</small>
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function stagedShiftCandidates(stagedShift) {
@@ -4396,11 +4467,12 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const left = ((visibleStart - window.start) / range) * 100;
   const width = Math.max(5, ((Math.max(visibleEnd, visibleStart + 30) - visibleStart) / range) * 100);
   const eligible = dayFocusEligibleEmployeesForOpenShift(openShift);
+  const patternRecommendation = historicalRecommendationForOpenShift(openShift);
   const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
-    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
+    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
     : `<em>No clean fits</em>`;
   return `
     <div class="day-focus-row-timebar day-focus-open-timebar-wrap">
@@ -9959,7 +10031,7 @@ function printStaffingAnalysis() {
 function syncFloorPlanDateToActiveWeek(options = {}) {
   const input = $("floorPlanDate");
   if (!input) return;
-  const activeKey = formatDateKey(currentDate);
+  const activeKey = focusedDateKey || formatDateKey(currentDate);
   const activeWeekKeys = new Set(weekDateKeys());
   if (options.force || !input.value || !activeWeekKeys.has(input.value)) {
     input.value = activeKey;

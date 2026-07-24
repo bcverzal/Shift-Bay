@@ -15,6 +15,7 @@ ctuit-entry-list-*.html
 
 # Temporary working files
 /tmp/
+/runtime/
 /tools/supabase-cli/
 /supabase/.temp/
 *.tmp

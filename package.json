@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "Shift Bay cloud-hosted scheduling prototype.",
+  "scripts": {
+    "test": "node tools/run_tests.js",
+    "test:storage": "node tools/test_storage_adapters.js",
+    "test:contracts": "node tools/test_app_contracts.js",
+    "test:print": "node tools/test_print_contracts.js",
+    "test:security": "node tools/test_source_security.js",
+    "test:server": "node tools/test_server_smoke.js"
+  },
   "dependencies": {
     "pdfjs-dist": "5.6.205"
   }
