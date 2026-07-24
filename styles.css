@@ -5840,8 +5840,10 @@ body.problem-focus .shift-card.has-issue {
 }
 
 .employee-editor {
+  position: relative;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
+  padding-bottom: 86px;
 }
 
 .employee-editor > * {
@@ -5983,11 +5985,6 @@ body.problem-focus .shift-card.has-issue {
 
 .employee-sticky-actions,
 .settings-sticky-actions {
-  position: fixed;
-  left: 24px;
-  right: 24px;
-  bottom: 18px;
-  z-index: 22;
   display: none;
   align-items: center;
   justify-content: space-between;
@@ -5998,6 +5995,22 @@ body.problem-focus .shift-card.has-issue {
   background: rgba(239, 246, 255, 0.96);
   box-shadow: 0 14px 34px rgba(30, 64, 175, 0.18);
   backdrop-filter: blur(7px);
+}
+
+.employee-sticky-actions {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 18px;
+  z-index: 22;
+}
+
+.settings-sticky-actions {
+  position: fixed;
+  left: 24px;
+  right: 24px;
+  bottom: 18px;
+  z-index: 22;
 }
 
 #employees.active .employee-sticky-actions,
@@ -6070,7 +6083,7 @@ legend {
 
 .availability-day {
   display: grid;
-  grid-template-columns: 86px minmax(120px, 1fr) auto auto auto;
+  grid-template-columns: 86px minmax(120px, 1fr) repeat(4, auto);
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
@@ -6097,6 +6110,12 @@ legend {
 
 .availability-day .small-button:first-of-type {
   min-width: 58px;
+}
+
+.availability-day .availability-unavailable-button {
+  color: #475569;
+  border-color: #cbd5e1;
+  background: #f1f5f9;
 }
 
 .availability-actions {

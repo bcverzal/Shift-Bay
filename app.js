@@ -7795,7 +7795,9 @@ function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = curren
   const input = document.querySelector(inputSelector);
   if (!input) return;
   markEmployeeFormDirty();
-  input.value = availabilityPresetForDay(dayIndex, preset, weekKey);
+  input.value = preset === "unavailable"
+    ? ""
+    : availabilityPresetForDay(dayIndex, preset, weekKey);
   input.focus();
   input.select?.();
 }
@@ -7811,6 +7813,7 @@ function renderAvailabilityEditor(employee = null) {
         <button type="button" class="small-button" data-availability-preset="open" data-availability-preset-day="${index}">Open</button>
         <button type="button" class="small-button" data-availability-preset="am" data-availability-preset-day="${index}">AM</button>
         <button type="button" class="small-button" data-availability-preset="pm" data-availability-preset-day="${index}">PM</button>
+        <button type="button" class="small-button availability-unavailable-button" data-availability-preset="unavailable" data-availability-preset-day="${index}">Unavailable</button>
       </div>
     `;
   }).join("");
@@ -11543,7 +11546,9 @@ function roPdfColumnForX(x) {
   if (x < 122) return "submitted";
   if (x < 150) return "recurring";
   if (x < 205) return "employee";
-  if (x < 245) return "date";
+  // CTUIT places the request date near x=206 and the request details near x=241.
+  // Keep the boundary between those columns narrow enough for compact reports.
+  if (x < 230) return "date";
   if (x < 295) return "info";
   if (x < 340) return "note";
   if (x < 452) return "approvedBy";
@@ -11580,7 +11585,7 @@ function roPdfRowToRequest(row, fileName) {
   const date = normalizeImportDate(cells.date) || normalizeImportDate(cells.info);
   if (!date) return null;
   const { firstName, lastName } = roPdfSplitReportName(cells.employee);
-  if (!firstName && !lastName) return null;
+  if (!firstName || !lastName) return null;
   const daypart = roPdfRequestDaypart(cells.info) || "All day";
   return {
     firstName,
@@ -11598,7 +11603,7 @@ function roPdfParsePageItems(items, fileName) {
     .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
     .filter((item) => item.text);
   const anchors = textItems
-    .filter((item) => /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(item.text) && item.x >= 205 && item.x < 245)
+    .filter((item) => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(item.text) && item.x >= 190 && item.x < 230)
     .sort((a, b) => b.y - a.y);
   const requests = [];
   anchors.forEach((anchor, index) => {
@@ -11620,6 +11625,29 @@ function roPdfParsePageItems(items, fileName) {
   return requests;
 }
 
+function roPdfParseRequestedDateRows(items, fileName) {
+  const textItems = items
+    .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
+    .filter((item) => item.text);
+  const anchors = textItems
+    .filter((item) => item.x >= 190 && item.x < 230 && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(item.text))
+    .sort((a, b) => b.y - a.y);
+  return anchors.map((anchor, index) => {
+    const previousY = anchors[index - 1]?.y;
+    const nextY = anchors[index + 1]?.y;
+    const upper = previousY ? Math.min(anchor.y + 18, ((previousY + anchor.y) / 2) + 6) : anchor.y + 18;
+    const lower = nextY ? Math.max(anchor.y - 30, ((anchor.y + nextY) / 2) - 6) : anchor.y - 30;
+    return roPdfRowToRequest(textItems.filter((item) => item.y <= upper && item.y >= lower), fileName);
+  }).filter((request) => request && request.firstName && request.lastName && request.daypart);
+}
+
+function roPdfPlausibleRequest(request) {
+  const name = `${request.firstName} ${request.lastName}`.trim();
+  return Boolean(name)
+    && !/[0-9]/.test(name)
+    && !/\b(?:Approve|Disallow|Manager|All\s+Day|AM|PM|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i.test(name);
+}
+
 async function parseRequestOffPdfFilesInBrowser(files) {
   const pdfjs = await loadRequestOffPdfJs();
   const results = [];
@@ -11635,7 +11663,20 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
         const items = content.items || [];
-        requests.push(...roPdfParsePageItems(items, fileName));
+        const pageRequests = [
+          ...roPdfParsePageItems(items, fileName),
+          ...roPdfParseRequestedDateRows(items, fileName)
+        ];
+        const pageSeen = new Set();
+        pageRequests.forEach((request) => {
+          if (!roPdfPlausibleRequest(request)) return;
+          const key = [request.firstName, request.lastName, request.date, request.daypart]
+            .map((value) => cleanCell(value).toLowerCase())
+            .join("|");
+          if (pageSeen.has(key)) return;
+          pageSeen.add(key);
+          requests.push(request);
+        });
         pageText.push(items.map((item) => cleanCell(item.str)).filter(Boolean).join("\n"));
       }
       const fallbackRequests = parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName);
@@ -11645,7 +11686,7 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const key = [request.firstName, request.lastName, request.date, request.daypart]
           .map((value) => cleanCell(value).toLowerCase())
           .join("|");
-        if (seen.has(key)) return;
+        if (seen.has(key) || !roPdfPlausibleRequest(request)) return;
         seen.add(key);
         combinedRequests.push(request);
       });
@@ -11774,14 +11815,8 @@ function mergeRequestOffParses(groups) {
   const diagnostics = { undatedSections: [], errors: [], files: [], duplicates: 0 };
   groups.filter(Boolean).forEach((group) => {
     (group.requests || []).forEach((request) => {
-      const key = [
-        request.firstName,
-        request.lastName,
-        request.date,
-        request.daypart,
-        request.note,
-        request.source
-      ].map((value) => cleanCell(value).toLowerCase()).join("|");
+      const key = [request.firstName, request.lastName, request.date, request.daypart]
+        .map((value) => cleanCell(value).toLowerCase()).join("|");
       if (seen.has(key)) {
         diagnostics.duplicates++;
         return;
@@ -11804,11 +11839,14 @@ function applyParsedRequestOffs(parsed) {
   let skipped = 0;
   let duplicates = 0;
   const unmatched = new Set();
+  const unmatchedRequests = [];
+  const duplicateRequests = [];
   parsed.requests.forEach((request) => {
     const employee = findEmployeeByReportName(request.lastName, request.firstName);
     if (!employee) {
       skipped++;
       unmatched.add(`${request.firstName} ${request.lastName}`.trim());
+      unmatchedRequests.push({ ...request, reason: "No matching employee found" });
       return;
     }
     const nextRequest = {
@@ -11829,8 +11867,26 @@ function applyParsedRequestOffs(parsed) {
       imported++;
     } else {
       duplicates++;
+      duplicateRequests.push({ ...request, reason: "Already exists for this employee and date" });
     }
   });
+  const parserDuplicates = Number(parsed.diagnostics?.duplicates) || 0;
+  state.requestOffImportLog = Array.isArray(state.requestOffImportLog) ? state.requestOffImportLog : [];
+  state.requestOffImportLog.unshift({
+    id: uid("ro-import"),
+    importedAt: new Date().toISOString(),
+    files: (parsed.diagnostics?.files || []).map((file) => ({
+      fileName: file.fileName,
+      pages: file.pages,
+      readableRows: file.requests?.length || 0
+    })),
+    imported,
+    alreadyExisting: duplicates,
+    duplicateRowsInFiles: parserDuplicates,
+    unmatched: unmatchedRequests,
+    duplicates: duplicateRequests
+  });
+  state.requestOffImportLog = state.requestOffImportLog.slice(0, 50);
   if (!imported && undoStack.length) undoStack.pop();
   saveState();
   renderAll();
@@ -11843,7 +11899,7 @@ function applyParsedRequestOffs(parsed) {
   const errorItems = (parsed.diagnostics?.errors || []).map((item) => `${item.fileName}: ${item.error}`);
   showAppAlert({
     title: "RO Import Complete",
-    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} duplicate${duplicates === 1 ? "" : "s"}.` : ""}${suffix}${diagnostic}`,
+    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} already-imported entr${duplicates === 1 ? "y" : "ies"}.` : ""}${parserDuplicates ? ` Ignored ${parserDuplicates} duplicate row${parserDuplicates === 1 ? "" : "s"} found within the selected files.` : ""}${suffix}${diagnostic}`,
     type: skipped || diagnostic || errorItems.length ? "warning" : "info",
     items: [...fileItems, ...errorItems]
   });

@@ -656,7 +656,9 @@ function columnForX(x) {
   if (x < 122) return "submitted";
   if (x < 150) return "recurring";
   if (x < 205) return "employee";
-  if (x < 248) return "date";
+  // CTUIT places the request date near x=206 and the request details near x=241.
+  // Keep the boundary between those columns narrow enough for compact reports.
+  if (x < 230) return "date";
   if (x < 295) return "info";
   if (x < 340) return "note";
   if (x < 452) return "approvedBy";
