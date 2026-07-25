@@ -104,8 +104,8 @@
               <label>End date<input id="staffRequestEndDate" type="date" required></label>
             </div>
             <div class="staff-form-row">
-              <label>Start time<input id="staffRequestStartTime" type="time"></label>
-              <label>End time<input id="staffRequestEndTime" type="time"></label>
+              <label>Start time<input id="staffRequestStartTime" type="text" data-time-picker autocomplete="off" placeholder="5:00 PM"></label>
+              <label>End time<input id="staffRequestEndTime" type="text" data-time-picker autocomplete="off" placeholder="10:00 PM"></label>
             </div>
             <label>Note<textarea id="staffRequestNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
             <button type="submit" class="staff-primary">Submit Request Off</button>
@@ -115,12 +115,35 @@
         </article>
        <article class="staff-panel">
          <h2>Availability</h2>
-         <p>Save the availability you can work for the week shown below.</p>
+         <p>Save the availability you can work for the week shown below. Start and end times are one continuous window; add another time for a later window after a break.</p>
          <form id="staffAvailabilityForm" class="staff-workflow-form">
            <label>Week starting<input id="staffAvailabilityWeekStart" type="date" required></label>
+           <div class="staff-availability-pattern-bar">
+             <label>Saved availability
+               <select id="staffAvailabilityPatternSelect" aria-label="Choose a saved availability pattern">
+                 <option value="">Current week entries</option>
+               </select>
+             </label>
+             <label>Pattern name
+               <input id="staffAvailabilityPatternName" type="text" maxlength="60" placeholder="School week">
+             </label>
+             <label>Repeat
+               <select id="staffAvailabilityRepeatWeeks" title="Repeat this private pattern on a regular cycle.">
+                 <option value="1">Every week</option>
+                 <option value="2">Every 2 weeks</option>
+                 <option value="3">Every 3 weeks</option>
+                 <option value="4">Every 4 weeks</option>
+               </select>
+             </label>
+             <button type="button" id="deleteStaffAvailabilityPattern" class="staff-small-action" hidden>Delete saved pattern</button>
+           </div>
            <div id="staffAvailabilityDays" class="staff-availability-days"></div>
            <label>Note<textarea id="staffAvailabilityNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
-           <button type="submit" class="staff-primary">Save Availability</button>
+           <div class="staff-availability-actions">
+             <button type="button" id="saveStaffAvailabilityPattern" class="staff-secondary">Save private pattern</button>
+             <button type="submit" class="staff-primary">Submit this week for approval</button>
+           </div>
+           <p class="staff-muted staff-availability-help">Private patterns stay with this employee until a specific week is submitted. Submission sends that week to the manager approval queue.</p>
            <div id="staffAvailabilityMessage" class="staff-inline-message" role="status" hidden></div>
          </form>
        </article>

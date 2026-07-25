@@ -561,6 +561,19 @@ async function handleStaffRequestOffs(request: Request) {
     const rows = await supabaseJson(`/staff_request_offs?location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&select=id,start_date,end_date,start_time,end_time,note,status,created_at&order=start_date.asc,created_at.desc`, { headers: serviceHeaders() });
     return json(200, { ok: true, requests: (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, startDate: row.start_date, endDate: row.end_date, startTime: row.start_time || "", endTime: row.end_time || "", note: row.note || "", status: row.status, createdAt: row.created_at })) });
   }
+  if (request.method === "PATCH") {
+    const body = await request.json().catch(() => ({}));
+    const requestId = String(body.requestId || "").trim();
+    if (!requestId || String(body.status || "") !== "cancelled") return json(400, { ok: false, error: "Only a pending request can be cancelled from the staff portal." });
+    const rows = await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&select=id,status`, { headers: serviceHeaders() });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return json(404, { ok: false, error: "Request-off not found." });
+    if (String(row.status || "").toLowerCase() !== "pending") return json(409, { ok: false, error: "Only a pending request can be cancelled." });
+    const updatedAt = new Date().toISOString();
+    await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}`, { method: "PATCH", headers: serviceHeaders({ Prefer: "return=minimal" }), body: JSON.stringify({ status: "cancelled", updated_at: updatedAt }) });
+    await logAuditEvent("staff_request_off_cancelled", profile.user.id, { requestId }, profile.locationId);
+    return json(200, { ok: true, requestId, status: "cancelled" });
+  }
   const body = await request.json().catch(() => ({}));
   const startDate = String(body.startDate || "").trim();
   const endDate = String(body.endDate || startDate).trim();
@@ -1285,7 +1298,7 @@ Deno.serve(async (request) => {
     if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request);
    if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
    if (path === "/staff/directory" && request.method === "GET") return await handleStaffDirectory(request);
-    if (path === "/staff/request-offs" && (request.method === "GET" || request.method === "POST")) return await handleStaffRequestOffs(request);
+    if (path === "/staff/request-offs" && ["GET", "POST", "PATCH"].includes(request.method)) return await handleStaffRequestOffs(request);
     if (path === "/staff/availability" && (request.method === "GET" || request.method === "PUT")) return await handleStaffAvailability(request);
     if (path === "/staff-requests" && request.method === "GET") return await handleManagerStaffRequests(request);
     if (path === "/staff-availability" && request.method === "GET") return await handleManagerStaffAvailability(request);

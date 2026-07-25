@@ -32,10 +32,26 @@ function run() {
   includes(app, "day-focus-pattern-chip", "day-view pattern styling must target only the eligible name chip");
   includes(app, "staged-info-history-recommendation", "historical recommendations must be visible in the bay info panel");
   includes(app, "day-focus-pattern-chip", "historical recommendations must be visible in day view");
+  includes(app, 'data-availability-preset="unavailable"', "regular availability must offer an unavailable preset");
+  includes(app, 'preset === "unavailable"', "unavailable preset must clear the day availability");
+  includes(app, "function showDayFocusChipTooltip", "day-view eligibility tooltips must escape the scroll container");
+  includes(app, "id = \"dayFocusChipTooltip\"", "day-view eligibility tooltip must use a page-level host");
+  includes(app, 'orderedRolesForSchedule("")', "expanding day-view eligibility must preserve role order");
+  includes(app, "employeeAvailabilityEffectiveDate", "manager availability needs an effective-date control");
+  includes(app, "availabilitySchedule", "manager availability needs effective-dated versions");
+  includes(app, 'data-availability-end-slot', "manager availability needs paired start/end time controls");
+  includes(app, 'data-add-availability-window', "manager availability needs an add-window action");
+  includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
   includes(index, "id=\"unassignedShiftTray\"", "Shift Bay tray must remain present");
+  includes(index, "class=\"mobile-access-notice\"", "narrow-screen access guidance must remain present");
+  includes(index, 'data-mobile-view="day"', "narrow-screen day review action must remain present");
+  includes(index, 'data-mobile-view="compact"', "narrow-screen compact review action must remain present");
+  includes(staff, 'data-staff-availability-preset="unavailable"', "staff availability needs an explicit unavailable preset");
+  includes(staff, 'data-staff-availability-end-slot', "staff availability needs paired start/end time controls");
+  includes(staff, 'data-add-staff-window', "staff availability needs an add-window action");
   includes(staff, "function renderAvailabilityDays", "staff availability UI must remain present");
   console.log("app contract tests passed");
 }

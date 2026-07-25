@@ -94,6 +94,14 @@
         </div>
       </div>
       <div id="stagedShiftInfo" class="staged-shift-info" hidden></div>
+      <div class="mobile-access-notice" role="note">
+        <strong>Schedule building works best on a larger screen.</strong>
+        <span>Use Day View or Compact View here to review schedules and make quick checks.</span>
+        <div class="mobile-access-actions">
+          <button type="button" data-mobile-view="day">Open Day View</button>
+          <button type="button" data-mobile-view="compact">Open Compact View</button>
+        </div>
+      </div>
 
       <div id="scheduleRail" class="schedule-rail" aria-label="Schedule tools">
         <div id="scheduleViewToggle" class="schedule-view-toggle" aria-label="Schedule view mode">
@@ -196,12 +204,45 @@
             <button id="toggleWeeklyAvailabilityBtn" class="small-button" type="button">This Week</button>
           </div>
           <fieldset id="regularAvailabilityFieldset" class="employee-availability-panel">
-            <legend>Availability</legend>
+    <legend>Availability</legend>
+    <p class="availability-help">Set the first continuous window they can work on each day. Add another time when they can work later after a break. Leave the row blank for no availability.</p>
             <div class="availability-actions">
               <button id="openAllAvailabilityBtn" class="small-button" type="button">Open All</button>
               <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear All</button>
             </div>
-            <div id="availabilityEditor"></div>
+            <div class="availability-workspace">
+              <div class="availability-editor-column">
+                <div id="availabilityEditor"></div>
+              </div>
+              <aside class="availability-pattern-workspace" aria-label="Saved availability patterns">
+                <div class="availability-pattern-heading">
+                  <div><strong>Saved availabilities</strong><small>Select one to edit or submit.</small></div>
+                  <button id="newAvailabilityPatternBtn" class="small-button" type="button">New</button>
+                </div>
+                <div id="availabilityPatternList" class="availability-pattern-list"></div>
+                <div class="availability-pattern-details">
+                  <label>Selected availability
+                    <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Regular availability">
+                  </label>
+                  <label>Repeat pattern
+                    <select id="employeeAvailabilityRepeatWeeks" title="How often this availability repeats when no week-specific override is assigned.">
+                      <option value="1">Every week</option>
+                      <option value="2">Every 2 weeks</option>
+                      <option value="3">Every 3 weeks</option>
+                      <option value="4">Every 4 weeks</option>
+                    </select>
+                  </label>
+                  <label>Pattern starts
+                    <input id="employeeAvailabilityEffectiveDate" type="date" title="The first week when this selected pattern may be used.">
+                  </label>
+                  <div id="availabilityPatternGuidance" class="availability-pattern-guidance" role="status"></div>
+                  <div class="availability-pattern-actions">
+                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save selected</button>
+                    <button id="submitAvailabilityPatternBtn" class="small-button" type="button">Submit selected</button>
+                  </div>
+                </div>
+              </aside>
+            </div>
           </fieldset>
           <fieldset id="weeklyAvailabilityFieldset" class="employee-availability-panel" hidden>
             <legend>Schedule Week Availability</legend>
