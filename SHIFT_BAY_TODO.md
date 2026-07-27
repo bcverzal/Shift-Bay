@@ -20,6 +20,7 @@
 - [ ] Create a hotkey/help menu and review the full scheduling workflow for useful keyboard shortcuts.
 - [ ] Create a stable baseline copy/version once the current workflow passes review.
 - [ ] Revisit faint grid cell divider lines: decide whether to keep them, soften them, remove them for single-entry cells, or show them only on hover/active rows.
+- [ ] Build customizable left-rail widgets/toolbars: users can choose which support tools appear, reorder them, and save the layout to their account.
 
 ## Scheduling Logic
 

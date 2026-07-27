@@ -223,6 +223,7 @@ function defaultState() {
       groupEmployeesByRole: false,
       hideUnavailableEmployees: false,
       showUnavailablePanel: false,
+      showWeeklyRoleSummary: true,
       hideDefaultAvailabilityBlocks: false,
       employeeRosterCollapsed: false,
       openShiftBaySort: "meal",
@@ -682,19 +683,19 @@ function storageStatusLabel(status) {
   const labels = {
     connecting: "Connecting",
     saving: "Saving",
-    saved: "Shared saved",
-    error: "Save issue",
-    local: "Local only"
+    saved: "Saved",
+    error: "Sync issue",
+    local: "Local mode"
   };
   return labels[status] || "Storage";
 }
 
 function storageStatusTitle() {
   if (storageStatusDetail) return storageStatusDetail;
-  if (storageStatus === "saved") return "Connected to the shared scheduler data file.";
-  if (storageStatus === "saving") return "Saving to the shared scheduler data file.";
-  if (storageStatus === "local") return "Using this browser's local storage.";
-  if (storageStatus === "error") return "Shared storage is not available. Browser backup is still saved locally.";
+  if (storageStatus === "saved") return "Connected and saved.";
+  if (storageStatus === "saving") return "Saving the current scheduler data.";
+  if (storageStatus === "local") return "Using this device's local scheduler data.";
+  if (storageStatus === "error") return "Sync storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
 
@@ -759,17 +760,17 @@ async function saveNow() {
   const button = $("saveNowBtn");
   if (button) {
     button.disabled = true;
-    button.className = "save-now-button saving";
+    button.className = "account-menu-action saving";
     button.textContent = "Saving...";
   }
   const saved = SERVER_STORAGE_ENABLED ? await saveState({ immediate: true }) : (saveState(), true);
   if (button) {
     button.disabled = false;
-    button.className = `save-now-button ${saved || !SERVER_STORAGE_ENABLED ? "saved" : "error"}`;
+    button.className = `account-menu-action ${saved || !SERVER_STORAGE_ENABLED ? "saved" : "error"}`;
     button.textContent = saved || !SERVER_STORAGE_ENABLED ? "Saved" : "Save Issue";
     setTimeout(() => {
-      button.className = "save-now-button";
-      button.textContent = "Save Now";
+      button.className = "account-menu-action";
+      button.textContent = "Sync now";
     }, 1800);
   }
   showConflict(SERVER_STORAGE_ENABLED
@@ -3014,6 +3015,14 @@ function renderFilters() {
           <input type="checkbox" id="hideDefaultAvailabilityBlocks" ${state.settings.hideDefaultAvailabilityBlocks ? "checked" : ""}>
           Hide default unavailable blocks
         </label>
+        <label class="checkbox">
+          <input type="checkbox" id="showUnavailablePanelFilter" ${state.settings.showUnavailablePanel ? "checked" : ""}>
+          Show unavailable panel
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="showWeeklyRoleSummaryFilter" ${state.settings.showWeeklyRoleSummary !== false ? "checked" : ""}>
+          Show role totals
+        </label>
       </div>
     </details>
   `;
@@ -3065,6 +3074,18 @@ function renderFilters() {
     saveState();
     renderSchedule();
   };
+  $("showUnavailablePanelFilter").onchange = () => {
+    markGridFiltersChanged();
+    state.settings.showUnavailablePanel = $("showUnavailablePanelFilter").checked;
+    saveState();
+    renderSchedule();
+  };
+  $("showWeeklyRoleSummaryFilter").onchange = () => {
+    markGridFiltersChanged();
+    state.settings.showWeeklyRoleSummary = $("showWeeklyRoleSummaryFilter").checked;
+    saveState();
+    renderSchedule();
+  };
 }
 
 function updateGridFilterRailState() {
@@ -3103,6 +3124,7 @@ function renderSchedule() {
   const selectedOpenShift = selectedOpenShiftForSchedule();
   const orderedEmployees = prioritizeEmployeesForOpenShift(activeEmployees, selectedOpenShift);
   renderRoleJumpStrip(selectedRoleId);
+  renderSupportRailTools(unavailableEmployees.length);
   if (focusedDateKey) {
     if ($("printFilters")) $("printFilters").hidden = true;
     renderDayFocusSchedule(grid, orderedEmployees, focusedDateKey, selectedRoleId);
@@ -3475,6 +3497,8 @@ function beginDayFocusTimelineDrag(event, bar) {
     mode,
     startX: event.clientX,
     startY: event.clientY,
+    offsetX: event.clientX - bar.getBoundingClientRect().left,
+    offsetY: event.clientY - bar.getBoundingClientRect().top,
     originalStart: start,
     originalEnd: end <= start ? end + 1440 : end,
     timelineStart: Number(timebar.dataset.timelineStart) || 0,
@@ -3488,6 +3512,35 @@ function beginDayFocusTimelineDrag(event, bar) {
   bar.classList.add("timebar-dragging");
   window.addEventListener("pointermove", moveDayFocusTimelineDrag);
   window.addEventListener("pointerup", finishDayFocusTimelineDrag, { once: true });
+}
+
+function ensureDayFocusTimelineDragGhost(event) {
+  const drag = dayFocusTimelineDrag;
+  if (!drag || drag.mode !== "move" || drag.ghost) return;
+  const ghost = createDragGhost(drag.bar, event, drag);
+  ghost.classList.add("day-focus-drag-ghost");
+  document.body.append(ghost);
+  drag.ghost = ghost;
+  drag.bar.dataset.mouseDragging = "true";
+  drag.bar.classList.add("drag-source-hidden");
+  document.body.classList.add("dragging-assigned-shift");
+}
+
+function updateDayFocusTimelineDragGhost(event) {
+  const drag = dayFocusTimelineDrag;
+  const ghost = drag?.ghost;
+  if (!ghost) return;
+  ghost.style.left = `${event.clientX - (drag.offsetX || 0)}px`;
+  ghost.style.top = `${event.clientY - (drag.offsetY || 0)}px`;
+}
+
+function cleanupDayFocusTimelineDragVisual(drag = dayFocusTimelineDrag) {
+  drag?.ghost?.remove();
+  if (drag?.bar) {
+    drag.bar.dataset.mouseDragging = "false";
+    drag.bar.classList.remove("drag-source-hidden", "timebar-dragging");
+  }
+  document.body.classList.remove("dragging-assigned-shift");
 }
 
 function timelineSnapDelta(drag, clientX) {
@@ -3536,6 +3589,8 @@ function moveDayFocusTimelineDrag(event) {
   const times = dayFocusTimelineDragTimes(event.clientX);
   if (!times) return;
   drag.moved = true;
+  ensureDayFocusTimelineDragGhost(event);
+  updateDayFocusTimelineDragGhost(event);
   const range = Math.max(1, drag.timelineEnd - drag.timelineStart);
   const visibleStart = Math.max(drag.timelineStart, times.start);
   const visibleEnd = Math.min(drag.timelineEnd, drag.wasUntilVolume && drag.mode === "move" ? drag.originalEnd : times.end);
@@ -3553,7 +3608,7 @@ async function finishDayFocusTimelineDrag(event) {
   const drag = dayFocusTimelineDrag;
   window.removeEventListener("pointermove", moveDayFocusTimelineDrag);
   if (!drag) return;
-  drag.bar.classList.remove("timebar-dragging");
+  cleanupDayFocusTimelineDragVisual(drag);
   if (!drag.moved) {
     undoStack.pop();
     const shift = state.shifts.find((item) => item.id === drag.shiftId);
@@ -4441,6 +4496,12 @@ function renderEmployeeDayCell(employee, date, groupRole = null) {
 function renderWeeklyRoleSummary() {
   const target = $("weeklyRoleSummary");
   if (!target) return;
+  if (state.settings.showWeeklyRoleSummary === false) {
+    target.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+  target.hidden = false;
   const dates = new Set(weekDates().map(formatDateKey));
   const groups = new Map();
   state.shifts
@@ -4506,7 +4567,7 @@ function assignSelectedOpenShiftCandidate(index) {
 function renderUnavailableEmployeesList(employees) {
   const panel = $("unavailableEmployeesList");
   if (!panel) return;
-  panel.hidden = !state.settings.hideUnavailableEmployees || !employees.length;
+  panel.hidden = !state.settings.hideUnavailableEmployees || !employees.length || !state.settings.showUnavailablePanel;
   if (panel.hidden) {
     panel.innerHTML = "";
     updateUnavailablePanelToggle(employees.length);
@@ -4553,14 +4614,30 @@ function renderUnavailableEmployeesList(employees) {
   updateUnavailablePanelToggle(employees.length);
 }
 
+function renderSupportRailTools(unavailableCount = 0) {
+  const rail = $("supportRailTools");
+  if (!rail) return;
+  const canShowUnavailable = Boolean(state.settings.hideUnavailableEmployees && unavailableCount);
+  rail.hidden = false;
+  rail.innerHTML = `
+    <button type="button" class="${state.settings.showWeeklyRoleSummary !== false ? "active" : ""}" data-support-toggle="roleSummary" title="Show or hide weekly role totals">S</button>
+    <button type="button" class="${state.settings.showUnavailablePanel && canShowUnavailable ? "active" : ""}" data-support-toggle="unavailable" title="${canShowUnavailable ? "Show or hide unavailable employees" : "No unavailable employees are currently moved below"}" ${canShowUnavailable ? "" : "disabled"}>U${unavailableCount ? `<small>${unavailableCount}</small>` : ""}</button>
+  `;
+  rail.querySelector("[data-support-toggle='roleSummary']")?.addEventListener("click", () => {
+    state.settings.showWeeklyRoleSummary = state.settings.showWeeklyRoleSummary === false;
+    saveState();
+    renderSchedule();
+  });
+  rail.querySelector("[data-support-toggle='unavailable']")?.addEventListener("click", () => {
+    if (!canShowUnavailable) return;
+    state.settings.showUnavailablePanel = !state.settings.showUnavailablePanel;
+    saveState();
+    renderSchedule();
+  });
+}
+
 function updateUnavailablePanelToggle(count = 0) {
-  const button = $("toggleUnavailablePanelBtn");
-  if (!button) return;
-  const canShow = Boolean(state.settings.hideUnavailableEmployees && count);
-  button.hidden = !canShow;
-  button.classList.toggle("active", Boolean(state.settings.showUnavailablePanel && canShow));
-  button.textContent = state.settings.showUnavailablePanel && canShow ? "Hide Unavail" : `Unavail ${count || ""}`.trim();
-  button.title = state.settings.showUnavailablePanel ? "Hide unavailable this week" : "Show unavailable this week";
+  renderSupportRailTools(count);
 }
 
 function openEmployeeWeeklyAvailability(employeeId) {
@@ -8512,15 +8589,11 @@ function floorPlanFirstNameCounts(shifts) {
 function floorPlanShiftTime(shift, employee) {
   const start = floorPlanTimeNumber(shift.start);
   if (shift.isCloser) return `${start} - CL`;
+  if (shift.isLunchCloser || employee?.alwaysPrintFloorEndTime) {
+    const end = floorPlanTimeNumber(shift.end);
+    return end ? `${start} - ${end}` : start;
+  }
   if (shift.isFlexDouble || shift.untilVolume) return `${start} - ?`;
-  if (shift.isLunchCloser) {
-    const end = floorPlanTimeNumber(shift.end);
-    return end ? `${start} - ${end}` : start;
-  }
-  if (employee?.alwaysPrintFloorEndTime) {
-    const end = floorPlanTimeNumber(shift.end);
-    return end ? `${start} - ${end}` : start;
-  }
   return start;
 }
 
@@ -8679,7 +8752,7 @@ function shiftMatchesFloorPlanPeriod(shift, period) {
   if (range.start == null || range.end == null) return false;
   const sortedPeriods = [...periods].sort((a, b) => a.startMinutes - b.startMinutes);
   const dinner = sortedPeriods.find((mealPeriod) => mealPeriod.name === "Dinner");
-  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes : false);
+  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes || range.end > dinner.startMinutes : false);
   if (period === "am") return dinner ? range.start < dinner.startMinutes : true;
   const startsInNamedPeriod = (names) => sortedPeriods
     .filter((mealPeriod) => names.includes(mealPeriod.name))
@@ -10129,7 +10202,7 @@ function wireEvents() {
   }, true);
   $("zoomOutBtn").onclick = () => adjustScheduleZoom(-0.05);
   $("zoomInBtn").onclick = () => adjustScheduleZoom(0.05);
-  $("toggleUnavailablePanelBtn").onclick = () => {
+  if ($("toggleUnavailablePanelBtn")) $("toggleUnavailablePanelBtn").onclick = () => {
     state.settings.showUnavailablePanel = !state.settings.showUnavailablePanel;
     saveState();
     renderSchedule();

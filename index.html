@@ -4,17 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay</title>
-  <link rel="stylesheet" href="styles.css?v=shiftbay-20260702-day-tooltip">
+  <link rel="stylesheet" href="styles.css?v=shiftbay-20260704-nav-cleanup">
 </head>
 <body>
   <nav class="tabs" aria-label="Main sections">
     <button class="tab active" type="button" data-tab="schedule">Schedule</button>
-    <button class="tab" type="button" data-tab="monthly">Monthly</button>
     <button class="tab" type="button" data-tab="employees">Employees</button>
     <button class="tab" type="button" data-tab="templates">Templates</button>
-    <button class="tab" type="button" data-tab="history">History</button>
     <button class="tab" type="button" data-tab="roles">Roles</button>
-    <button class="tab" type="button" data-tab="staffing">Staffing</button>
     <button class="tab" type="button" data-tab="floorplans">Floor Plans</button>
     <button class="tab" type="button" data-tab="settings">Settings</button>
     <div class="header-actions">
@@ -30,11 +27,20 @@
         <span class="storage-dot"></span>
         <span id="storageStatusText">Local</span>
       </button>
-      <button id="saveNowBtn" class="save-now-button" type="button" title="Save now" aria-label="Save now">Save Now</button>
+      <button id="printBtn" class="icon-button header-print-button" type="button" title="Print" aria-label="Print">&#128424;</button>
       <button id="issueBtn" class="issue-button" type="button" title="No schedule issues" aria-label="Schedule issues" hidden>!<span id="issueCount">0</span></button>
       <div id="issuePopover" class="issue-popover" hidden></div>
-      <button id="compactViewBtn" class="save-now-button" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
-      <button id="printBtn" class="icon-button" type="button" title="Print" aria-label="Print">&#128424;</button>
+      <details id="accountMenu" class="account-menu">
+        <summary title="Account and sync" aria-label="Account and sync">
+          <span class="account-avatar">B</span>
+        </summary>
+        <div class="account-menu-panel">
+          <strong>Shift Bay Account</strong>
+          <span>Local mode for this working version.</span>
+          <button id="saveNowBtn" class="account-menu-action" type="button">Sync now</button>
+          <button class="account-menu-action account-menu-action-muted" type="button" disabled>Sign in coming with cloud version</button>
+        </div>
+      </details>
     </div>
   </nav>
 
@@ -82,6 +88,7 @@
 
       <div id="printFilters" class="filters"></div>
       <div id="roleJumpStrip" class="role-jump-strip" hidden></div>
+      <div id="supportRailTools" class="support-rail-tools" hidden></div>
       <div id="conflictBanner" class="conflict-banner" hidden></div>
       <div id="appNotice" class="app-notice" hidden role="status" aria-live="polite"></div>
       <div id="printView" class="print-view" hidden></div>
@@ -572,7 +579,7 @@
   </main>
 
   <div id="zoomControls" class="zoom-controls" aria-label="Schedule zoom controls">
-    <button id="toggleUnavailablePanelBtn" class="zoom-side-toggle" type="button" title="Show unavailable this week">Unavailable</button>
+    <button id="compactViewBtn" class="zoom-side-toggle" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
     <button id="zoomOutBtn" type="button" title="Zoom out">-</button>
     <span id="zoomLabel">100%</span>
     <button id="zoomInBtn" type="button" title="Zoom in">+</button>
