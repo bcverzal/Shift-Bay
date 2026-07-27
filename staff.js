@@ -45,12 +45,19 @@ const staffRequestList = document.getElementById("staffRequestList");
 const staffAvailabilityForm = document.getElementById("staffAvailabilityForm");
 const staffAvailabilityMessage = document.getElementById("staffAvailabilityMessage");
 const staffAvailabilityDays = document.getElementById("staffAvailabilityDays");
+let selectedStaffAvailabilityDayIndex = 0;
 const staffAvailabilityWeekStart = document.getElementById("staffAvailabilityWeekStart");
 const staffAvailabilityPatternSelect = document.getElementById("staffAvailabilityPatternSelect");
 const staffAvailabilityPatternName = document.getElementById("staffAvailabilityPatternName");
 const staffAvailabilityRepeatWeeks = document.getElementById("staffAvailabilityRepeatWeeks");
+const staffAvailabilityEffectiveDate = document.getElementById("staffAvailabilityEffectiveDate");
+const staffAvailabilityPatternList = document.getElementById("staffAvailabilityPatternList");
 const saveStaffAvailabilityPatternButton = document.getElementById("saveStaffAvailabilityPattern");
 const deleteStaffAvailabilityPatternButton = document.getElementById("deleteStaffAvailabilityPattern");
+const newStaffAvailabilityPatternButton = document.getElementById("newStaffAvailabilityPattern");
+const staffLiveAvailabilitySummary = document.getElementById("staffLiveAvailabilitySummary");
+const staffAvailabilityApprovalSummary = document.getElementById("staffAvailabilityApprovalSummary");
+const submitStaffAvailabilityButton = document.getElementById("submitStaffAvailability");
 
 let demoState = null;
 let currentStaffWeekStart = "";
@@ -76,11 +83,54 @@ function writeStaffAvailabilityPatterns(patterns) {
 }
 
 function renderStaffAvailabilityPatterns(selectedId = "") {
-  if (!staffAvailabilityPatternSelect) return;
   const patterns = readStaffAvailabilityPatterns();
-  staffAvailabilityPatternSelect.innerHTML = `<option value="">Current week entries</option>${patterns.map((pattern) => `<option value="${escapeHtml(pattern.id)}">${escapeHtml(pattern.name)} - every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</option>`).join("")}`;
-  staffAvailabilityPatternSelect.value = selectedId;
+  if (staffAvailabilityPatternSelect) {
+    staffAvailabilityPatternSelect.innerHTML = `<option value="">Unsaved current entries</option>${patterns.map((pattern) => `<option value="${escapeHtml(pattern.id)}">${escapeHtml(pattern.name)} - every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</option>`).join("")}`;
+    staffAvailabilityPatternSelect.value = selectedId;
+  }
+  if (submitStaffAvailabilityButton) submitStaffAvailabilityButton.disabled = !selectedId;
   if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = !selectedId;
+  if (!staffAvailabilityPatternList) return;
+  staffAvailabilityPatternList.innerHTML = patterns.length
+    ? patterns.map((pattern) => `<button type="button" class="staff-availability-pattern-card${pattern.id === selectedId ? " selected" : ""}" data-staff-availability-pattern-id="${escapeHtml(pattern.id)}"><strong>${escapeHtml(pattern.name || "Untitled availability")}</strong><span>Every ${Number(pattern.repeatWeeks) || 1} week${Number(pattern.repeatWeeks) === 1 ? "" : "s"}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</span></button>`).join("")
+    : `<div class="staff-empty-state"><strong>No Availability Profiles saved</strong><span>Save this editor as a named profile to reuse it later.</span></div>`;
+  staffAvailabilityPatternList.querySelectorAll("[data-staff-availability-pattern-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.staffAvailabilityPatternId;
+      if (staffAvailabilityPatternSelect) {
+        staffAvailabilityPatternSelect.value = id;
+        staffAvailabilityPatternSelect.dispatchEvent(new Event("change"));
+      }
+    });
+  });
+}
+
+function renderStaffManagerAvailability(employee = null) {
+  if (!staffLiveAvailabilitySummary) return;
+  const patterns = Array.isArray(employee?.availabilityPatterns)
+    ? employee.availabilityPatterns.filter((pattern) => pattern && pattern.active !== false)
+    : [];
+  const currentDate = employee?.availabilityEffectiveDate || "";
+  if (!patterns.length && !Object.keys(employee?.availability || {}).length) {
+    staffLiveAvailabilitySummary.hidden = false;
+    staffLiveAvailabilitySummary.innerHTML = `<div><strong>Live availability</strong><small>No approved availability has been set yet.</small></div>`;
+    return;
+  }
+  const patternText = patterns.length
+    ? patterns.map((pattern) => `<span class="staff-manager-availability-chip"><strong>${escapeHtml(pattern.name || "Approved availability")}</strong><small>Every ${Number(pattern.repeatWeeks) || 1} week${Number(pattern.repeatWeeks) === 1 ? "" : "s"}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</small></span>`).join("")
+    : `<span class="staff-manager-availability-chip"><strong>Current approved availability</strong><small>${currentDate ? `Starts ${escapeHtml(currentDate)}` : "Used for scheduling"}</small></span>`;
+  staffLiveAvailabilitySummary.innerHTML = `<div><strong>Live availability</strong><small>This is the availability currently used for scheduling. Saved drafts remain private until submitted and approved.</small></div><div class="staff-manager-availability-list">${patternText}</div>`;
+  staffLiveAvailabilitySummary.hidden = false;
+}
+
+function renderStaffAvailabilityApproval(status = "", weekStart = "") {
+  if (!staffAvailabilityApprovalSummary) return;
+  const normalized = String(status || "").toLowerCase();
+  const waiting = normalized === "submitted" || normalized === "pending";
+  staffAvailabilityApprovalSummary.hidden = !waiting;
+  staffAvailabilityApprovalSummary.innerHTML = waiting
+    ? `<strong>Submitted weeks awaiting approval</strong><span>${weekStart ? `Week starting ${escapeHtml(weekStart)} is waiting for manager review.` : "Your submitted availability is waiting for manager review."}</span>`
+    : "";
 }
 
 function staffTimeMinutes(value = "") {
@@ -274,6 +324,7 @@ function showSignedOut() {
   loginCard.hidden = false;
   staffApp.hidden = true;
   if (demoPortalSwitcher) demoPortalSwitcher.hidden = true;
+  renderStaffManagerAvailability(null);
   setMessage("");
 }
 
@@ -287,6 +338,9 @@ function showSignedIn(profile) {
   }
   currentStaffProfile = profile;
   renderVisibleProfile({ profile });
+  renderStaffManagerAvailability(profile?.employee);
+  renderStaffAvailabilityPatterns("");
+  renderStaffAvailabilityWorkspace(profile?.employee?.availability || {});
  setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
   if (staffPreferredName) staffPreferredName.value = profile?.account?.preferred_name || "";
   if (staffPhoneNumber) staffPhoneNumber.value = profile?.account?.phone || "";
@@ -472,6 +526,60 @@ function renderAvailabilityDays(availability = {}) {
   });
 }
 
+function renderStaffAvailabilityWorkspace(availability = {}) {
+  if (!staffAvailabilityDays) return;
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const selectedDay = Math.max(0, Math.min(6, Number(selectedStaffAvailabilityDayIndex) || 0));
+  const rangesFor = (index) => {
+    const raw = Array.isArray(availability[index]) ? availability[index] : String(availability[index] || "").split(",").map((value) => {
+      const [start, end] = value.trim().split("-");
+      return { start, end };
+    });
+    return raw.filter((range) => range?.start && range?.end);
+  };
+  const summary = (ranges) => !ranges.length ? "Not available" : ranges.length > 1 ? `${ranges.length} availability windows` : `${staffDisplayValue(ranges[0].start)} to ${staffDisplayValue(ranges[0].end)}`;
+  const windowMarkup = (day, index, ranges) => (ranges.length ? ranges : [{}]).map((range, windowIndex) => `<div class="staff-availability-window" data-staff-availability-window="${windowIndex}"><label><span>Start</span><input type="text" data-time-picker data-staff-availability-day="${index}" data-staff-availability-slot="${windowIndex}" value="${escapeHtml(staffDisplayValue(range.start))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} start time"></label><span class="staff-availability-time-separator" aria-hidden="true">to</span><label><span>End</span><input type="text" data-time-picker data-staff-availability-day="${index}" data-staff-availability-end-slot="${windowIndex}" value="${escapeHtml(staffDisplayValue(range.end))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} end time"></label>${windowIndex > 0 ? `<button type="button" class="staff-small-action staff-remove-window" data-remove-staff-window="${index}" aria-label="Remove ${day} window ${windowIndex + 1}">&times;</button>` : ""}</div>`).join("");
+  const ordered = [selectedDay, ...days.map((_, index) => index).filter((index) => index !== selectedDay)];
+  staffAvailabilityDays.innerHTML = `<div class="staff-availability-day-toolbar"><span>Editing <strong>${days[selectedDay]}</strong></span><div class="staff-availability-shared-presets"><button type="button" class="staff-small-action" data-staff-editor-preset="open">Open</button><button type="button" class="staff-small-action" data-staff-editor-preset="am">AM</button><button type="button" class="staff-small-action" data-staff-editor-preset="pm">PM</button><button type="button" class="staff-small-action" data-staff-editor-preset="unavailable">Unavailable</button></div></div><div class="staff-availability-day-list">${ordered.map((index) => `<section class="staff-availability-day${index === selectedDay ? " selected" : ""}" data-staff-availability-row="${index}"><button type="button" class="staff-availability-day-heading" data-staff-availability-day-select="${index}"><strong>${days[index]}</strong><span>${escapeHtml(summary(rangesFor(index)))}</span></button><div class="staff-availability-day-editor"><div class="staff-availability-window-list">${windowMarkup(days[index], index, rangesFor(index))}<button type="button" class="staff-add-window" data-add-staff-window="${index}">+ Add another time</button></div><small>Leave both times blank if unavailable.</small></div></section>`).join("")}</div>`;
+  staffAvailabilityDays.querySelectorAll("[data-staff-availability-day-select]").forEach((button) => button.addEventListener("click", () => {
+    selectedStaffAvailabilityDayIndex = Number(button.dataset.staffAvailabilityDaySelect) || 0;
+    renderStaffAvailabilityWorkspace(readAvailabilityDays());
+  }));
+  staffAvailabilityDays.querySelectorAll("[data-staff-editor-preset]").forEach((button) => button.addEventListener("click", () => {
+    const values = { open: ["00:00", "23:59"], am: ["07:00", "15:00"], pm: ["15:00", "23:59"], unavailable: ["", ""] };
+    const [start, end] = values[button.dataset.staffEditorPreset] || ["", ""];
+    const row = staffAvailabilityDays.querySelector(`[data-staff-availability-row="${selectedStaffAvailabilityDayIndex}"]`);
+    const window = row?.querySelector(".staff-availability-window");
+    if (!window) return;
+    window.querySelector("[data-staff-availability-slot]").value = staffDisplayValue(start);
+    window.querySelector("[data-staff-availability-end-slot]").value = staffDisplayValue(end);
+    row.querySelectorAll(".staff-availability-window").forEach((extra, index) => { if (index > 0) extra.remove(); });
+    row.querySelector("[data-staff-availability-day-select] span").textContent = button.dataset.staffEditorPreset === "unavailable" ? "Not available" : button.textContent;
+  }));
+  staffAvailabilityDays.querySelectorAll("[data-add-staff-window]").forEach((button) => button.addEventListener("click", () => {
+    const row = button.closest(".staff-availability-day");
+    if (!row || row.querySelectorAll(".staff-availability-window").length >= 4) return;
+    const day = button.dataset.addStaffWindow;
+    const windowIndex = row.querySelectorAll(".staff-availability-window").length;
+    button.insertAdjacentHTML("beforebegin", `<div class="staff-availability-window" data-staff-availability-window="${windowIndex}"><label><span>Start</span><input type="text" data-time-picker data-staff-availability-day="${day}" data-staff-availability-slot="${windowIndex}" aria-label="${days[day]} window ${windowIndex + 1} start time"></label><span class="staff-availability-time-separator">to</span><label><span>End</span><input type="text" data-time-picker data-staff-availability-day="${day}" data-staff-availability-end-slot="${windowIndex}" aria-label="${days[day]} window ${windowIndex + 1} end time"></label><button type="button" class="staff-small-action staff-remove-window" data-remove-staff-window="${day}">&times;</button></div>`);
+    row.querySelectorAll("[data-time-picker]").forEach(attachStaffTimePicker);
+    if (row.querySelectorAll(".staff-availability-window").length >= 4) button.hidden = true;
+    wireStaffAvailabilityRemoveButtons();
+  }));
+  staffAvailabilityDays.querySelectorAll("[data-time-picker]").forEach(attachStaffTimePicker);
+  wireStaffAvailabilityRemoveButtons();
+}
+
+function wireStaffAvailabilityRemoveButtons() {
+  staffAvailabilityDays?.querySelectorAll("[data-remove-staff-window]").forEach((button) => button.addEventListener("click", () => {
+    const row = button.closest(".staff-availability-day");
+    const window = button.closest(".staff-availability-window");
+    if (!row || !window || row.querySelectorAll(".staff-availability-window").length <= 1) return;
+    window.remove();
+    row.querySelector("[data-add-staff-window]")?.removeAttribute("hidden");
+  }));
+}
+
 function readAvailabilityDays() {
   const availability = {};
   document.querySelectorAll("[data-staff-availability-day][data-staff-availability-slot]").forEach((input) => {
@@ -535,7 +643,9 @@ async function loadStaffWorkflow() {
     const result = await staffFetch(`/api/staff/availability${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`);
     if (staffAvailabilityWeekStart && result.weekStart) staffAvailabilityWeekStart.value = result.weekStart;
     renderStaffAvailabilityPatterns();
-    renderAvailabilityDays(result.availability || {});
+    const managerAvailability = currentStaffProfile?.employee?.availability || {};
+    renderStaffAvailabilityApproval(result.status || "", result.weekStart || weekStart);
+    renderStaffAvailabilityWorkspace(result.status ? (result.availability || {}) : managerAvailability);
     const note = document.getElementById("staffAvailabilityNote");
     if (note) note.value = result.note || "";
   } catch (error) {
@@ -555,6 +665,10 @@ function showDemoPreview(employee) {
   if (demoEmployeeSelect) demoEmployeeSelect.value = employee.id;
   if (demoPortalEmployeeSelect) demoPortalEmployeeSelect.value = employee.id;
   renderVisibleProfile({ employee });
+  renderStaffManagerAvailability(employee);
+  renderStaffAvailabilityPatterns("");
+  renderStaffAvailabilityApproval("", "");
+  renderStaffAvailabilityWorkspace(employee?.availability || {});
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";
   renderScheduleList(shifts.map((shift) => ({
@@ -763,12 +877,18 @@ staffRequestOffForm?.addEventListener("submit", async (event) => {
 
 staffAvailabilityForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const weekStart = staffAvailabilityWeekStart?.value || "";
+  const selectedId = staffAvailabilityPatternSelect?.value || "";
+  if (!selectedId) {
+    setWorkflowMessage(staffAvailabilityMessage, "Save and select an availability before submitting it.");
+    return;
+  }
+  const weekStart = staffAvailabilityWeekStart?.value || currentStaffWeekStart || "";
   const note = document.getElementById("staffAvailabilityNote")?.value || "";
   setWorkflowMessage(staffAvailabilityMessage, "Saving...");
   try {
     await staffFetch("/api/staff/availability", { method: "PUT", body: JSON.stringify({ weekStart, availability: readAvailabilityDays(), note }) });
-    setWorkflowMessage(staffAvailabilityMessage, "Availability submitted for manager review.");
+    renderStaffAvailabilityApproval("submitted", weekStart);
+    setWorkflowMessage(staffAvailabilityMessage, "Selected availability submitted for manager review.");
   } catch (error) {
     setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not save availability.");
   }
@@ -782,6 +902,7 @@ saveStaffAvailabilityPatternButton?.addEventListener("click", () => {
     id: existing?.id || `pattern-${Date.now()}`,
     name,
     repeatWeeks: Math.max(1, Math.min(4, Number(staffAvailabilityRepeatWeeks?.value) || 1)),
+    effectiveDate: staffAvailabilityEffectiveDate?.value || currentStaffWeekStart || "",
     availability: readAvailabilityDays(),
     updatedAt: new Date().toISOString()
   };
@@ -790,23 +911,44 @@ saveStaffAvailabilityPatternButton?.addEventListener("click", () => {
     : [pattern, ...patterns].slice(0, 4);
   writeStaffAvailabilityPatterns(next);
   renderStaffAvailabilityPatterns(pattern.id);
-  setWorkflowMessage(staffAvailabilityMessage, `Saved "${name}" privately. Submit a week when you want your manager to review it.`);
+  if (staffAvailabilityPatternSelect) staffAvailabilityPatternSelect.value = pattern.id;
+  setWorkflowMessage(staffAvailabilityMessage, `Saved "${name}" as a private availability profile. Submit a week when you want your manager to review it.`);
 });
 
 staffAvailabilityPatternSelect?.addEventListener("change", () => {
   const pattern = readStaffAvailabilityPatterns().find((item) => item.id === staffAvailabilityPatternSelect.value);
-  if (!pattern) return;
+  if (!pattern) {
+    if (staffAvailabilityPatternName) staffAvailabilityPatternName.value = "";
+    if (staffAvailabilityRepeatWeeks) staffAvailabilityRepeatWeeks.value = "1";
+    if (staffAvailabilityEffectiveDate) staffAvailabilityEffectiveDate.value = currentStaffWeekStart || "";
+    if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = true;
+    renderStaffAvailabilityPatterns("");
+    return;
+  }
   if (staffAvailabilityPatternName) staffAvailabilityPatternName.value = pattern.name;
   if (staffAvailabilityRepeatWeeks) staffAvailabilityRepeatWeeks.value = String(pattern.repeatWeeks || 1);
-  renderAvailabilityDays(pattern.availability || {});
-  setWorkflowMessage(staffAvailabilityMessage, `Loaded "${pattern.name}". This remains private until you submit a week.`);
+  if (staffAvailabilityEffectiveDate) staffAvailabilityEffectiveDate.value = pattern.effectiveDate || currentStaffWeekStart || "";
+  renderStaffAvailabilityWorkspace(pattern.availability || {});
+  renderStaffAvailabilityPatterns(pattern.id);
+  setWorkflowMessage(staffAvailabilityMessage, `Loaded "${pattern.name}". This profile remains private until you submit a week.`);
+});
+
+newStaffAvailabilityPatternButton?.addEventListener("click", () => {
+  if (staffAvailabilityPatternSelect) staffAvailabilityPatternSelect.value = "";
+  if (staffAvailabilityPatternName) staffAvailabilityPatternName.value = "";
+  if (staffAvailabilityRepeatWeeks) staffAvailabilityRepeatWeeks.value = "1";
+  if (staffAvailabilityEffectiveDate) staffAvailabilityEffectiveDate.value = currentStaffWeekStart || "";
+  if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = true;
+  renderStaffAvailabilityPatterns("");
+  renderStaffAvailabilityWorkspace(currentStaffProfile?.employee?.availability || {});
+  setWorkflowMessage(staffAvailabilityMessage, "New private availability profile ready.");
 });
 
 deleteStaffAvailabilityPatternButton?.addEventListener("click", () => {
   const id = staffAvailabilityPatternSelect?.value;
   if (!id) return;
   const pattern = readStaffAvailabilityPatterns().find((item) => item.id === id);
-  if (!pattern || !window.confirm(`Delete the private pattern "${pattern.name}"?`)) return;
+  if (!pattern || !window.confirm(`Delete the private availability profile "${pattern.name}"?`)) return;
   writeStaffAvailabilityPatterns(readStaffAvailabilityPatterns().filter((item) => item.id !== id));
   renderStaffAvailabilityPatterns();
   setWorkflowMessage(staffAvailabilityMessage, `Deleted "${pattern.name}".`);

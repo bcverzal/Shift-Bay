@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay Staff Portal</title>
-  <link rel="stylesheet" href="staff.css">
+  <link rel="stylesheet" href="staff.css?v=shiftbay-20260727-availability-e">
 </head>
 <body>
   <main class="staff-shell">
@@ -116,34 +116,54 @@
        <article class="staff-panel">
          <h2>Availability</h2>
          <p>Save the availability you can work for the week shown below. Start and end times are one continuous window; add another time for a later window after a break.</p>
+         <div id="staffLiveAvailabilitySummary" class="staff-manager-availability" hidden></div>
+         <div id="staffAvailabilityApprovalSummary" class="staff-availability-approval" hidden></div>
          <form id="staffAvailabilityForm" class="staff-workflow-form">
-           <label>Week starting<input id="staffAvailabilityWeekStart" type="date" required></label>
-           <div class="staff-availability-pattern-bar">
-             <label>Saved availability
-               <select id="staffAvailabilityPatternSelect" aria-label="Choose a saved availability pattern">
-                 <option value="">Current week entries</option>
-               </select>
-             </label>
-             <label>Pattern name
-               <input id="staffAvailabilityPatternName" type="text" maxlength="60" placeholder="School week">
-             </label>
-             <label>Repeat
-               <select id="staffAvailabilityRepeatWeeks" title="Repeat this private pattern on a regular cycle.">
-                 <option value="1">Every week</option>
-                 <option value="2">Every 2 weeks</option>
-                 <option value="3">Every 3 weeks</option>
-                 <option value="4">Every 4 weeks</option>
-               </select>
-             </label>
-             <button type="button" id="deleteStaffAvailabilityPattern" class="staff-small-action" hidden>Delete saved pattern</button>
+           <input id="staffAvailabilityWeekStart" type="hidden">
+           <div class="staff-availability-workspace">
+             <div class="staff-availability-editor-column">
+               <div id="staffAvailabilityDays" class="staff-availability-days"></div>
+               <label>Note<textarea id="staffAvailabilityNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
+             </div>
+             <aside class="staff-availability-pattern-workspace" aria-label="Saved availability profiles">
+               <div class="staff-availability-pattern-details">
+                 <div class="staff-availability-pattern-heading">
+                   <div><strong>Selected Availability Profile</strong><small>Edit the profile, then save it or submit it for review.</small></div>
+                   <button type="button" id="newStaffAvailabilityPattern" class="staff-small-action">New</button>
+                 </div>
+                 <label>Availability Profile
+                   <select id="staffAvailabilityPatternSelect" aria-label="Choose an availability profile">
+                     <option value="">Unsaved current entries</option>
+                   </select>
+                 </label>
+                 <label>Profile name
+                   <input id="staffAvailabilityPatternName" type="text" maxlength="60" placeholder="School week">
+                 </label>
+                 <label>Repeat Pattern
+                   <select id="staffAvailabilityRepeatWeeks" title="Choose how this availability profile repeats.">
+                     <option value="1">Every week</option>
+                     <option value="2">Every 2 weeks</option>
+                     <option value="3">Every 3 weeks</option>
+                     <option value="4">Every 4 weeks</option>
+                   </select>
+                 </label>
+                 <label>Profile starts
+                   <input id="staffAvailabilityEffectiveDate" type="date" title="Choose when this availability profile begins.">
+                 </label>
+                 <button type="button" id="deleteStaffAvailabilityPattern" class="staff-small-action" hidden>Delete Availability Profile</button>
+                 <div class="staff-availability-actions">
+                   <button type="button" id="saveStaffAvailabilityPattern" class="staff-secondary">Save Availability</button>
+                   <button type="submit" id="submitStaffAvailability" class="staff-primary" disabled>Submit selected availability</button>
+                 </div>
+               </div>
+               <div class="staff-availability-saved-heading">
+                 <strong>Saved Availability Profiles</strong>
+                 <small>Profiles stay private until you submit a week for manager review.</small>
+               </div>
+               <div id="staffAvailabilityPatternList" class="staff-availability-pattern-list"></div>
+             </aside>
            </div>
-           <div id="staffAvailabilityDays" class="staff-availability-days"></div>
-           <label>Note<textarea id="staffAvailabilityNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
-           <div class="staff-availability-actions">
-             <button type="button" id="saveStaffAvailabilityPattern" class="staff-secondary">Save private pattern</button>
-             <button type="submit" class="staff-primary">Submit this week for approval</button>
-           </div>
-           <p class="staff-muted staff-availability-help">Private patterns stay with this employee until a specific week is submitted. Submission sends that week to the manager approval queue.</p>
+           <p class="staff-muted staff-availability-help">Submitting sends the selected week to the manager approval queue. Saving a profile privately does not change your approved availability.</p>
            <div id="staffAvailabilityMessage" class="staff-inline-message" role="status" hidden></div>
          </form>
        </article>
@@ -198,6 +218,6 @@
   </dialog>
 
   <script src="shift-bay-config.js"></script>
-  <script src="staff.js?v=shiftbay-20260716-staff-access"></script>
+  <script src="staff.js?v=shiftbay-20260727-availability-e"></script>
 </body>
 </html>

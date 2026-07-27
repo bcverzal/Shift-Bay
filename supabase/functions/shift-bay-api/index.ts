@@ -446,7 +446,11 @@ async function handleStaffMe(request: Request) {
       if (employeeRow) {
         employee = {
           id: employeeRow.id,
-          displayName: [employeeRow.nickname || employeeRow.firstName, employeeRow.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee"
+          displayName: [employeeRow.nickname || employeeRow.firstName, employeeRow.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee",
+          availability: employeeRow.availability || {},
+          availabilityEffectiveDate: employeeRow.availabilityEffectiveDate || "",
+          availabilityPatterns: Array.isArray(employeeRow.availabilityPatterns) ? employeeRow.availabilityPatterns : [],
+          availabilitySchedule: Array.isArray(employeeRow.availabilitySchedule) ? employeeRow.availabilitySchedule : []
         };
       }
     }

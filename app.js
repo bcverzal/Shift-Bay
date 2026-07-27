@@ -94,6 +94,8 @@ let dayFocusSortMode = loadDayFocusSortMode();
 let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
 let selectedAvailabilityPatternId = "";
+let selectedAvailabilityDayIndex = 0;
+let submitAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
 let employeeNewProfileDraft = false;
@@ -303,6 +305,7 @@ function defaultState() {
       showShiftNameFields: false,
       autoSetCloserEndTime: true,
       closerEndBufferMinutes: 60,
+      floorPlanCleanupMinutes: 90,
       flexDoubleEndTime: "7:00 PM",
       lunchCloserEndTime: "5:00 PM",
       closerTrainingRule: "onePerDay",
@@ -2570,7 +2573,8 @@ function employeeProfileTabForTarget(targetId = "") {
   if (["availabilityEditor", "weeklyAvailabilityEditor", "employeeCallWeekly", "weeklyAvailabilityFieldset", "regularAvailabilityFieldset"].includes(targetId)) return "availability";
   if (["employeeTrainingSection", "employeeRoleChecks", "employeeMealTrainingSection"].includes(targetId)) return "roles";
   if (["trainerRoles", "employeeTrainerChecks"].includes(targetId)) return "training";
-  if (["employeePayRates", "weeklyRuleEditor"].includes(targetId)) return "pay";
+  if (["employeePayRates"].includes(targetId)) return "pay";
+  if (["weeklyRuleEditor"].includes(targetId)) return "rules";
   if (["employeeManagerNotes"].includes(targetId)) return "notes";
   return "profile";
 }
@@ -2733,6 +2737,9 @@ function updateCompactPreviewButton() {
 }
 
 function enterDayFocus(dateKey = selectedCell?.date || formatDateKey(currentDate)) {
+  // A day view request always leaves compact preview first so the grid cannot
+  // remain hidden behind the print-style layer.
+  if (document.body.classList.contains("compact-preview")) clearPrintView();
   focusedDateKey = dateKey;
   selectedCell = null;
   selectedShiftId = null;
@@ -6063,11 +6070,19 @@ function updateUnavailablePanelToggle(count = 0) {
   button.title = state.settings.showUnavailablePanel ? "Hide unavailable this week" : "Show unavailable this week";
 }
 
+function syncEmployeeAvailabilityMode() {
+  const callWeekly = Boolean($("employeeCallWeekly")?.checked);
+  if ($("regularAvailabilityFieldset")) $("regularAvailabilityFieldset").hidden = callWeekly;
+  if ($("weeklyAvailabilityFieldset")) $("weeklyAvailabilityFieldset").hidden = !callWeekly;
+  if ($("toggleWeeklyAvailabilityBtn")) $("toggleWeeklyAvailabilityBtn").hidden = !callWeekly;
+}
+
 function openEmployeeWeeklyAvailability(employeeId) {
   loadEmployee(employeeId);
   activateTab("employees");
   setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
-  $("weeklyAvailabilityFieldset").hidden = false;
+  $("employeeCallWeekly").checked = true;
+  syncEmployeeAvailabilityMode();
   renderWeeklyAvailabilityEditor(employeeById(employeeId));
   window.setTimeout(() => {
     $("weeklyAvailabilityFieldset")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -7702,7 +7717,7 @@ function renderEmployees() {
   const employees = state.employees
     .filter((employee) => showArchived || !employee.archived)
     .slice()
-    .sort((a, b) => fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
+    .sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b), undefined, { sensitivity: "base" }) || fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
   const filteredEmployees = search
     ? employees.filter((employee) => {
         const haystack = [
@@ -7726,6 +7741,7 @@ function renderEmployees() {
   }
   if ($("archiveEmployeeBtn")) $("archiveEmployeeBtn").hidden = Boolean(selectedEmployee?.archived);
   if ($("restoreEmployeeBtn")) $("restoreEmployeeBtn").hidden = !selectedEmployee?.archived;
+  if ($("deleteEmployeeBtn")) $("deleteEmployeeBtn").hidden = !selectedEmployee?.archived;
   renderEmployeeRoster(filteredEmployees, selectedEmployee);
   renderAvailabilityPatternWorkspace(selectedEmployee);
   renderAvailabilityEditor(selectedEmployee);
@@ -7807,6 +7823,18 @@ function currentWeekKey() {
   return formatDateKey(startOfWeek(currentDate, state.settings.weekStart));
 }
 
+function normalizeAvailabilityWeekKey(dateKey = currentWeekKey()) {
+  const parsed = parseDateKey(dateKey || currentWeekKey());
+  if (Number.isNaN(parsed.getTime())) return currentWeekKey();
+  return formatDateKey(startOfWeek(parsed, state.settings.weekStart));
+}
+
+function normalizeAvailabilityEffectiveDate(dateKey = currentWeekKey()) {
+  const parsed = parseDateKey(dateKey || currentWeekKey());
+  if (Number.isNaN(parsed.getTime())) return currentWeekKey();
+  return formatDateKey(parsed);
+}
+
 function selectedWeeklyAvailabilityWeekKey() {
   const inputValue = $("weeklyAvailabilityWeek")?.value || employeeWeeklyAvailabilityWeekKey || currentWeekKey();
   const parsed = parseDateKey(inputValue);
@@ -7815,12 +7843,17 @@ function selectedWeeklyAvailabilityWeekKey() {
 }
 
 function setWeeklyAvailabilityWeek(dateKey = currentWeekKey(), options = {}) {
-  const parsed = parseDateKey(dateKey);
+  const parsed = parseDateKey(dateKey || currentWeekKey());
   employeeWeeklyAvailabilityWeekKey = Number.isNaN(parsed.getTime())
     ? currentWeekKey()
     : formatDateKey(startOfWeek(parsed, state.settings.weekStart));
   const input = $("weeklyAvailabilityWeek");
   if (input) input.value = employeeWeeklyAvailabilityWeekKey;
+  const summary = $("weeklyAvailabilityWeekSummary");
+  if (summary) {
+    const weekStart = parseDateKey(employeeWeeklyAvailabilityWeekKey);
+    summary.textContent = `Showing the work week of ${displayDate(weekStart)}. All dates are aligned to the restaurant's week-start setting.`;
+  }
   if (options.render !== false) renderWeeklyAvailabilityEditor(employeeById($("employeeId")?.value));
 }
 
@@ -7887,7 +7920,8 @@ function availabilityPatternsForEmployee(employee = null) {
       name: pattern.name || `Availability ${index + 1}`,
       availability: pattern.availability || emptyAvailability(),
       repeatWeeks: Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
-      effectiveDate: pattern.effectiveDate || employee.availabilityEffectiveDate || currentWeekKey()
+      active: pattern.active !== false,
+      effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || employee.availabilityEffectiveDate || currentWeekKey())
     }));
   }
   return [{
@@ -7895,13 +7929,87 @@ function availabilityPatternsForEmployee(employee = null) {
     name: employee.availabilityPatternName || "Regular availability",
     availability: employee.availability || emptyAvailability(),
     repeatWeeks: Math.max(1, Math.min(4, Number(employee.availabilityRepeatWeeks) || 1)),
-    effectiveDate: employee.availabilityEffectiveDate || currentWeekKey()
+    active: true,
+    effectiveDate: normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey())
   }];
 }
 
 function selectedAvailabilityPattern(employee = null) {
   const patterns = availabilityPatternsForEmployee(employee);
   return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+}
+
+function availabilityPatternAppliesOnDate(pattern, date) {
+  const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern?.effectiveDate));
+  if (Number.isNaN(effectiveDate.getTime()) || date < effectiveDate) return false;
+  const weekStart = startOfWeek(date, state.settings.weekStart);
+  const effectiveWeekStart = startOfWeek(effectiveDate, state.settings.weekStart);
+  const weeksSinceStart = Math.round((weekStart.getTime() - effectiveWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  const repeatWeeks = Math.max(1, Math.min(4, Number(pattern?.repeatWeeks) || 1));
+  return weeksSinceStart >= 0 && weeksSinceStart % repeatWeeks === 0;
+}
+
+function availabilityPatternConflicts(patterns = []) {
+  const activePatterns = patterns.filter((pattern) => pattern?.active !== false);
+  if (activePatterns.length < 2) return null;
+  const effectiveDates = activePatterns.map((pattern) => parseDateKey(normalizeAvailabilityEffectiveDate(pattern.effectiveDate)));
+  const latestEffectiveDate = new Date(Math.max(...effectiveDates.map((date) => date.getTime())));
+  const checkThrough = addDays(latestEffectiveDate, 56);
+  for (let leftIndex = 0; leftIndex < activePatterns.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < activePatterns.length; rightIndex += 1) {
+      const left = activePatterns[leftIndex];
+      const right = activePatterns[rightIndex];
+      for (let date = new Date(latestEffectiveDate); date <= checkThrough; date = addDays(date, 1)) {
+        if (!availabilityPatternAppliesOnDate(left, date) || !availabilityPatternAppliesOnDate(right, date)) continue;
+        const dayIndex = date.getDay();
+        const leftWindows = left.availability?.[dayIndex] || [];
+        const rightWindows = right.availability?.[dayIndex] || [];
+        for (const leftWindow of leftWindows) {
+          const leftStart = minutesFromTime(leftWindow.start);
+          const leftEnd = minutesFromTime(leftWindow.end);
+          if (leftStart == null || leftEnd == null || leftEnd <= leftStart) continue;
+          for (const rightWindow of rightWindows) {
+            const rightStart = minutesFromTime(rightWindow.start);
+            const rightEnd = minutesFromTime(rightWindow.end);
+            if (rightStart == null || rightEnd == null || rightEnd <= rightStart) continue;
+            if (leftStart < rightEnd && rightStart < leftEnd) return { left, right, date: new Date(date) };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function renderActiveAvailabilitySummary(employee = null, patterns = availabilityPatternsForEmployee(employee), selected = selectedAvailabilityPattern(employee)) {
+  const tabs = $("activeAvailabilityTabs");
+  if (!tabs) return;
+  const activePatterns = patterns.filter((pattern) => pattern.active !== false);
+  tabs.innerHTML = activePatterns.map((pattern) => {
+    const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
+    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
+      <strong>${escapeHtml(pattern.name)}</strong>
+      <span>${dayCount} days · every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</span>
+      <small>Begins ${escapeHtml(pattern.effectiveDate)}</small>
+    </button>`;
+  }).join("");
+  if (!activePatterns.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
+  tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
+    button.onclick = () => {
+      selectedAvailabilityPatternId = button.dataset.activeAvailabilityId;
+      const currentEmployee = employeeById($("employeeId")?.value);
+      renderAvailabilityPatternWorkspace(currentEmployee);
+      renderAvailabilityEditor(currentEmployee);
+    };
+  });
+  const conflict = availabilityPatternConflicts(patterns);
+  const conflictNotice = $("activeAvailabilityConflict");
+  if (conflictNotice) {
+    conflictNotice.hidden = !conflict;
+    conflictNotice.textContent = conflict
+      ? `${conflict.left.name} and ${conflict.right.name} overlap on ${displayDate(conflict.date)}. Deactivate or edit one pattern before saving or submitting availability.`
+      : "";
+  }
 }
 
 function availabilityPatternGuidance(pattern) {
@@ -7930,9 +8038,10 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   const patterns = availabilityPatternsForEmployee(employee);
   if (!patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = patterns[0]?.id || "draft";
   const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+  renderActiveAvailabilitySummary(employee, patterns, selected);
   list.innerHTML = patterns.map((pattern) => {
     const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
-    return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
+    return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}${pattern.active ? "" : " inactive"}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
       <span>${dayCount} available days · every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"} · starts ${escapeHtml(pattern.effectiveDate)}</span>
     </button>`;
@@ -7946,7 +8055,9 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   });
   if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = selected?.name || "";
   if ($("employeeAvailabilityRepeatWeeks")) $("employeeAvailabilityRepeatWeeks").value = String(selected?.repeatWeeks || 1);
-  if ($("employeeAvailabilityEffectiveDate")) $("employeeAvailabilityEffectiveDate").value = selected?.effectiveDate || currentWeekKey();
+  if ($("employeeAvailabilityEffectiveDate")) {
+    $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
+  }
   const guidance = availabilityPatternGuidance(selected);
   if ($("availabilityPatternGuidance")) {
     $("availabilityPatternGuidance").textContent = guidance.text;
@@ -7955,37 +8066,66 @@ function renderAvailabilityPatternWorkspace(employee = null) {
 }
 function renderAvailabilityEditor(employee = null) {
   const availability = selectedAvailabilityPattern(employee)?.availability || emptyAvailability();
-  $("availabilityEditor").innerHTML = DAYS.map((day, index) => {
-    const ranges = availability[index] || [];
-    const windowMarkup = (ranges.length ? ranges : [{}]).map((range, windowIndex) => `
-          <div class="availability-window" data-availability-window="${windowIndex}">
-            <label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.start))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} start time; leave blank if unavailable"></label>
-            <span class="availability-time-separator" aria-hidden="true">to</span>
-            <label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-end-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.end))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} end time; leave blank if unavailable"></label>
-            ${windowIndex > 0 ? `<button type="button" class="icon-button availability-remove-window" data-remove-availability-window="${index}" data-availability-window-index="${windowIndex}" aria-label="Remove ${day} window ${windowIndex + 1}" title="Remove this availability window">&times;</button>` : ""}
-          </div>`).join("");
-    return `
-      <div class="availability-day" data-availability-row="${index}">
-        <strong>${day}</strong>
-        <div class="availability-input-stack">${windowMarkup}<button type="button" class="availability-add-window" data-add-availability-window="${index}">+ Add another time</button></div>
-        <small>Leave both times blank for no availability.</small>
-        <button type="button" class="small-button" data-availability-preset="open" data-availability-preset-day="${index}">Open</button>
-        <button type="button" class="small-button" data-availability-preset="am" data-availability-preset-day="${index}">AM</button>
-        <button type="button" class="small-button" data-availability-preset="pm" data-availability-preset-day="${index}">PM</button>
-        <button type="button" class="small-button availability-unavailable-button" data-availability-preset="unavailable" data-availability-preset-day="${index}">Unavailable</button>
+  selectedAvailabilityDayIndex = Math.max(0, Math.min(DAYS.length - 1, Number(selectedAvailabilityDayIndex) || 0));
+  const selectedDay = selectedAvailabilityDayIndex;
+  const summaryForDay = (ranges) => {
+    if (!ranges.length) return "Not available";
+    if (ranges.length > 1) return `${ranges.length} availability windows`;
+    return `${toNativeTimeValue(ranges[0].start) || "Not available"} to ${toNativeTimeValue(ranges[0].end) || "Not available"}`;
+  };
+  const windowMarkupForDay = (day, index, ranges) => (ranges.length ? ranges : [{}]).map((range, windowIndex) => `
+        <div class="availability-window" data-availability-window="${windowIndex}">
+          <label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.start))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} start time; leave blank if unavailable"></label>
+          <span class="availability-time-separator" aria-hidden="true">to</span>
+          <label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-end-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.end))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} end time; leave blank if unavailable"></label>
+          ${windowIndex > 0 ? `<button type="button" class="icon-button availability-remove-window" data-remove-availability-window="${index}" data-availability-window-index="${windowIndex}" aria-label="Remove ${day} window ${windowIndex + 1}" title="Remove this availability window">&times;</button>` : ""}
+        </div>`).join("");
+  $("availabilityEditor").innerHTML = `
+    <div class="availability-day-toolbar">
+      <span>Editing <strong>${DAYS[selectedDay]}</strong></span>
+      <div class="availability-shared-presets" role="group" aria-label="Presets for the selected day">
+        <button type="button" class="small-button" data-availability-editor-preset="open" data-availability-preset="open">Open</button>
+        <button type="button" class="small-button" data-availability-editor-preset="am" data-availability-preset="am">AM</button>
+        <button type="button" class="small-button" data-availability-editor-preset="pm" data-availability-preset="pm">PM</button>
+        <button type="button" class="small-button availability-unavailable-button" data-availability-editor-preset="unavailable" data-availability-preset="unavailable">Unavailable</button>
       </div>
-    `;
-  }).join("");
-  document.querySelectorAll("[data-availability-preset]").forEach((button) => {
-      button.onclick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setAvailabilityPreset(
-      `[data-availability-day="${button.dataset.availabilityPresetDay}"][data-availability-slot="0"]`,
-      button.dataset.availabilityPresetDay,
-      button.dataset.availabilityPreset
-        );
-      };
+    </div>
+    <div class="availability-day-list">
+      ${[selectedDay, ...DAYS.map((_, index) => index).filter((index) => index !== selectedDay)].map((index) => {
+    const day = DAYS[index];
+    const ranges = availability[index] || [];
+    return `<section class="availability-day${index === selectedDay ? " selected" : ""}" data-availability-row="${index}">
+      <button type="button" class="availability-day-heading" data-availability-day-select="${index}">
+        <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
+      </button>
+      <div class="availability-day-editor">
+        <div class="availability-input-stack">${windowMarkupForDay(day, index, ranges)}<button type="button" class="availability-add-window" data-add-availability-window="${index}">+ Add another time</button></div>
+        <small>Leave both times blank if unavailable.</small>
+      </div>
+    </section>`;
+  }).join("")}
+    </div>`;
+  document.querySelectorAll("[data-availability-day-select]").forEach((button) => {
+    button.onclick = () => {
+      selectedAvailabilityDayIndex = Number(button.dataset.availabilityDaySelect) || 0;
+      document.querySelectorAll("[data-availability-row]").forEach((row) => row.classList.toggle("selected", Number(row.dataset.availabilityRow) === selectedAvailabilityDayIndex));
+      const label = $("availabilityEditor").querySelector(".availability-day-toolbar strong");
+      if (label) label.textContent = DAYS[selectedAvailabilityDayIndex];
+    };
+  });
+  document.querySelectorAll("[data-availability-editor-preset]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setAvailabilityPreset(
+        `[data-availability-day="${selectedAvailabilityDayIndex}"][data-availability-slot="0"]`,
+        selectedAvailabilityDayIndex,
+        button.dataset.availabilityEditorPreset
+      );
+      const row = document.querySelector(`[data-availability-row="${selectedAvailabilityDayIndex}"]`);
+      const summary = row?.querySelector(".availability-day-heading span");
+      if (summary) summary.textContent = button.dataset.availabilityEditorPreset === "unavailable" ? "Not available" : button.textContent;
+    };
   });
   document.querySelectorAll("#availabilityEditor [data-time-picker]").forEach(attachTimePickerInput);
   document.querySelectorAll("[data-add-availability-window]").forEach((button) => {
@@ -8023,6 +8163,8 @@ function renderWeeklyAvailabilityEditor(employee = null) {
   const weekKey = selectedWeeklyAvailabilityWeekKey();
   const input = $("weeklyAvailabilityWeek");
   if (input) input.value = weekKey;
+  const summary = $("weeklyAvailabilityWeekSummary");
+  if (summary) summary.textContent = `Showing the work week of ${displayDate(parseDateKey(weekKey))}. All dates are aligned to the restaurant's week-start setting.`;
   const availability = employee?.weeklyAvailability?.[weekKey] || emptyAvailability();
   $("weeklyAvailabilityEditor").innerHTML = DAYS.map((day, index) => {
     const ranges = availability[index] || [];
@@ -8035,16 +8177,22 @@ function renderWeeklyAvailabilityEditor(employee = null) {
           </div>`).join("");
     const dayDate = availabilityDayDateLabel(index, weekKey);
     return `
-      <div class="availability-day weekly-availability-day">
-        <strong>${day}</strong>
-        <span class="availability-date-label">${escapeHtml(dayDate)}</span>
-        <div class="availability-input-stack">${windowMarkup}<button type="button" class="availability-add-window" data-add-weekly-window="${index}">+ Add another time</button></div>
-        <small>Leave both times blank for no availability.</small>
-        <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
-        <button type="button" class="small-button" data-weekly-availability-preset="am" data-weekly-availability-preset-day="${index}">AM</button>
-        <button type="button" class="small-button" data-weekly-availability-preset="pm" data-weekly-availability-preset-day="${index}">PM</button>
-        <button type="button" class="small-button availability-unavailable-button" data-weekly-availability-preset="unavailable" data-weekly-availability-preset-day="${index}">Unavailable</button>
-      </div>
+      <section class="availability-day weekly-availability-day">
+        <div class="availability-day-heading">
+          <strong>${day}</strong>
+          <span>${escapeHtml(dayDate)}</span>
+        </div>
+        <div class="availability-day-editor">
+          <div class="availability-input-stack">${windowMarkup}<button type="button" class="availability-add-window" data-add-weekly-window="${index}">+ Add another time</button></div>
+          <small>Leave both times blank if unavailable.</small>
+          <div class="availability-shared-presets weekly-day-presets" role="group" aria-label="${day} availability presets">
+            <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
+            <button type="button" class="small-button" data-weekly-availability-preset="am" data-weekly-availability-preset-day="${index}">AM</button>
+            <button type="button" class="small-button" data-weekly-availability-preset="pm" data-weekly-availability-preset-day="${index}">PM</button>
+            <button type="button" class="small-button availability-unavailable-button" data-weekly-availability-preset="unavailable" data-weekly-availability-preset-day="${index}">Unavailable</button>
+          </div>
+        </div>
+      </section>
     `;
   }).join("");
   document.querySelectorAll("[data-weekly-availability-preset]").forEach((button) => {
@@ -8156,6 +8304,22 @@ function setAvailabilityInputs(selector, value) {
   });
 }
 
+function refreshAvailabilityDayCardSummaries() {
+  document.querySelectorAll("#availabilityEditor [data-availability-row]").forEach((row) => {
+    const windows = Array.from(row.querySelectorAll(".availability-window")).map((window) => ({
+      start: window.querySelector('[data-availability-slot]')?.value.trim() || "",
+      end: window.querySelector('[data-availability-end-slot]')?.value.trim() || ""
+    })).filter((range) => range.start && range.end);
+    const summary = row.querySelector(".availability-day-heading span");
+    if (!summary) return;
+    summary.textContent = !windows.length
+      ? "Not available"
+      : windows.length > 1
+        ? `${windows.length} availability windows`
+        : `${windows[0].start} to ${windows[0].end}`;
+  });
+}
+
 function parseWeeklyRules() {
   return Array.from(document.querySelectorAll(".weekly-rule-row")).map((row) => ({
     days: Array.from(row.querySelectorAll("[data-rule-day]:checked")).map((input) => Number(input.value)),
@@ -8214,10 +8378,10 @@ function loadEmployee(id) {
   $("employeeAlwaysPrintEndTime").checked = Boolean(employee.alwaysPrintFloorEndTime);
   setCheckedValues("employeeDepartments", normalizeEmployeeDepartments(employee));
   $("employeeCallWeekly").checked = Boolean(employee.callWeekly);
-  $("employeeAvailabilityEffectiveDate").value = employee.availabilityEffectiveDate || currentWeekKey();
+  $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey());
   $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || "Regular availability";
   $("employeeAvailabilityRepeatWeeks").value = String(employee.availabilityRepeatWeeks || 1);
-  $("weeklyAvailabilityFieldset").hidden = !employee.callWeekly;
+  syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
   renderEmployeePayRates(employee);
   setCheckedValues("mealTraining", employee.mealTraining || []);
@@ -8268,7 +8432,7 @@ function resetEmployeeForm() {
   $("employeeManagerNotes").value = "";
   $("employeeCallWeekly").checked = false;
   $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
-  $("weeklyAvailabilityFieldset").hidden = true;
+  syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
   renderEmployeePayRates();
   renderAvailabilityEditor();
@@ -8550,6 +8714,7 @@ function renderSettings() {
   updateShiftNameVisibility();
   $("autoSetCloserEndTime").checked = state.settings.autoSetCloserEndTime !== false;
   $("closerEndBufferMinutes").value = String(Number(state.settings.closerEndBufferMinutes ?? 60));
+  $("floorPlanCleanupMinutes").value = String(Number(state.settings.floorPlanCleanupMinutes ?? 90));
   $("flexDoubleEndTime").value = normalizeTime(state.settings.flexDoubleEndTime || "7:00 PM");
   $("lunchCloserEndTime").value = normalizeTime(state.settings.lunchCloserEndTime || "5:00 PM");
   $("closerTrainingRule").value = state.settings.closerTrainingRule || "onePerDay";
@@ -10511,7 +10676,15 @@ function shiftMatchesFloorPlanPeriod(shift, period) {
   if (range.start == null || range.end == null) return false;
   const sortedPeriods = [...periods].sort((a, b) => a.startMinutes - b.startMinutes);
   const dinner = sortedPeriods.find((mealPeriod) => mealPeriod.name === "Dinner");
-  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes || range.end > dinner.startMinutes : false);
+  if (period === "pm") {
+    if (shift.isFlexDouble || shift.untilVolume) return true;
+    if (!dinner) return false;
+    const dinnerIndex = sortedPeriods.indexOf(dinner);
+    const previousMeal = [...sortedPeriods.slice(0, dinnerIndex)].reverse().find((mealPeriod) => mealPeriod.endMinutes != null);
+    const serviceCutoff = previousMeal?.endMinutes ?? dinner.startMinutes;
+    const cleanupMinutes = Math.max(0, Number(state.settings.floorPlanCleanupMinutes ?? 90) || 0);
+    return range.start >= dinner.startMinutes || range.end > serviceCutoff + cleanupMinutes;
+  }
   if (period === "am") return dinner ? range.start < dinner.startMinutes : true;
   const startsInNamedPeriod = (names) => sortedPeriods
     .filter((mealPeriod) => names.includes(mealPeriod.name))
@@ -12986,6 +13159,8 @@ function wireEvents() {
   });
   $("employeeForm").onsubmit = (event) => {
     event.preventDefault();
+    const activateSubmittedAvailability = submitAvailabilityPatternRequested;
+    submitAvailabilityPatternRequested = false;
     pushUndo();
     const id = $("employeeId").value || uid("employee");
     const existingEmployee = state.employees.find((item) => item.id === id);
@@ -13005,28 +13180,40 @@ function wireEvents() {
     }
     const callWeekly = $("employeeCallWeekly").checked;
     const weeklyPanelOpen = !$("weeklyAvailabilityFieldset").hidden;
-    const availabilityEffectiveDate = $("employeeAvailabilityEffectiveDate").value || currentWeekKey();
+    const availabilityEffectiveDate = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value || currentWeekKey());
+    $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
     const parsedAvailability = parseAvailability();
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
     const selectedPatternId = selectedAvailabilityPatternId || existingPatterns[0]?.id || "regular";
+    const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
+    const patternActive = activateSubmittedAvailability || selectedPattern?.active === true;
     const updatedPattern = {
       id: selectedPatternId,
       name: $("employeeAvailabilityPatternName").value.trim() || "Regular availability",
       availability: parsedAvailability,
       repeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
+      active: patternActive,
       effectiveDate: availabilityEffectiveDate
     };
     const availabilityPatterns = existingPatterns.some((pattern) => pattern.id === selectedPatternId)
       ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
       : [updatedPattern, ...existingPatterns];
+    const availabilityConflict = availabilityPatternConflicts(availabilityPatterns);
+    if (availabilityConflict) {
+      undoStack.pop();
+      showConflict(`${availabilityConflict.left.name} and ${availabilityConflict.right.name} overlap on ${displayDate(availabilityConflict.date)}. Deactivate or edit one pattern before saving or submitting availability.`);
+      return;
+    }
     const availabilitySchedule = Array.isArray(existingEmployee?.availabilitySchedule)
       ? existingEmployee.availabilitySchedule.map((item) => ({ ...item, availability: { ...(item.availability || {}) } }))
       : [];
-    const scheduledIndex = availabilitySchedule.findIndex((item) => item.effectiveDate === availabilityEffectiveDate);
-    const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: parsedAvailability };
-    if (scheduledIndex >= 0) availabilitySchedule[scheduledIndex] = scheduledVersion;
-    else availabilitySchedule.push(scheduledVersion);
-    availabilitySchedule.sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
+    if (patternActive) {
+      const scheduledIndex = availabilitySchedule.findIndex((item) => item.effectiveDate === availabilityEffectiveDate);
+      const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: parsedAvailability };
+      if (scheduledIndex >= 0) availabilitySchedule[scheduledIndex] = scheduledVersion;
+      else availabilitySchedule.push(scheduledVersion);
+      availabilitySchedule.sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
+    }
     const weeklyAvailability = { ...(existingEmployee?.weeklyAvailability || {}) };
     const weeklyAvailabilityWeekKey = selectedWeeklyAvailabilityWeekKey();
     if (callWeekly || weeklyPanelOpen) {
@@ -13058,9 +13245,11 @@ function wireEvents() {
       availabilityEffectiveDate,
       availabilityPatternName: $("employeeAvailabilityPatternName").value.trim() || "Regular availability",
       availabilityRepeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
-      availabilityPatterns: availabilityPatterns.slice(0, 4),
+      availabilityPatterns,
       availabilitySchedule,
-      availability: availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee ? parsedAvailability : (existingEmployee.availability || parsedAvailability),
+      availability: patternActive && (availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee)
+        ? parsedAvailability
+        : (existingEmployee?.availability || emptyAvailability()),
       weeklyAvailability,
       weeklyRules: parseWeeklyRules()
     };
@@ -13086,18 +13275,34 @@ function wireEvents() {
     saveState();
     renderEmployees();
   };
-  $("stickySaveEmployeeBtn").onclick = () => $("employeeForm").requestSubmit();
   document.querySelectorAll("[data-employee-profile-tab]").forEach((button) => {
     button.onclick = () => activateEmployeeProfileTab(button.dataset.employeeProfileTab);
   });
   ["firstName", "lastName"].forEach((id) => {
     $(id).addEventListener("input", updateStickyEmployeeName);
   });
-  $("openAllAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-availability-day]", "12a-11:59p");
-  $("clearAllAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-availability-day]", "");
+  $("openAllAvailabilityBtn").onclick = () => {
+    DAYS.forEach((_, dayIndex) => setAvailabilityPreset(`[data-availability-day="${dayIndex}"][data-availability-slot="0"]`, dayIndex, "open"));
+    refreshAvailabilityDayCardSummaries();
+  };
+  $("clearAllAvailabilityBtn").onclick = () => {
+    DAYS.forEach((_, dayIndex) => setAvailabilityPreset(`[data-availability-day="${dayIndex}"][data-availability-slot="0"]`, dayIndex, "unavailable"));
+    refreshAvailabilityDayCardSummaries();
+  };
   $("openAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "12a-11:59p");
   $("clearAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "");
   $("saveAvailabilityPatternBtn").onclick = () => {
+    markEmployeeFormDirty();
+    $("employeeForm").requestSubmit();
+  };
+  $("saveAvailabilityPatternAsNewBtn").onclick = () => {
+    const currentName = $("employeeAvailabilityPatternName")?.value.trim() || "Availability";
+    const existingNames = new Set(availabilityPatternsForEmployee(employeeById($("employeeId")?.value)).map((pattern) => pattern.name));
+    let newName = currentName;
+    let copyNumber = 2;
+    while (existingNames.has(newName)) newName = `${currentName} ${copyNumber++}`;
+    selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = newName;
     markEmployeeFormDirty();
     $("employeeForm").requestSubmit();
   };
@@ -13117,6 +13322,7 @@ function wireEvents() {
       return;
     }
     markEmployeeFormDirty();
+    submitAvailabilityPatternRequested = true;
     $("employeeForm").requestSubmit();
     if ($("availabilityPatternGuidance")) $("availabilityPatternGuidance").textContent = "Saved and submitted as the selected pattern. Apply it to a schedule week from the weekly availability section.";
   };
@@ -13128,15 +13334,21 @@ function wireEvents() {
     setWeeklyAvailabilityWeek(currentWeekKey());
   };
   $("employeeCallWeekly").onchange = () => {
-    $("weeklyAvailabilityFieldset").hidden = !$("employeeCallWeekly").checked;
+    syncEmployeeAvailabilityMode();
     if ($("employeeCallWeekly").checked && !employeeWeeklyAvailabilityWeekKey) setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
   };
+  $("employeeAvailabilityEffectiveDate").onchange = () => {
+    const normalized = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value);
+    $("employeeAvailabilityEffectiveDate").value = normalized;
+    markEmployeeFormDirty();
+  };
+  $("stickySaveEmployeeBtn").onclick = () => $("employeeForm").requestSubmit();
   $("toggleWeeklyAvailabilityBtn").onclick = () => {
     markEmployeeFormDirty();
     $("employeeCallWeekly").checked = true;
     if (!employeeWeeklyAvailabilityWeekKey) setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
-    $("weeklyAvailabilityFieldset").hidden = !$("weeklyAvailabilityFieldset").hidden;
+    syncEmployeeAvailabilityMode();
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
   };
   $("addWeeklyRuleBtn").onclick = addWeeklyRuleRow;
@@ -13266,6 +13478,7 @@ function wireEvents() {
     state.settings.showShiftNameFields = $("showShiftNameFields").checked;
     state.settings.autoSetCloserEndTime = $("autoSetCloserEndTime").checked;
     state.settings.closerEndBufferMinutes = Number($("closerEndBufferMinutes").value) || 0;
+    state.settings.floorPlanCleanupMinutes = Math.max(0, Number($("floorPlanCleanupMinutes").value) || 0);
     state.settings.flexDoubleEndTime = normalizeTime($("flexDoubleEndTime").value) || "7:00 PM";
     state.settings.lunchCloserEndTime = normalizeTime($("lunchCloserEndTime").value) || "5:00 PM";
     state.settings.closerTrainingRule = $("closerTrainingRule").value || "onePerDay";
