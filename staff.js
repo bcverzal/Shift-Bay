@@ -85,14 +85,14 @@ function writeStaffAvailabilityPatterns(patterns) {
 function renderStaffAvailabilityPatterns(selectedId = "") {
   const patterns = readStaffAvailabilityPatterns();
   if (staffAvailabilityPatternSelect) {
-    staffAvailabilityPatternSelect.innerHTML = `<option value="">Unsaved current entries</option>${patterns.map((pattern) => `<option value="${escapeHtml(pattern.id)}">${escapeHtml(pattern.name)} - every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</option>`).join("")}`;
+    staffAvailabilityPatternSelect.innerHTML = `<option value="">Unsaved current entries</option>${patterns.map((pattern) => `<option value="${escapeHtml(pattern.id)}">${escapeHtml(pattern.name)} - ${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}</option>`).join("")}`;
     staffAvailabilityPatternSelect.value = selectedId;
   }
   if (submitStaffAvailabilityButton) submitStaffAvailabilityButton.disabled = !selectedId;
   if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = !selectedId;
   if (!staffAvailabilityPatternList) return;
   staffAvailabilityPatternList.innerHTML = patterns.length
-    ? patterns.map((pattern) => `<button type="button" class="staff-availability-pattern-card${pattern.id === selectedId ? " selected" : ""}" data-staff-availability-pattern-id="${escapeHtml(pattern.id)}"><strong>${escapeHtml(pattern.name || "Untitled availability")}</strong><span>Every ${Number(pattern.repeatWeeks) || 1} week${Number(pattern.repeatWeeks) === 1 ? "" : "s"}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</span></button>`).join("")
+    ? patterns.map((pattern) => `<button type="button" class="staff-availability-pattern-card${pattern.id === selectedId ? " selected" : ""}" data-staff-availability-pattern-id="${escapeHtml(pattern.id)}"><strong>${escapeHtml(pattern.name || "Untitled availability")}</strong><span>${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</span></button>`).join("")
     : `<div class="staff-empty-state"><strong>No Availability Profiles saved</strong><span>Save this editor as a named profile to reuse it later.</span></div>`;
   staffAvailabilityPatternList.querySelectorAll("[data-staff-availability-pattern-id]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -117,7 +117,7 @@ function renderStaffManagerAvailability(employee = null) {
     return;
   }
   const patternText = patterns.length
-    ? patterns.map((pattern) => `<span class="staff-manager-availability-chip"><strong>${escapeHtml(pattern.name || "Approved availability")}</strong><small>Every ${Number(pattern.repeatWeeks) || 1} week${Number(pattern.repeatWeeks) === 1 ? "" : "s"}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</small></span>`).join("")
+    ? patterns.map((pattern) => `<span class="staff-manager-availability-chip"><strong>${escapeHtml(pattern.name || "Approved availability")}</strong><small>${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</small></span>`).join("")
     : `<span class="staff-manager-availability-chip"><strong>Current approved availability</strong><small>${currentDate ? `Starts ${escapeHtml(currentDate)}` : "Used for scheduling"}</small></span>`;
   staffLiveAvailabilitySummary.innerHTML = `<div><strong>Live availability</strong><small>This is the availability currently used for scheduling. Saved drafts remain private until submitted and approved.</small></div><div class="staff-manager-availability-list">${patternText}</div>`;
   staffLiveAvailabilitySummary.hidden = false;

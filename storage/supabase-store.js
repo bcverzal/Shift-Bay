@@ -34,6 +34,40 @@ async function supabaseFetch(config, path, options = {}) {
   return body;
 }
 
+function scheduleChangeSummary(previous = {}, next = {}) {
+  const compare = (key) => {
+    const before = new Map((Array.isArray(previous[key]) ? previous[key] : []).map((item) => [item.id, item]));
+    const after = new Map((Array.isArray(next[key]) ? next[key] : []).map((item) => [item.id, item]));
+    let created = 0;
+    let edited = 0;
+    let deleted = 0;
+    after.forEach((item, id) => {
+      if (!before.has(id)) created += 1;
+      else if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) edited += 1;
+    });
+    before.forEach((_item, id) => { if (!after.has(id)) deleted += 1; });
+    return { created, edited, deleted };
+  };
+  const shifts = compare("shifts");
+  const openShifts = compare("unassignedShifts");
+  const requestOffs = compare("timeOffRequests");
+  const employees = compare("employees");
+  const templates = compare("templates");
+  return {
+    shiftsCreated: shifts.created,
+    shiftsEdited: shifts.edited,
+    shiftsDeleted: shifts.deleted,
+    openShiftsCreated: openShifts.created,
+    openShiftsEdited: openShifts.edited,
+    openShiftsDeleted: openShifts.deleted,
+    requestOffsCreated: requestOffs.created,
+    requestOffsEdited: requestOffs.edited,
+    requestOffsDeleted: requestOffs.deleted,
+    employeesChanged: employees.created + employees.edited + employees.deleted,
+    templatesChanged: templates.created + templates.edited + templates.deleted
+  };
+}
+
 function createSupabaseStore() {
   const config = requireSupabaseConfig();
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
@@ -137,6 +171,7 @@ function createSupabaseStore() {
         saved_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }];
+      const changeSummary = scheduleChangeSummary(existingRow?.state || {}, state);
       await supabaseFetch(config, "/scheduler_state_documents?on_conflict=location_id,document_key", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=representation" },
@@ -149,7 +184,8 @@ function createSupabaseStore() {
         savedByEmail: user?.email || payload?.savedBy?.email || "",
         savedByRole: user?.role || payload?.savedBy?.role || "",
         savedByDeviceId,
-        schemaVersion: body[0].schema_version
+        schemaVersion: body[0].schema_version,
+        changeSummary
       });
       return { ok: true, savedAt: body[0].saved_at, savedBy };
     },

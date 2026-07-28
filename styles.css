@@ -287,9 +287,23 @@ summary:focus-visible {
   color: #991b1b;
 }
 
+.storage-status-stale {
+  min-width: 170px;
+  border: 2px solid #b91c1c;
+  background: linear-gradient(180deg, #fff1f2, #fecdd3);
+  color: #991b1b;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2), 0 8px 18px rgba(127, 29, 29, 0.18);
+  animation: staleSavePulse 1.2s ease-in-out infinite;
+}
+
 @keyframes savePulse {
   0%, 100% { box-shadow: none; }
   50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18); }
+}
+
+@keyframes staleSavePulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2), 0 8px 18px rgba(127, 29, 29, 0.18); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0.32), 0 10px 22px rgba(127, 29, 29, 0.24); }
 }
 
 .storage-status:hover {
@@ -320,6 +334,11 @@ summary:focus-visible {
 .storage-status-error .storage-dot {
   background: #ef4444;
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+}
+
+.storage-status-stale .storage-dot {
+  background: #b91c1c;
+  box-shadow: 0 0 0 4px rgba(185, 28, 28, 0.28);
 }
 
 .storage-status-local .storage-dot {
@@ -2934,6 +2953,48 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   content: "-";
 }
 
+.print-department-filters {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid #d8e6f7;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.print-department-filters[hidden] {
+  display: none;
+}
+
+.print-department-filters legend {
+  padding: 0 5px;
+  color: #1f3b63;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+#printDepartmentOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.print-department-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.print-department-option input {
+  width: auto;
+  margin: 0;
+}
+
 .print-advanced-options label {
   margin-top: 10px;
 }
@@ -4938,27 +4999,12 @@ body.problem-focus .shift-card.has-issue {
   overflow: hidden;
 }
 
-.shift-card.has-training-badge {
-  min-height: calc(170px * var(--schedule-zoom, 1));
-  padding-bottom: calc(14px * var(--schedule-zoom, 1));
-  overflow: hidden;
-}
-
-.day-cell.has-availability-block-with-shift .shift-card.has-training-badge {
-  min-height: calc(176px * var(--schedule-zoom, 1));
-  padding-bottom: calc(14px * var(--schedule-zoom, 1));
-  overflow: hidden;
-}
-
+.shift-card.has-training-badge,
+.day-cell.has-availability-block-with-shift .shift-card.has-training-badge,
 .ghost-shift-card.has-training-badge {
-  min-height: calc(148px * var(--schedule-zoom, 1));
-  padding-bottom: calc(12px * var(--schedule-zoom, 1));
+  min-height: calc(94px * var(--schedule-zoom, 1));
+  padding-bottom: calc(8px * var(--schedule-zoom, 1));
   overflow: hidden;
-}
-
-.shift-card.has-training-badge .closer-toggle:not(.active) {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .day-cell.has-availability-block-with-shift .shift-card.has-training-badge .shift-title,
@@ -5121,6 +5167,20 @@ body.problem-focus .shift-card.has-issue {
   line-height: 1.2;
   text-shadow: 0 1px 1px rgba(15, 23, 42, 0.36);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.shift-card:hover .closer-toggle:not(.active),
+.shift-card:focus-within .closer-toggle:not(.active),
+.closer-toggle.active {
+  opacity: 1;
+}
+
+.shift-card:has(.shift-action-strip) .closer-toggle {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .closer-toggle:hover {
@@ -5339,8 +5399,9 @@ body.problem-focus .shift-card.has-issue {
   font-size: calc(11px * var(--schedule-zoom, 1));
   font-weight: 700;
   line-height: 1.12;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 3px rgba(15,23,42,0.18);
 }
 
@@ -6273,6 +6334,29 @@ legend {
   background: #eef5ff;
 }
 
+.active-availability-day-summary {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  color: #334155;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.active-availability-day-summary div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 5px;
+}
+
+.active-availability-day-summary strong {
+  color: #1e3a8a;
+}
+
 .active-availability-tab.selected {
   border-color: #2767e8;
   background: #e4efff;
@@ -6312,6 +6396,33 @@ legend {
 .availability-editor-toolbar > strong {
   color: #1e3a8a;
   font-size: 13px;
+}
+
+.availability-editor-save {
+  display: flex;
+  flex: 1 1 260px;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.availability-editor-save input {
+  width: min(180px, 100%);
+  min-width: 0;
+}
+
+.availability-pattern-actions .primary-action {
+  flex: 1 1 auto;
+  border-color: #1d4ed8;
+  background: linear-gradient(180deg, #397cff, #2059d9);
+  color: #fff;
+}
+
+.availability-pattern-actions .primary-action:disabled {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: not-allowed;
 }
 
 #employeeRoleChecks,
@@ -8348,6 +8459,26 @@ dialog {
   max-height: calc(100vh - 24px);
 }
 
+.recent-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recent-activity-heading h2 {
+  margin: 0;
+}
+
+.recent-activity-heading button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .recent-activity-list {
   display: grid;
   gap: 9px;
@@ -8402,6 +8533,59 @@ dialog {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.recent-activity-summary {
+  color: #172554;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.shift-metadata-details {
+  margin-top: 10px;
+  border: 1px solid #d8e6f7;
+  border-radius: 9px;
+  background: #f8fbff;
+}
+
+.shift-metadata-details[hidden] {
+  display: none;
+}
+
+.shift-metadata-details summary {
+  padding: 8px 10px;
+  color: #1f3b63;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.shift-metadata-body {
+  padding: 0 10px 9px;
+  color: #475569;
+  font-size: 11px;
+}
+
+.shift-metadata-body dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.shift-metadata-body dl > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.shift-metadata-body dt {
+  font-weight: 900;
+}
+
+.shift-metadata-body dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .recent-activity-meta span {
@@ -9668,6 +9852,30 @@ dialog .time-picker {
   .open-shifts-actions,
   .open-shift-role-jump {
     display: none !important;
+  }
+
+  /* The selected report owns the print output, regardless of which app tab was
+     active when the print dialog opened. */
+  body.printing-grid .panel,
+  body.printing-simple .panel {
+    display: none !important;
+  }
+
+  body.printing-grid #schedule.panel,
+  body.printing-simple #schedule.panel {
+    display: block !important;
+  }
+
+  body.printing-current-page .print-view {
+    display: none !important;
+  }
+
+  body.printing-current-page .panel {
+    display: none !important;
+  }
+
+  body.printing-current-page .panel.active {
+    display: block !important;
   }
 
   .open-shifts-wrap {

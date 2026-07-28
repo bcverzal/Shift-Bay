@@ -90,6 +90,13 @@
 - [ ] Plan baseline/update version folders so experimental work does not disrupt the usable scheduler.
 - [ ] Eventually prepare for packaged desktop app or more formal server setup.
 
+## Long-Term Collaboration And Concurrency
+
+- [ ] **Priority 1: Add conflict-aware state merging.** Allow simultaneous users to save non-overlapping changes safely, while stopping and explaining conflicts when both users changed the same shift or record. Preserve the rejected browser version for recovery and require an intentional choice before replacing either version.
+- [ ] **Priority 2: Move toward shift-level versioning.** Replace whole-schedule optimistic locking with per-shift revisions/history so independent edits do not conflict unnecessarily and same-shift conflicts can show who changed what. This should support future audit history, undo/review, and multi-manager collaboration.
+- [ ] **Priority 3: Add owner-only reversible audit snapshots.** Let an owner review a lower-level user's change and undo that change without rolling back unrelated work.
+- [ ] Treat shift-level versioning as the longer-term foundation; implement conflict-aware merging first because it fits the current schedule document architecture and provides immediate multi-user value.
+
 ## Staff Portal MVP
 
 - [ ] Create staff account invitation/linking flow from employee profiles.

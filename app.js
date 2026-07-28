@@ -1,4 +1,5 @@
 const STORE_KEY = "restaurantScheduler.v1";
+const CLOUD_RECOVERY_KEY = `${STORE_KEY}.cloudRecovery`;
 const STAFF_RESET_KEY = "restaurantScheduler.staffReset.20260611";
 const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
@@ -45,6 +46,7 @@ let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let cloudSaveBlockedByStale = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
 let skipLocalRecoveryOnce = false;
@@ -87,6 +89,8 @@ let issuePopoverOpen = false;
 let scheduleReturnContext = null;
 let gridFiltersStayOpen = false;
 let gridFiltersChangedWhileOpen = false;
+let recentActivityDetailsVisible = false;
+let recentActivityEvents = [];
 let focusedDateKey = "";
 let dayFocusTimelineDrag = null;
 let dayFocusShowOpenShifts = loadDayFocusShowOpenShifts();
@@ -95,6 +99,7 @@ let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
 let selectedAvailabilityPatternId = "";
 let selectedAvailabilityDayIndex = 0;
+let availabilityEditingPatternId = "";
 let submitAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
@@ -705,6 +710,10 @@ function saveState(options = {}) {
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (SERVER_STORAGE_ENABLED && serverStorageReady) {
+    if (cloudSaveBlockedByStale) {
+      setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+      return Promise.resolve(false);
+    }
     if (options.immediate) {
       clearTimeout(serverSaveTimer);
       return persistStateToServer();
@@ -727,6 +736,7 @@ function storageStatusLabel(status) {
     saving: "Cloud saving",
     saved: "Cloud saved",
     error: "Cloud save issue",
+    stale: "CLOUD SAVE REJECTED",
     local: "LOCAL MODE"
   };
   const label = labels[status] || "Storage";
@@ -746,6 +756,7 @@ function storageStatusTitle() {
   if (storageStatus === "saved") return [localCloudPrefix, "Cloud connected. Schedule data is saving to Supabase."].filter(Boolean).join(" ");
   if (storageStatus === "saving") return [localCloudPrefix, "Saving schedule changes to Supabase."].filter(Boolean).join(" ");
   if (storageStatus === "local") return IS_LOCAL_TEST_HOST ? "LOCAL TEST MODE: changes are only in this browser and will not sync to the cloud." : "LOCAL MODE: changes are only on this computer and will not sync.";
+  if (storageStatus === "stale") return "CLOUD SAVE REJECTED: this window is behind a newer shared schedule. Refresh before making more edits. Your rejected edits are preserved for review.";
   if (storageStatus === "error") return "Cloud storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
@@ -773,6 +784,10 @@ function serverEnvelope() {
 }
 
 function queueServerSave() {
+  if (cloudSaveBlockedByStale) {
+    setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+    return;
+  }
   clearTimeout(serverSaveTimer);
   setStorageStatus("saving", "Saving to the shared scheduler data file...");
   serverSaveTimer = setTimeout(() => persistStateToServer(), 500);
@@ -785,6 +800,7 @@ async function persistStateToServer() {
     return false;
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
+  if (cloudSaveBlockedByStale) return false;
   if (serverSaveInFlight) {
     serverSavePending = true;
     return false;
@@ -804,7 +820,21 @@ async function persistStateToServer() {
     }
     if (response.status === 409) {
       const conflict = await response.json().catch(() => ({}));
-      throw new Error(conflict.error || "This window is behind the latest cloud version. Refresh before saving.");
+      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, conflict.existingUpdatedAt || "");
+      try {
+        const latestResponse = await authFetch("/api/state", { cache: "no-store" });
+        if (latestResponse.ok) {
+          const latestEnvelope = await latestResponse.json();
+          recovery.changes = stateCollectionChanges(state, normalizeLoadedState(latestEnvelope.data || latestEnvelope));
+        }
+      } catch {
+        // The full change list can still be computed after the user refreshes.
+      }
+      saveCloudRecovery(recovery);
+      cloudSaveBlockedByStale = true;
+      setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+      showStaleRecoveryAlert(recovery, true);
+      return false;
     }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
     const result = await response.json().catch(() => ({}));
@@ -1519,16 +1549,29 @@ async function hydrateStateFromServer() {
       const skipLocalRecovery = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
       if (!skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
+        // A browser copy can be newer than the shared document because another
+        // device saved first. Never push that copy automatically on startup:
+        // doing so creates an immediate 409 and can overwrite another user's
+        // work if the server's guard is ever bypassed. Preserve it for review.
+        const recovery = createCloudRecovery(state, state.meta?.serverSavedAt || "", serverSavedAt);
+        recovery.changes = stateCollectionChanges(state, serverState);
+        saveCloudRecovery(recovery);
+        state = serverState;
+        state.meta = { ...(state.meta || {}), serverSavedAt };
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
         serverStorageReady = true;
-        lastKnownServerSavedAt = state.meta?.serverSavedAt || serverSavedAt || "";
-        setStorageStatus("saving", "Recovering newer browser changes to the cloud schedule...");
-        showConflict("This browser had newer unsaved changes than the cloud copy. Shift Bay kept the browser copy and is saving it back to the cloud.");
-        await persistStateToServer();
+        cloudSaveBlockedByStale = false;
+        lastKnownServerSavedAt = serverSavedAt;
+        setStorageStatus("saved", "Loaded the latest shared schedule. An older browser copy was preserved for recovery.");
+        showStaleRecoveryAlert(recovery);
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
         renderAll();
         updateZoomVisibility();
         return;
       }
       lastKnownServerSavedAt = serverSavedAt;
+      cloudSaveBlockedByStale = false;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
@@ -1540,6 +1583,14 @@ async function hydrateStateFromServer() {
       saveLocalActiveWeek({ shared: false });
       renderAll();
       updateZoomVisibility();
+      const recovery = readCloudRecovery();
+      if (recovery && !recovery.presentedAt) {
+        if (!recovery.changes?.length) {
+          recovery.changes = stateCollectionChanges(recovery.data, serverState);
+          saveCloudRecovery(recovery);
+        }
+        showStaleRecoveryAlert(recovery);
+      }
       return;
     }
     if (response.status === 404) {
@@ -5180,7 +5231,7 @@ function renderDayFocusEmployeeTimeline(dateKey, employee, shifts, unavailableRa
   }).join("");
   return `
     <div class="day-focus-timebar day-focus-row-timeline" data-timeline-date="${dateKey}" data-timeline-start="${window.start}" data-timeline-end="${window.end}">
-      <div class="day-focus-timebar-track" style="--timeline-lanes:${laneCount};">
+      <div class="day-focus-timebar-track" style="--timeline-lanes:${laneCount}; min-height:${Math.max(42, 31 + ((laneCount - 1) * 20))}px;">
         ${segments}
         ${ticks.map((tick) => `<span class="timebar-row-tick" style="left:${tick.left}%"><em>${tick.label}</em></span>`).join("")}
         ${bars}
@@ -7333,6 +7384,77 @@ function showAppAlert({ title = "Notice", message = "", items = [], type = "info
   dialog.showModal();
 }
 
+function stateCollectionChanges(localState = {}, serverState = {}) {
+  const employees = new Map((Array.isArray(serverState.employees) ? serverState.employees : []).map((item) => [item.id, item]));
+  const employeeName = (id) => {
+    const employee = employees.get(id) || (state.employees || []).find((item) => item.id === id);
+    return employee ? displayName(employee) : "Unknown employee";
+  };
+  const roleName = (id) => roleById(id)?.name || "Shift";
+  const describe = (key, label, item) => {
+    if (key === "shifts" || key === "unassignedShifts") {
+      const owner = item.employeeId ? employeeName(item.employeeId) : "Open shift";
+      return `${label}: ${owner} / ${roleName(item.roleId)} / ${item.date || "undated"} / ${item.start || "no start"}`;
+    }
+    if (key === "timeOffRequests") return `${label}: ${employeeName(item.employeeId)} / ${item.date || "undated"} / ${isScheduleBlock(item) ? "Block" : "RO"}`;
+    if (key === "employees") return `${label}: ${displayName(item) || item.name || "Employee"}`;
+    if (key === "templates") return `${label}: ${item.name || "Template"}`;
+    return `${label}: ${item.id || "record"}`;
+  };
+  const changes = [];
+  ["shifts", "unassignedShifts", "timeOffRequests", "employees", "templates"].forEach((key) => {
+    const before = new Map((Array.isArray(serverState[key]) ? serverState[key] : []).map((item) => [item.id, item]));
+    const after = new Map((Array.isArray(localState[key]) ? localState[key] : []).map((item) => [item.id, item]));
+    after.forEach((item, id) => {
+      if (!before.has(id)) changes.push(describe(key, "Added", item));
+      else if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) changes.push(describe(key, "Edited", item));
+    });
+    before.forEach((item, id) => {
+      if (!after.has(id)) changes.push(describe(key, "Deleted", item));
+    });
+  });
+  return changes.slice(0, 100);
+}
+
+function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "") {
+  return {
+    savedAt: nowIso(),
+    baseServerSavedAt,
+    existingUpdatedAt,
+    data: localState,
+    changes: []
+  };
+}
+
+function saveCloudRecovery(recovery) {
+  try { localStorage.setItem(CLOUD_RECOVERY_KEY, JSON.stringify(recovery)); } catch { /* local recovery is best effort */ }
+}
+
+function readCloudRecovery() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CLOUD_RECOVERY_KEY) || "null");
+    return value && value.data ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function showStaleRecoveryAlert(recovery, blocking = false) {
+  const changes = Array.isArray(recovery?.changes) ? recovery.changes : [];
+  showAppAlert({
+    title: blocking ? "CLOUD SAVE REJECTED" : "Unsaved changes preserved",
+    message: blocking
+      ? "Another user saved the schedule first. Stop editing this window and refresh before making more changes. Your rejected browser copy was preserved, and this list shows what it contained."
+      : "This browser had edits that were newer than the shared schedule. The shared version was loaded, and the older browser copy was preserved for review.",
+    items: changes.length ? changes : ["The rejected browser copy is preserved locally, but no record-level differences were detected."],
+    type: "error"
+  });
+  if (!blocking && recovery) {
+    recovery.presentedAt = nowIso();
+    saveCloudRecovery(recovery);
+  }
+}
+
 function updateShiftNameVisibility() {
   const control = $("shiftLabelControl");
   if (!control) return;
@@ -7370,6 +7492,43 @@ function updateShiftDialogContext() {
   const employeeText = employee ? ` | ${displayName(employee)}` : "";
   target.textContent = `${dateText}${employeeText}`;
   updateShiftNameVisibility();
+}
+
+function auditActorLabel(actor) {
+  if (!actor) return "Unknown user";
+  return actor.email || actor.name || actor.id || "Unknown user";
+}
+
+function renderShiftMetadata(shift) {
+  const details = $("shiftMetadataDetails");
+  const body = $("shiftMetadataBody");
+  if (!details || !body) return;
+  details.hidden = !shift;
+  if (!shift) {
+    body.innerHTML = "";
+    return;
+  }
+  body.innerHTML = `
+    <dl>
+      <div><dt>Created</dt><dd>${escapeHtml(shift.createdAt ? new Date(shift.createdAt).toLocaleString() : "Unknown")}</dd></div>
+      <div><dt>Created by</dt><dd>${escapeHtml(auditActorLabel(shift.createdBy))}</dd></div>
+      <div><dt>Last edited</dt><dd>${escapeHtml(shift.updatedAt ? new Date(shift.updatedAt).toLocaleString() : "Unknown")}</dd></div>
+      <div><dt>Last edited by</dt><dd>${escapeHtml(auditActorLabel(shift.updatedBy))}</dd></div>
+      <div><dt>Created from</dt><dd>${escapeHtml(shift.changeSource || shift.source || "Existing schedule")}</dd></div>
+    </dl>
+  `;
+}
+
+function shiftChangeMetadata(existing, source = "Manual") {
+  const now = nowIso();
+  const actor = currentSaveActor();
+  return {
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || actor,
+    updatedAt: now,
+    updatedBy: actor,
+    changeSource: existing?.changeSource || existing?.source || source
+  };
 }
 
 function openShiftDialog(shift = null) {
@@ -7434,6 +7593,7 @@ function openShiftDialog(shift = null) {
   $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
+  renderShiftMetadata(shift);
   refreshShiftEmployeeOptions(base.employeeId);
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
@@ -7500,6 +7660,7 @@ function openStagedShiftDialog(stagedShift = null) {
   $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
+  renderShiftMetadata(stagedShift);
   updateShiftDialogContext();
   dialog.showModal();
 }
@@ -7612,6 +7773,7 @@ function refreshShiftEmployeeOptions(preferredEmployeeId = "") {
 }
 
 function collectStagedShiftFromDialog() {
+  const existing = (state.unassignedShifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
   const untilVolume = state.settings.showUntilVolumeInShiftEditor && $("shiftUntilVolume").checked;
   const isTraining = $("shiftIsTraining").checked;
@@ -7635,11 +7797,13 @@ function collectStagedShiftFromDialog() {
       segmentEnd: isTraining ? normalizeTime($("shiftTrainingSegmentEnd").value) : "",
       dayOverride: isTraining ? $("shiftTrainingDayOverride").value : ""
     },
-    color: role?.color || "#2563eb"
+    color: role?.color || "#2563eb",
+    ...shiftChangeMetadata(existing, "Manual")
   };
 }
 
 function collectShiftFromDialog() {
+  const existing = (state.shifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
   const isTraining = $("shiftIsTraining").checked;
   const traineeId = $("shiftTrainee").value || $("shiftEmployee").value;
@@ -7666,7 +7830,8 @@ function collectShiftFromDialog() {
       dayOverride: Number($("shiftTrainingDayOverride").value) || null
     },
     notes: $("shiftNotes").value.trim(),
-    color: role?.color || "#2563eb"
+    color: role?.color || "#2563eb",
+    ...shiftChangeMetadata(existing, "Manual")
   };
 }
 
@@ -7939,6 +8104,21 @@ function selectedAvailabilityPattern(employee = null) {
   return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
 }
 
+function availabilityRepeatLabel(repeatWeeks) {
+  const weeks = Math.max(1, Math.min(4, Number(repeatWeeks) || 1));
+  return weeks === 1 ? "Every week" : `Every ${weeks} weeks`;
+}
+
+function availabilityDaySummary(availability = {}) {
+  return DAYS.map((day, index) => {
+    const ranges = Array.isArray(availability[index]) ? availability[index] : [];
+    const text = ranges.length
+      ? ranges.map((range) => `${range.start || ""} - ${range.end || ""}`).join(", ")
+      : "Not available";
+    return `<div><strong>${day}</strong><span>${escapeHtml(text)}</span></div>`;
+  }).join("");
+}
+
 function availabilityPatternAppliesOnDate(pattern, date) {
   const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern?.effectiveDate));
   if (Number.isNaN(effectiveDate.getTime()) || date < effectiveDate) return false;
@@ -7993,6 +8173,10 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
       <small>Begins ${escapeHtml(pattern.effectiveDate)}</small>
     </button>`;
   }).join("");
+  tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
+    const pattern = activePatterns.find((item) => item.id === button.dataset.activeAvailabilityId);
+    if (pattern) button.insertAdjacentHTML("beforeend", `<div class="active-availability-day-summary">${availabilityDaySummary(pattern.availability)}</div>`);
+  });
   if (!activePatterns.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
   tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
     button.onclick = () => {
@@ -8039,18 +8223,20 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   if (!patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = patterns[0]?.id || "draft";
   const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
   renderActiveAvailabilitySummary(employee, patterns, selected);
+  const editButton = $("editAvailabilityPatternBtn");
+  if (editButton) editButton.disabled = !selected;
   list.innerHTML = patterns.map((pattern) => {
     const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
     return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}${pattern.active ? "" : " inactive"}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
-      <span>${dayCount} available days · every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"} · starts ${escapeHtml(pattern.effectiveDate)}</span>
+      <span>${dayCount} available days · ${availabilityRepeatLabel(pattern.repeatWeeks)} · starts ${escapeHtml(pattern.effectiveDate)}</span>
     </button>`;
   }).join("");
   list.querySelectorAll("[data-availability-pattern-id]").forEach((button) => {
     button.onclick = () => {
       selectedAvailabilityPatternId = button.dataset.availabilityPatternId;
+      availabilityEditingPatternId = "";
       renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
-      renderAvailabilityEditor(employeeById($("employeeId")?.value));
     };
   });
   if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = selected?.name || "";
@@ -8058,11 +8244,8 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   if ($("employeeAvailabilityEffectiveDate")) {
     $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
   }
-  const guidance = availabilityPatternGuidance(selected);
-  if ($("availabilityPatternGuidance")) {
-    $("availabilityPatternGuidance").textContent = guidance.text;
-    $("availabilityPatternGuidance").classList.toggle("is-warning", guidance.warning);
-  }
+  const submitButton = $("submitAvailabilityPatternBtn");
+  if (submitButton) submitButton.disabled = !selected;
 }
 function renderAvailabilityEditor(employee = null) {
   const availability = selectedAvailabilityPattern(employee)?.availability || emptyAvailability();
@@ -9915,8 +10098,46 @@ function isCompactPrintLayout(layout) {
 function updateCompactPrintAdvancedVisibility() {
   const advanced = $("compactPrintAdvanced");
   if (!advanced) return;
-  advanced.hidden = !isCompactPrintLayout($("printLayout")?.value);
+  const layout = $("printLayout")?.value;
+  advanced.hidden = !isCompactPrintLayout(layout);
+  const departmentFilters = $("printDepartmentFilters");
+  if (departmentFilters) departmentFilters.hidden = !isCompactPrintLayout(layout);
+  if (isCompactPrintLayout(layout)) renderPrintDepartmentOptions();
   if (!advanced.hidden) renderCompactPrintRoleOrderEditor();
+}
+
+function printDepartmentList() {
+  return Array.from(new Set((state.roles || [])
+    .map((role) => String(role.department || "").trim())
+    .filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function selectedPrintDepartments() {
+  const options = Array.from(document.querySelectorAll("#printDepartmentOptions input[data-print-department]"));
+  if (!options.length) return null;
+  return new Set(options.filter((input) => input.checked).map((input) => input.value));
+}
+
+function printDepartmentMatches(shift, departments) {
+  if (!departments) return true;
+  const department = String(roleById(shift.roleId)?.department || shift.department || "").trim();
+  return departments.has(department);
+}
+
+function renderPrintDepartmentOptions() {
+  const target = $("printDepartmentOptions");
+  if (!target) return;
+  const previous = new Set(Array.from(target.querySelectorAll("input[data-print-department]:checked"), (input) => input.value));
+  const departments = printDepartmentList();
+  target.innerHTML = departments.map((department) => `
+    <label class="print-department-option">
+      <input type="checkbox" data-print-department value="${escapeHtml(department)}" ${!previous.size || previous.has(department) ? "checked" : ""}>
+      <span>${escapeHtml(department)}</span>
+    </label>
+  `).join("") || `<span class="hint">No departments are configured.</span>`;
+  target.querySelectorAll("input[data-print-department]").forEach((input) => {
+    input.addEventListener("change", renderPrintWarningChecklist);
+  });
 }
 
 function renderCompactPrintRoleOrderEditor() {
@@ -9976,6 +10197,10 @@ function renderPrintWarningChecklist() {
     { warn: issues.length > 0, text: issues.length ? `${issues.length} schedule warning/error${issues.length === 1 ? "" : "s"} found.` : "No schedule warnings found." },
     { warn: hiddenEmployees > 0, text: hiddenEmployees ? `${hiddenEmployees} active employee${hiddenEmployees === 1 ? "" : "s"} hidden by filters.` : "No active employees hidden by filters." },
     { warn: false, text: printLayoutDescription($("printLayout")?.value) },
+    ...(isCompactPrintLayout($("printLayout")?.value) ? [{
+      warn: false,
+      text: `Departments: ${Array.from(selectedPrintDepartments() || printDepartmentList()).join(", ") || "none"}.`
+    }] : []),
     ...(isCompactPrintLayout($("printLayout")?.value) ? [{ warn: false, text: `Shift order inside cells: ${compactPrintShiftOrderLabel(compactPrintShiftOrder())}.` }] : [])
   ];
   target.innerHTML = `
@@ -9985,26 +10210,39 @@ function renderPrintWarningChecklist() {
 }
 
 async function printSchedule() {
-  if (!(await checkPrintCoverage())) return;
-  preparePrintView($("printLayout").value, $("printSort").value, { shiftOrder: compactPrintShiftOrder() });
+  const layout = $("printLayout").value;
+  if (layout !== "currentPage" && !(await checkPrintCoverage())) return;
+  preparePrintView(layout, $("printSort").value, {
+    shiftOrder: compactPrintShiftOrder(),
+    departments: selectedPrintDepartments()
+  });
   window.print();
   window.setTimeout(clearPrintView, 500);
 }
 
 function preparePrintView(layout, sortMode, options = {}) {
-  document.body.classList.remove("printing-grid", "printing-employee-compact");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page");
+  if (layout === "currentPage") {
+    clearPrintView();
+    document.body.classList.add("printing-current-page");
+    return;
+  }
   if (layout === "ctuitEntry") {
     renderCtuitEntryPrintView();
     document.body.classList.add("printing-simple", "printing-ctuit-entry");
     return;
   }
   if (layout === "simpleRole" || layout === "simpleRoleWithBay") {
-    renderSimpleRolePrintView(sortMode, { includeOpenShiftBoxes: layout === "simpleRoleWithBay", shiftOrder: options.shiftOrder });
+    renderSimpleRolePrintView(sortMode, {
+      includeOpenShiftBoxes: layout === "simpleRoleWithBay",
+      shiftOrder: options.shiftOrder,
+      departments: options.departments
+    });
     document.body.classList.add("printing-simple");
     return;
   }
   if (layout === "simpleEmployee") {
-    renderSimpleEmployeePrintView(sortMode, { shiftOrder: options.shiftOrder });
+    renderSimpleEmployeePrintView(sortMode, { shiftOrder: options.shiftOrder, departments: options.departments });
     document.body.classList.add("printing-simple", "printing-employee-compact");
     return;
   }
@@ -10017,11 +10255,12 @@ function printLayoutDescription(layout) {
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
   if (layout === "simpleRoleWithBay") return "Compact role grid with open Shift Bay boxes selected.";
   if (layout === "simpleRole") return "Compact role grid selected.";
+  if (layout === "currentPage") return "Current page selected. The active screen will be printed intentionally.";
   return "Current grid layout selected.";
 }
 
 function clearPrintView() {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "compact-preview");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "compact-preview");
   updateCompactPreviewButton();
   $("printView").hidden = true;
   $("printView").innerHTML = "";
@@ -10042,9 +10281,9 @@ function toggleCompactPreview() {
 
 function renderSimpleRolePrintView(sortMode, options = {}) {
   const dates = weekDates();
-  const visible = state.shifts.filter((shift) => visibleShift(shift));
-  const roleGroups = groupPrintShiftsByRole(visible, sortMode);
-  const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes() : "";
+  const visible = state.shifts.filter((shift) => visibleShift(shift) && printDepartmentMatches(shift, options.departments));
+  const roleGroups = groupPrintShiftsByRole(visible, sortMode, options.departments);
+  const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes(options.departments) : "";
   const shiftOrder = options.shiftOrder || "time";
   $("printView").hidden = false;
   $("printView").innerHTML = `
@@ -10056,7 +10295,7 @@ function renderSimpleRolePrintView(sortMode, options = {}) {
 function renderSimpleEmployeePrintView(sortMode, options = {}) {
   const dates = weekDates();
   const dateKeys = dates.map(formatDateKey);
-  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift));
+  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift) && printDepartmentMatches(shift, options.departments));
   const shiftOrder = options.shiftOrder || "time";
   const employeeIds = Array.from(new Set([
     ...visible.map((shift) => shift.employeeId).filter(Boolean),
@@ -10084,7 +10323,7 @@ function renderSimpleEmployeePrintView(sortMode, options = {}) {
           ${employeeIds.map((employeeId) => `
             <tr class="employee-row">
               <th>${displayName(employeeById(employeeId))}</th>
-              ${dateKeys.map((dateKey) => `<td>${renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder)}</td>`).join("")}
+              ${dateKeys.map((dateKey) => `<td>${renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder, options.departments)}</td>`).join("")}
             </tr>
           `).join("")}
         </tbody>
@@ -10093,11 +10332,11 @@ function renderSimpleEmployeePrintView(sortMode, options = {}) {
   `;
 }
 
-function renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder) {
+function renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder, departments = null) {
   const employee = employeeById(employeeId);
   const extras = renderSimplePrintExtras(employee, employeeId, dateKey);
   const dayShifts = state.shifts
-    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId && visibleShift(shift))
+    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId && visibleShift(shift) && printDepartmentMatches(shift, departments))
     .sort((a, b) => compareCompactCellShifts(a, b, shiftOrder));
   const shiftLines = dayShifts.map((shift) => {
     const role = roleById(shift.roleId);
@@ -10176,6 +10415,7 @@ function renderCtuitEntryRow(shift) {
   const flags = [];
   if (shift.isCloser) flags.push("CL");
   if (shift.isFlexDouble) flags.push("Flex");
+  trainingBadgesForShift(shift).forEach((trainingNote) => flags.push(trainingNote));
   if (shift.notes) flags.push(shift.notes);
   const roleClass = `role-${(role?.name || "other").toLowerCase().replace(/\s+/g, "-")}`;
   return `
@@ -10189,8 +10429,8 @@ function renderCtuitEntryRow(shift) {
   `;
 }
 
-function renderOpenShiftPrintBoxes() {
-  const shifts = currentWeekOpenShifts();
+function renderOpenShiftPrintBoxes(departments = null) {
+  const shifts = currentWeekOpenShifts().filter((shift) => printDepartmentMatches(shift, departments));
   if (!shifts.length) {
     return `
       <section class="open-shift-print-section">
@@ -10236,7 +10476,7 @@ function renderOpenShiftPrintBox(shift) {
   `;
 }
 
-function groupPrintShiftsByRole(shifts, sortMode) {
+function groupPrintShiftsByRole(shifts, sortMode, departments = null) {
   const groups = {};
   const ensureGroup = (roleName, roleId = "") => {
     if (!groups[roleName]) groups[roleName] = { roleName, roleId, shifts: [], employeeIds: new Set() };
@@ -10257,7 +10497,7 @@ function groupPrintShiftsByRole(shifts, sortMode) {
     .forEach((employee) => {
       (employee.roleTraining || []).forEach((roleId) => {
         const role = roleById(roleId);
-        if (!role || !state.settings.visibleDepartments.includes(role.department)) return;
+        if (!role || !state.settings.visibleDepartments.includes(role.department) || (departments && !departments.has(role.department))) return;
         ensureGroup(role.name, role.id).employeeIds.add(employee.id);
       });
     });
@@ -10990,12 +11230,49 @@ function openStorageInfo() {
   $("storageInfoDialog").showModal();
 }
 
+function formatAuditChangeSummary(summary = {}) {
+  const items = [
+    [summary.shiftsCreated, "shifts created"],
+    [summary.shiftsEdited, "shifts edited"],
+    [summary.shiftsDeleted, "shifts deleted"],
+    [summary.openShiftsCreated, "open shifts added"],
+    [summary.openShiftsEdited, "open shifts edited"],
+    [summary.openShiftsDeleted, "open shifts deleted"],
+    [summary.requestOffsCreated, "ROs/blocks added"],
+    [summary.requestOffsEdited, "ROs/blocks edited"],
+    [summary.requestOffsDeleted, "ROs/blocks deleted"],
+    [summary.employeesChanged, "employees changed"],
+    [summary.templatesChanged, "templates changed"]
+  ].filter(([count]) => Number(count) > 0);
+  return items.length ? items.map(([, label]) => label).join(" / ") : "No schedule records changed";
+}
+
+function updateRecentActivityDetailsButton() {
+  const button = $("toggleRecentActivityDetailsBtn");
+  if (!button) return;
+  button.textContent = recentActivityDetailsVisible ? "-" : "+";
+  button.setAttribute("aria-expanded", String(recentActivityDetailsVisible));
+  button.title = recentActivityDetailsVisible ? "Hide advanced audit details" : "Show advanced audit details";
+}
+
+function renderRecentActivityEvents(events = recentActivityEvents) {
+  const body = $("recentActivityBody");
+  updateRecentActivityDetailsButton();
+  if (!body) return;
+  if (!events.length) {
+    body.innerHTML = `<p class="hint">No recent cloud activity has been recorded yet.</p>`;
+    return;
+  }
+  body.innerHTML = events.map(formatAuditEvent).join("");
+}
+
 function formatAuditEvent(event) {
   const details = event.details || {};
   const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Unknown time";
   const device = details.savedByDeviceId ? String(details.savedByDeviceId).slice(0, 8) : "";
   const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity").replaceAll("_", " ");
   const user = details.savedByEmail || event.user_email || (event.user_id ? `User ${String(event.user_id).slice(0, 8)}` : "Unknown user");
+  const summary = details.changeSummary;
   const role = details.savedByRole || "";
   const meta = [
     role ? `Role: ${role}` : "",
@@ -11009,7 +11286,8 @@ function formatAuditEvent(event) {
         <span>${escapeHtml(when)}</span>
       </div>
       <div class="recent-activity-user">Saved by ${escapeHtml(user)}</div>
-      ${meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      ${summary ? `<div class="recent-activity-summary">${escapeHtml(formatAuditChangeSummary(summary))}</div>` : ""}
+      ${recentActivityDetailsVisible && meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     </article>
   `;
 }
@@ -11023,16 +11301,8 @@ async function openRecentActivity() {
       cache: "no-store",
       headers: authRequestHeaders()
     });
-    const events = Array.isArray(result.events) ? result.events : [];
-    if (!events.length) {
-      if (body) body.innerHTML = `<p class="hint">No recent cloud activity has been recorded yet.</p>`;
-      return;
-    }
-    if (body) {
-      body.innerHTML = `
-        ${events.map(formatAuditEvent).join("")}
-      `;
-    }
+    recentActivityEvents = Array.isArray(result.events) ? result.events : [];
+    renderRecentActivityEvents();
   } catch {
     if (body) body.innerHTML = `<p class="hint">Recent cloud activity is not available in this version yet.</p>`;
   }
@@ -13017,6 +13287,10 @@ function wireEvents() {
   });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
   $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
+  $("toggleRecentActivityDetailsBtn")?.addEventListener("click", () => {
+    recentActivityDetailsVisible = !recentActivityDetailsVisible;
+    renderRecentActivityEvents();
+  });
   $("closeManagerAccessBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
   $("managerInviteForm")?.addEventListener("submit", sendManagerInvite);
   $("staffAccessBtn")?.addEventListener("click", openStaffAccess);
@@ -13184,7 +13458,7 @@ function wireEvents() {
     $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
     const parsedAvailability = parseAvailability();
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
-    const selectedPatternId = selectedAvailabilityPatternId || existingPatterns[0]?.id || "regular";
+    const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
     const patternActive = activateSubmittedAvailability || selectedPattern?.active === true;
     const updatedPattern = {
@@ -13292,23 +13566,45 @@ function wireEvents() {
   $("openAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "12a-11:59p");
   $("clearAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "");
   $("saveAvailabilityPatternBtn").onclick = () => {
+    const current = employeeById($("employeeId")?.value);
+    const patterns = availabilityPatternsForEmployee(current);
+    const name = $("employeeAvailabilityPatternName")?.value.trim();
+    if (!name) {
+      showConflict("Give this availability a name before saving it.");
+      return;
+    }
+    if (!availabilityEditingPatternId) {
+      selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    }
     markEmployeeFormDirty();
     $("employeeForm").requestSubmit();
   };
-  $("saveAvailabilityPatternAsNewBtn").onclick = () => {
-    const currentName = $("employeeAvailabilityPatternName")?.value.trim() || "Availability";
-    const existingNames = new Set(availabilityPatternsForEmployee(employeeById($("employeeId")?.value)).map((pattern) => pattern.name));
-    let newName = currentName;
-    let copyNumber = 2;
-    while (existingNames.has(newName)) newName = `${currentName} ${copyNumber++}`;
-    selectedAvailabilityPatternId = `pattern-${Date.now()}`;
-    if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = newName;
+  $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    if (!selected) return;
+    availabilityEditingPatternId = selected.id;
+    renderAvailabilityEditor(employee);
+    setAvailabilityInputs("[data-availability-day]", "");
+    Object.entries(selected.availability || {}).forEach(([day, ranges]) => {
+      (ranges || []).forEach((range, index) => {
+        if (index === 0) setAvailabilityPreset(`[data-availability-day="${day}"][data-availability-slot="0"]`, Number(day), "open");
+        const row = document.querySelector(`[data-availability-row="${day}"]`);
+        const add = row?.querySelector("[data-add-availability-window]");
+        while (row && row.querySelectorAll(".availability-window").length <= index && add) add.click();
+        const window = row?.querySelectorAll(".availability-window")[index];
+        if (window) {
+          window.querySelector("[data-availability-slot]").value = toNativeTimeValue(range.start);
+          window.querySelector("[data-availability-end-slot]").value = toNativeTimeValue(range.end);
+        }
+      });
+    });
     markEmployeeFormDirty();
-    $("employeeForm").requestSubmit();
-  };
+  });
   $("newAvailabilityPatternBtn").onclick = () => {
     const patterns = availabilityPatternsForEmployee(employeeById($("employeeId")?.value));
     selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    availabilityEditingPatternId = "";
     $("employeeAvailabilityPatternName").value = `Availability ${patterns.length + 1}`;
     $("employeeAvailabilityRepeatWeeks").value = "1";
     $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
@@ -13316,15 +13612,20 @@ function wireEvents() {
     markEmployeeFormDirty();
   };
   $("submitAvailabilityPatternBtn").onclick = () => {
-    const guidance = availabilityPatternGuidance({ availability: parseAvailability(), repeatWeeks: Number($("employeeAvailabilityRepeatWeeks").value) || 1 });
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    if (!selected) return;
+    const guidance = availabilityPatternGuidance(selected);
     if (guidance.warning) {
       showConflict(guidance.text);
       return;
     }
     markEmployeeFormDirty();
     submitAvailabilityPatternRequested = true;
+    availabilityEditingPatternId = selected.id;
     $("employeeForm").requestSubmit();
-    if ($("availabilityPatternGuidance")) $("availabilityPatternGuidance").textContent = "Saved and submitted as the selected pattern. Apply it to a schedule week from the weekly availability section.";
+    selectedAvailabilityPatternId = "";
+    renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
   };
   $("weeklyAvailabilityWeek").onchange = () => {
     setWeeklyAvailabilityWeek($("weeklyAvailabilityWeek").value);

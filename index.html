@@ -210,7 +210,6 @@
           </div>
           <fieldset id="regularAvailabilityFieldset" class="employee-availability-panel">
     <legend>Availability</legend>
-    <p class="availability-help">Set the first continuous window they can work on each day. Add another time when they can work later after a break. Leave the row blank for no availability.</p>
             <div class="availability-workspace">
               <div class="availability-editor-column">
                 <section class="active-availability-summary" aria-label="Active availability patterns">
@@ -221,6 +220,10 @@
                 </section>
                 <div class="availability-editor-toolbar">
                   <strong>Weekly editor</strong>
+                  <div class="availability-editor-save">
+                    <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Availability name" aria-label="Availability name">
+                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save Availability</button>
+                  </div>
                   <div class="availability-actions">
                     <button id="openAllAvailabilityBtn" class="small-button" type="button">Open All</button>
                     <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear All</button>
@@ -231,12 +234,9 @@
               <aside class="availability-pattern-workspace" aria-label="Saved availability patterns">
                 <div class="availability-pattern-details">
                   <div class="availability-pattern-heading">
-                    <div><strong>Selected availability</strong><small>Edit the selected pattern, then save or submit it.</small></div>
-                    <button id="newAvailabilityPatternBtn" class="small-button" type="button">New</button>
+                    <div><strong>Submit Availability</strong><small>Select a saved availability, choose its repeat pattern and start date, then submit it for approval.</small></div>
+                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" disabled>Edit</button>
                   </div>
-                  <label>Selected availability
-                    <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Regular availability">
-                  </label>
                   <label>Repeat pattern
                     <select id="employeeAvailabilityRepeatWeeks" title="How often this availability repeats when no week-specific override is assigned.">
                       <option value="1">Every week</option>
@@ -248,15 +248,13 @@
                   <label>Availability change takes effect on
             <input id="employeeAvailabilityEffectiveDate" type="date" title="Choose the exact date this availability should begin. This is intentionally not limited to the first day of a work week.">
                   </label>
-                  <div id="availabilityPatternGuidance" class="availability-pattern-guidance" role="status"></div>
                   <div class="availability-pattern-actions">
-                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save changes</button>
-                    <button id="saveAvailabilityPatternAsNewBtn" class="small-button" type="button">Save as new</button>
+                    <button id="submitAvailabilityPatternBtn" class="small-button primary-action" type="button" disabled>Submit Availability</button>
                   </div>
                 </div>
                 <div class="availability-pattern-heading availability-saved-heading">
                   <div><strong>Saved availabilities</strong><small>Inactive patterns stay here until you activate or submit them.</small></div>
-                  <button id="submitAvailabilityPatternBtn" class="small-button" type="button">Submit selected</button>
+                  <button id="newAvailabilityPatternBtn" class="small-button" type="button">New</button>
                 </div>
                 <div id="availabilityPatternList" class="availability-pattern-list"></div>
               </aside>
@@ -770,6 +768,10 @@
           <label>Notes <textarea id="shiftNotes" rows="3"></textarea></label>
         </section>
       </div>
+      <details id="shiftMetadataDetails" class="shift-metadata-details" hidden>
+        <summary>Change history</summary>
+        <div id="shiftMetadataBody" class="shift-metadata-body"></div>
+      </details>
       <div id="shiftWarnings" class="warnings"></div>
       <div class="form-actions">
         <button id="saveShiftBtn" type="submit">Save</button>
@@ -892,6 +894,7 @@
           <option value="simpleEmployee">Compact weekly grid by employee</option>
           <option value="simpleRoleWithBay">Compact grid + open shift boxes</option>
           <option value="ctuitEntry">Ctuit entry list</option>
+          <option value="currentPage">Current page</option>
         </select>
       </label>
       <label>Sort by
@@ -921,6 +924,11 @@
           <div id="compactPrintRoleOrderEditor"></div>
         </div>
       </details>
+      <fieldset id="printDepartmentFilters" class="print-department-filters" hidden>
+        <legend>Departments to print</legend>
+        <div id="printDepartmentOptions"></div>
+        <p class="hint">Choose which departments appear in compact reports.</p>
+      </fieldset>
       <div id="printWarningChecklist" class="print-warning-checklist"></div>
       <div class="form-actions">
         <button id="runPrintBtn" type="submit">Print</button>
@@ -941,7 +949,10 @@
 
   <dialog id="recentActivityDialog">
     <form method="dialog" class="editor modal-editor">
-      <h2>Recent Activity</h2>
+      <div class="recent-activity-heading">
+        <h2>Recent Activity</h2>
+        <button id="toggleRecentActivityDetailsBtn" type="button" aria-expanded="false" title="Show advanced audit details">+</button>
+      </div>
       <div id="recentActivityBody" class="recent-activity-list"></div>
       <div class="form-actions">
         <button id="closeRecentActivityBtn" type="button">Close</button>

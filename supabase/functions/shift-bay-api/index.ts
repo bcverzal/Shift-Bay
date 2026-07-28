@@ -343,6 +343,40 @@ async function loadDocumentRow(select = "*", locationId = config().locationId) {
   return Array.isArray(rows) ? rows[0] : null;
 }
 
+function scheduleChangeSummary(previous: JsonRecord = {}, next: JsonRecord = {}) {
+  const compare = (key: string) => {
+    const before = new Map((Array.isArray(previous[key]) ? previous[key] : []).map((item: any) => [item.id, item]));
+    const after = new Map((Array.isArray(next[key]) ? next[key] : []).map((item: any) => [item.id, item]));
+    let created = 0;
+    let edited = 0;
+    let deleted = 0;
+    after.forEach((item: any, id: unknown) => {
+      if (!before.has(id)) created += 1;
+      else if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) edited += 1;
+    });
+    before.forEach((_item: any, id: unknown) => { if (!after.has(id)) deleted += 1; });
+    return { created, edited, deleted };
+  };
+  const shifts = compare("shifts");
+  const openShifts = compare("unassignedShifts");
+  const requestOffs = compare("timeOffRequests");
+  const employees = compare("employees");
+  const templates = compare("templates");
+  return {
+    shiftsCreated: shifts.created,
+    shiftsEdited: shifts.edited,
+    shiftsDeleted: shifts.deleted,
+    openShiftsCreated: openShifts.created,
+    openShiftsEdited: openShifts.edited,
+    openShiftsDeleted: openShifts.deleted,
+    requestOffsCreated: requestOffs.created,
+    requestOffsEdited: requestOffs.edited,
+    requestOffsDeleted: requestOffs.deleted,
+    employeesChanged: employees.created + employees.edited + employees.deleted,
+    templatesChanged: templates.created + templates.edited + templates.deleted
+  };
+}
+
 async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}, locationId = config().locationId) {
   await supabaseJson("/audit_events", {
     method: "POST",
@@ -882,6 +916,7 @@ async function handleSaveState(request: Request) {
     saved_at: savedAt,
     updated_at: savedAt
   }];
+  const changeSummary = scheduleChangeSummary((existingRow?.state || {}) as JsonRecord, state);
   await supabaseJson("/scheduler_state_documents?on_conflict=location_id,document_key", {
     method: "POST",
     headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
@@ -893,7 +928,8 @@ async function handleSaveState(request: Request) {
     savedByEmail: (validated.user as any).email || "",
     savedByRole: (validated.user as any).role || "",
     savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
-    schemaVersion: body[0].schema_version
+    schemaVersion: body[0].schema_version,
+    changeSummary
   }, locationId);
   return json(200, { ok: true, savedAt });
 }
