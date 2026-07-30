@@ -664,10 +664,13 @@ function showDemoPreview(employee) {
   if (staffScheduleEmployee) staffScheduleEmployee.textContent = employeeName(employee);
   if (demoEmployeeSelect) demoEmployeeSelect.value = employee.id;
   if (demoPortalEmployeeSelect) demoPortalEmployeeSelect.value = employee.id;
+  if (DEMO_PORTAL_MODE) writeStaffAvailabilityPatterns(employee.availabilityPatterns || []);
   renderVisibleProfile({ employee });
   renderStaffManagerAvailability(employee);
   renderStaffAvailabilityPatterns("");
-  renderStaffAvailabilityApproval("", "");
+  const pendingAvailability = (employee.availabilitySubmissions || [])
+    .find((submission) => ["submitted", "pending"].includes(String(submission.status || "").toLowerCase()));
+  renderStaffAvailabilityApproval(pendingAvailability?.status || "", pendingAvailability?.weekStart || "");
   renderStaffAvailabilityWorkspace(employee?.availability || {});
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";

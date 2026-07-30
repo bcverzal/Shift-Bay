@@ -172,7 +172,7 @@
           <div id="employeeRosterList" class="employee-roster-list"></div>
         </aside>
         <form id="employeeForm" class="editor employee-editor">
-          <h2>Employee Profile</h2>
+          <h2 id="employeeProfileTitle">Unsaved employee</h2>
           <input id="employeeId" type="hidden">
           <div class="employee-profile-tabs" role="tablist" aria-label="Employee profile sections">
             <button type="button" class="active" data-employee-profile-tab="profile">Profile</button>
@@ -234,7 +234,7 @@
               <aside class="availability-pattern-workspace" aria-label="Saved availability patterns">
                 <div class="availability-pattern-details">
                   <div class="availability-pattern-heading">
-                    <div><strong>Submit Availability</strong><small>Select a saved availability, choose its repeat pattern and start date, then submit it for approval.</small></div>
+                    <div><strong>Make Availability Live</strong><small>Select a saved availability and make it active for scheduling.</small></div>
                     <button id="editAvailabilityPatternBtn" class="small-button" type="button" disabled>Edit</button>
                   </div>
                   <label>Repeat pattern
@@ -249,7 +249,7 @@
             <input id="employeeAvailabilityEffectiveDate" type="date" title="Choose the exact date this availability should begin. This is intentionally not limited to the first day of a work week.">
                   </label>
                   <div class="availability-pattern-actions">
-                    <button id="submitAvailabilityPatternBtn" class="small-button primary-action" type="button" disabled>Submit Availability</button>
+                    <button id="makeAvailabilityLiveBtn" class="small-button primary-action" type="button" disabled>Make Live for Scheduling</button>
                   </div>
                 </div>
                 <div class="availability-pattern-heading availability-saved-heading">

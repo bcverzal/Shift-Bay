@@ -6312,7 +6312,7 @@ legend {
 
 .active-availability-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 6px;
 }
 
@@ -6357,10 +6357,46 @@ legend {
   color: #1e3a8a;
 }
 
+@media (min-width: 1081px) {
+  .active-availability-day-summary {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .active-availability-day-summary div {
+    display: block;
+    min-width: 0;
+  }
+
+  .active-availability-day-summary strong,
+  .active-availability-day-summary div span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .active-availability-day-summary div span {
+    margin-top: 2px;
+    white-space: normal;
+    line-height: 1.2;
+  }
+}
+
 .active-availability-tab.selected {
   border-color: #2767e8;
   background: #e4efff;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.active-availability-tab.approved-future {
+  border-color: #e5a63a;
+  background: #fff7df;
+  color: #704500;
+}
+
+.active-availability-tab.approved-future span,
+.active-availability-tab.approved-future small {
+  color: #8a641e;
 }
 
 .active-availability-tab strong,
@@ -6661,6 +6697,16 @@ fieldset .checkbox {
 .availability-pattern-card.inactive {
   border-style: dashed;
   background: #f8fafc;
+}
+
+.availability-pattern-card.selected.inactive {
+  color: #1d3f9a;
+  border: 2px dashed #2767e8;
+  background: #dbeafe;
+}
+
+.availability-pattern-card.selected.inactive span {
+  color: #42618a;
 }
 
 .availability-pattern-details {

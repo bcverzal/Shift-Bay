@@ -1091,6 +1091,8 @@ function buildDemoEmployee(firstName, lastName, roleNames, options = {}) {
     mealTraining: options.mealTraining || ["Breakfast", "Lunch", "Dinner", "Brunch"],
     roleMealTraining: options.roleMealTraining || {},
     availability: options.availability || makeDemoAvailability(),
+    availabilityPatterns: options.availabilityPatterns || [],
+    availabilitySubmissions: options.availabilitySubmissions || [],
     weeklyAvailability: {},
     weeklyRules: [],
     payRates: {},
@@ -1149,7 +1151,30 @@ function buildDemoSchedulerState() {
   const demo = defaultState();
   state = demo;
   const employees = [
-    buildDemoEmployee("Alex", "Rivera", ["Server", "Bartender"], { canClose: true, canLunchClose: true, trainerRoles: ["Server"] }),
+    buildDemoEmployee("Alex", "Rivera", ["Server", "Bartender"], {
+      canClose: true,
+      canLunchClose: true,
+      trainerRoles: ["Server"],
+      availabilityPatterns: [
+        {
+          id: "demo-alex-regular",
+          name: "Regular Week",
+          availability: makeDemoAvailability(),
+          repeatWeeks: 2,
+          active: true,
+          effectiveDate: "2026-07-27"
+        },
+        {
+          id: "demo-alex-school",
+          name: "School Week",
+          availability: makeDemoAvailability({ 1: [{ start: "4:00 PM", end: "10:00 PM" }], 2: [{ start: "4:00 PM", end: "10:00 PM" }], 4: [{ start: "4:00 PM", end: "10:00 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }] }),
+          repeatWeeks: 2,
+          active: true,
+          effectiveDate: "2026-08-03"
+        }
+      ],
+      availabilitySubmissions: [{ id: "demo-alex-submission", weekStart: "2026-08-10", status: "submitted" }]
+    }),
     buildDemoEmployee("Morgan", "Lane", ["Server"], { canClose: true, managerNotes: "Strong dinner seller; use for prime shifts in demos." }),
     buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], { canLunchClose: true }),
     buildDemoEmployee("Jordan", "Kim", ["Busser"], { availability: makeDemoAvailability({ 2: [{ start: "4:00 PM", end: "11:59 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }], 6: [{ start: "9:00 AM", end: "11:59 PM" }] }) }),
@@ -8086,7 +8111,9 @@ function availabilityPatternsForEmployee(employee = null) {
       availability: pattern.availability || emptyAvailability(),
       repeatWeeks: Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
       active: pattern.active !== false,
-      effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || employee.availabilityEffectiveDate || currentWeekKey())
+      effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || employee.availabilityEffectiveDate || currentWeekKey()),
+      approvalStatus: String(pattern.approvalStatus || pattern.status || (pattern.approved === true ? "approved" : "")).toLowerCase(),
+      approved: pattern.approved === true || String(pattern.approvalStatus || pattern.status || "").toLowerCase() === "approved"
     }));
   }
   return [{
@@ -8117,6 +8144,12 @@ function availabilityDaySummary(availability = {}) {
       : "Not available";
     return `<div><strong>${day}</strong><span>${escapeHtml(text)}</span></div>`;
   }).join("");
+}
+
+function isApprovedFutureAvailabilityPattern(pattern) {
+  if (!pattern?.approved && pattern?.approvalStatus !== "approved") return false;
+  const effectiveDate = normalizeAvailabilityEffectiveDate(pattern.effectiveDate);
+  return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
 }
 
 function availabilityPatternAppliesOnDate(pattern, date) {
@@ -8164,13 +8197,22 @@ function availabilityPatternConflicts(patterns = []) {
 function renderActiveAvailabilitySummary(employee = null, patterns = availabilityPatternsForEmployee(employee), selected = selectedAvailabilityPattern(employee)) {
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
-  const activePatterns = patterns.filter((pattern) => pattern.active !== false);
+  const activePatterns = patterns
+    .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
+    .sort((left, right) => {
+      const leftFuture = isApprovedFutureAvailabilityPattern(left);
+      const rightFuture = isApprovedFutureAvailabilityPattern(right);
+      if (leftFuture !== rightFuture) return leftFuture ? 1 : -1;
+      return String(left.effectiveDate || "").localeCompare(String(right.effectiveDate || ""));
+    });
   tabs.innerHTML = activePatterns.map((pattern) => {
     const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
-    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
+    const futureApproved = isApprovedFutureAvailabilityPattern(pattern);
+    const stateLabel = futureApproved ? `Approved - starts ${escapeHtml(pattern.effectiveDate)}` : "Live for scheduling";
+    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${futureApproved ? " approved-future" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
       <span>${dayCount} days · every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</span>
-      <small>Begins ${escapeHtml(pattern.effectiveDate)}</small>
+      <small>${stateLabel}</small>
     </button>`;
   }).join("");
   tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
@@ -8244,7 +8286,7 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   if ($("employeeAvailabilityEffectiveDate")) {
     $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
   }
-  const submitButton = $("submitAvailabilityPatternBtn");
+  const submitButton = $("makeAvailabilityLiveBtn");
   if (submitButton) submitButton.disabled = !selected;
 }
 function renderAvailabilityEditor(employee = null) {
@@ -8308,6 +8350,7 @@ function renderAvailabilityEditor(employee = null) {
       const row = document.querySelector(`[data-availability-row="${selectedAvailabilityDayIndex}"]`);
       const summary = row?.querySelector(".availability-day-heading span");
       if (summary) summary.textContent = button.dataset.availabilityEditorPreset === "unavailable" ? "Not available" : button.textContent;
+      refreshAvailabilityDayCardSummaries();
     };
   });
   document.querySelectorAll("#availabilityEditor [data-time-picker]").forEach(attachTimePickerInput);
@@ -8326,6 +8369,7 @@ function renderAvailabilityEditor(employee = null) {
       });
       row.querySelectorAll("[data-time-picker]").forEach(attachTimePickerInput);
       wireAvailabilityTabFlow("[data-availability-day]");
+      wireAvailabilityDaySummaryUpdates();
       if (row.querySelectorAll(".availability-window").length >= 4) button.hidden = true;
     };
   });
@@ -8337,9 +8381,11 @@ function renderAvailabilityEditor(employee = null) {
       window.remove();
       const addButton = row.querySelector("[data-add-availability-window]");
       if (addButton) addButton.hidden = false;
+      refreshAvailabilityDayCardSummaries();
     };
   });
   wireAvailabilityTabFlow("[data-availability-day]");
+  wireAvailabilityDaySummaryUpdates();
 }
 
 function renderWeeklyAvailabilityEditor(employee = null) {
@@ -8487,6 +8533,16 @@ function setAvailabilityInputs(selector, value) {
   });
 }
 
+function wireAvailabilityDaySummaryUpdates() {
+  document.querySelectorAll("#availabilityEditor [data-availability-day]").forEach((input) => {
+    if (input.dataset.summaryWired === "true") return;
+    input.dataset.summaryWired = "true";
+    input.addEventListener("input", refreshAvailabilityDayCardSummaries);
+    input.addEventListener("change", refreshAvailabilityDayCardSummaries);
+  });
+  refreshAvailabilityDayCardSummaries();
+}
+
 function refreshAvailabilityDayCardSummaries() {
   document.querySelectorAll("#availabilityEditor [data-availability-row]").forEach((row) => {
     const windows = Array.from(row.querySelectorAll(".availability-window")).map((window) => ({
@@ -8580,11 +8636,13 @@ function loadEmployee(id) {
 }
 
 function updateStickyEmployeeName() {
-  const label = $("stickyEmployeeName");
-  if (!label) return;
   const employee = employeeById($("employeeId")?.value);
   const typedName = `${$("firstName")?.value || ""} ${$("lastName")?.value || ""}`.trim();
-  label.textContent = employee ? fullEmployeeName(employee) : typedName || "Unsaved employee";
+  const name = employee ? fullEmployeeName(employee) : typedName || "Unsaved employee";
+  const label = $("stickyEmployeeName");
+  if (label) label.textContent = name;
+  const title = $("employeeProfileTitle");
+  if (title) title.textContent = name;
 }
 
 function activateEmployeeProfileTab(tabName = "profile") {
@@ -13467,7 +13525,9 @@ function wireEvents() {
       availability: parsedAvailability,
       repeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
       active: patternActive,
-      effectiveDate: availabilityEffectiveDate
+      effectiveDate: availabilityEffectiveDate,
+      approvalStatus: selectedPattern?.approvalStatus || "",
+      approved: selectedPattern?.approved === true
     };
     const availabilityPatterns = existingPatterns.some((pattern) => pattern.id === selectedPatternId)
       ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
@@ -13611,7 +13671,7 @@ function wireEvents() {
     setAvailabilityInputs("[data-availability-day]", "");
     markEmployeeFormDirty();
   };
-  $("submitAvailabilityPatternBtn").onclick = () => {
+  $("makeAvailabilityLiveBtn").onclick = () => {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
     if (!selected) return;
