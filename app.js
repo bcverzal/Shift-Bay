@@ -8355,6 +8355,13 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   renderActiveAvailabilitySummary(employee, patterns, selected);
   const editButton = $("editAvailabilityPatternBtn");
   if (editButton) editButton.disabled = !selected;
+  const deleteButton = $("deleteAvailabilityPatternBtn");
+  const selectedStatus = String(selected?.approvalStatus || "").toLowerCase();
+  const canDelete = Boolean(selected && !selected.active && !["submitted", "pending", "awaiting_approval"].includes(selectedStatus));
+  if (deleteButton) {
+    deleteButton.disabled = !canDelete;
+    deleteButton.hidden = !canDelete;
+  }
   list.innerHTML = patterns.map((pattern) => {
     const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
     return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}${pattern.active ? "" : " inactive"}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
@@ -13779,6 +13786,20 @@ function wireEvents() {
     setAvailabilityInputs("[data-availability-day]", "");
     markEmployeeFormDirty();
   };
+  $("deleteAvailabilityPatternBtn")?.addEventListener("click", () => {
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    const status = String(selected?.approvalStatus || "").toLowerCase();
+    if (!employee || !selected || selected.active || ["submitted", "pending", "awaiting_approval"].includes(status)) return;
+    if (!window.confirm(`Delete the saved availability "${selected.name}"?`)) return;
+    markEmployeeFormDirty();
+    state.employees = state.employees.map((item) => item.id === employee.id ? { ...item, availabilityPatterns: (item.availabilityPatterns || []).filter((pattern) => pattern.id !== selected.id) } : item);
+    selectedAvailabilityPatternId = "";
+    availabilityEditingPatternId = "";
+    saveState();
+    renderAll();
+    loadEmployee(employee.id);
+  });
   $("makeAvailabilityLiveBtn").onclick = () => {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);

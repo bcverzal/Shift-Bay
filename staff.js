@@ -88,11 +88,13 @@ function renderStaffAvailabilityPatterns(selectedId = "") {
     staffAvailabilityPatternSelect.innerHTML = `<option value="">Unsaved current entries</option>${patterns.map((pattern) => `<option value="${escapeHtml(pattern.id)}">${escapeHtml(pattern.name)} - ${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}</option>`).join("")}`;
     staffAvailabilityPatternSelect.value = selectedId;
   }
-  if (submitStaffAvailabilityButton) submitStaffAvailabilityButton.disabled = !selectedId;
-  if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = !selectedId;
+  const selectedPattern = patterns.find((pattern) => pattern.id === selectedId);
+  const pending = ["submitted", "pending", "awaiting_approval"].includes(String(selectedPattern?.submissionStatus || "").toLowerCase());
+  if (submitStaffAvailabilityButton) submitStaffAvailabilityButton.disabled = !selectedId || pending;
+  if (deleteStaffAvailabilityPatternButton) deleteStaffAvailabilityPatternButton.hidden = !selectedId || pending;
   if (!staffAvailabilityPatternList) return;
   staffAvailabilityPatternList.innerHTML = patterns.length
-    ? patterns.map((pattern) => `<button type="button" class="staff-availability-pattern-card${pattern.id === selectedId ? " selected" : ""}" data-staff-availability-pattern-id="${escapeHtml(pattern.id)}"><strong>${escapeHtml(pattern.name || "Untitled availability")}</strong><span>${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</span></button>`).join("")
+    ? patterns.map((pattern) => { const status = String(pattern.submissionStatus || "").toLowerCase(); const statusText = ["submitted", "pending", "awaiting_approval"].includes(status) ? "Awaiting approval" : "Saved draft"; return `<button type="button" class="staff-availability-pattern-card${pattern.id === selectedId ? " selected" : ""}${statusText === "Awaiting approval" ? " pending" : ""}" data-staff-availability-pattern-id="${escapeHtml(pattern.id)}"><strong>${escapeHtml(pattern.name || "Untitled availability")}</strong><span>${statusText} · ${Number(pattern.repeatWeeks) === 1 ? "Every week" : `Every ${Number(pattern.repeatWeeks)} weeks`}${pattern.effectiveDate ? ` · starts ${escapeHtml(pattern.effectiveDate)}` : ""}</span></button>`; }).join("")
     : `<div class="staff-empty-state"><strong>No Availability Profiles saved</strong><span>Save this editor as a named profile to reuse it later.</span></div>`;
   staffAvailabilityPatternList.querySelectorAll("[data-staff-availability-pattern-id]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -123,14 +125,29 @@ function renderStaffManagerAvailability(employee = null) {
   staffLiveAvailabilitySummary.hidden = false;
 }
 
-function renderStaffAvailabilityApproval(status = "", weekStart = "") {
+function renderStaffAvailabilityApproval(status = "", weekStart = "", requestId = "") {
   if (!staffAvailabilityApprovalSummary) return;
   const normalized = String(status || "").toLowerCase();
   const waiting = normalized === "submitted" || normalized === "pending";
   staffAvailabilityApprovalSummary.hidden = !waiting;
   staffAvailabilityApprovalSummary.innerHTML = waiting
-    ? `<strong>Submitted weeks awaiting approval</strong><span>${weekStart ? `Week starting ${escapeHtml(weekStart)} is waiting for manager review.` : "Your submitted availability is waiting for manager review."}</span>`
+    ? `<strong>Submitted weeks awaiting approval</strong><span>${weekStart ? `Week starting ${escapeHtml(weekStart)} is waiting for manager review.` : "Your submitted availability is waiting for manager review."}</span><button type="button" class="staff-small-action" data-withdraw-staff-availability="${escapeHtml(requestId)}">Withdraw submission</button>`
     : "";
+  if (waiting) staffAvailabilityApprovalSummary.querySelector("[data-withdraw-staff-availability]")?.addEventListener("click", async () => {
+    if (!requestId || !window.confirm("Withdraw this availability submission? It will return to your saved profiles.")) return;
+    const button = staffAvailabilityApprovalSummary.querySelector("[data-withdraw-staff-availability]");
+    if (button) button.disabled = true;
+    try {
+      await staffFetch("/api/staff/availability", { method: "PATCH", body: JSON.stringify({ requestId, status: "cancelled" }) });
+      writeStaffAvailabilityPatterns(readStaffAvailabilityPatterns().map((pattern) => pattern.submissionRequestId === requestId ? { ...pattern, submissionStatus: "", submissionRequestId: "" } : pattern));
+      renderStaffAvailabilityPatterns();
+      renderStaffAvailabilityApproval();
+      setWorkflowMessage(staffAvailabilityMessage, "Submission withdrawn. The saved availability is available to edit or delete.");
+    } catch (error) {
+      if (button) button.disabled = false;
+      setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not withdraw the submission.");
+    }
+  });
 }
 
 function staffTimeMinutes(value = "") {
@@ -644,7 +661,7 @@ async function loadStaffWorkflow() {
     if (staffAvailabilityWeekStart && result.weekStart) staffAvailabilityWeekStart.value = result.weekStart;
     renderStaffAvailabilityPatterns();
     const managerAvailability = currentStaffProfile?.employee?.availability || {};
-    renderStaffAvailabilityApproval(result.status || "", result.weekStart || weekStart);
+    renderStaffAvailabilityApproval(result.status || "", result.weekStart || weekStart, result.requestId || "");
     renderStaffAvailabilityWorkspace(result.status ? (result.availability || {}) : managerAvailability);
     const note = document.getElementById("staffAvailabilityNote");
     if (note) note.value = result.note || "";
@@ -670,7 +687,7 @@ function showDemoPreview(employee) {
   renderStaffAvailabilityPatterns("");
   const pendingAvailability = (employee.availabilitySubmissions || [])
     .find((submission) => ["submitted", "pending"].includes(String(submission.status || "").toLowerCase()));
-  renderStaffAvailabilityApproval(pendingAvailability?.status || "", pendingAvailability?.weekStart || "");
+  renderStaffAvailabilityApproval(pendingAvailability?.status || "", pendingAvailability?.weekStart || "", pendingAvailability?.id || "");
   renderStaffAvailabilityWorkspace(employee?.availability || {});
   staffStatus.classList.add("is-ready");
   staffStatus.textContent = "Demo staff preview. This is using fake sandbox data and does not require a real staff login.";
@@ -881,20 +898,20 @@ staffRequestOffForm?.addEventListener("submit", async (event) => {
 staffAvailabilityForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const selectedId = staffAvailabilityPatternSelect?.value || "";
-  if (!selectedId) {
-    setWorkflowMessage(staffAvailabilityMessage, "Save and select an availability before submitting it.");
-    return;
-  }
+  if (!selectedId) { setWorkflowMessage(staffAvailabilityMessage, "Save and select an availability before submitting it."); return; }
+  const pattern = readStaffAvailabilityPatterns().find((item) => item.id === selectedId);
+  if (!pattern || ["submitted", "pending", "awaiting_approval"].includes(String(pattern.submissionStatus || "").toLowerCase())) { setWorkflowMessage(staffAvailabilityMessage, "This availability is already waiting for manager approval."); return; }
   const weekStart = staffAvailabilityWeekStart?.value || currentStaffWeekStart || "";
+  const submissionWeek = staffAvailabilityEffectiveDate?.value || weekStart;
   const note = document.getElementById("staffAvailabilityNote")?.value || "";
-  setWorkflowMessage(staffAvailabilityMessage, "Saving...");
+  setWorkflowMessage(staffAvailabilityMessage, "Submitting for approval...");
   try {
-    await staffFetch("/api/staff/availability", { method: "PUT", body: JSON.stringify({ weekStart, availability: readAvailabilityDays(), note }) });
-    renderStaffAvailabilityApproval("submitted", weekStart);
+    const result = await staffFetch("/api/staff/availability", { method: "PUT", body: JSON.stringify({ weekStart: submissionWeek, availability: pattern.availability || {}, note, patternId: pattern.id }) });
+    writeStaffAvailabilityPatterns(readStaffAvailabilityPatterns().map((item) => item.id === selectedId ? { ...item, submissionStatus: "submitted", submissionRequestId: result.requestId || "", submittedWeekStart: submissionWeek } : item));
+    renderStaffAvailabilityPatterns();
+    renderStaffAvailabilityApproval("submitted", submissionWeek, result.requestId || "");
     setWorkflowMessage(staffAvailabilityMessage, "Selected availability submitted for manager review.");
-  } catch (error) {
-    setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not save availability.");
-  }
+  } catch (error) { setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not submit availability."); }
 });
 
 saveStaffAvailabilityPatternButton?.addEventListener("click", () => {
@@ -907,6 +924,9 @@ saveStaffAvailabilityPatternButton?.addEventListener("click", () => {
     repeatWeeks: Math.max(1, Math.min(4, Number(staffAvailabilityRepeatWeeks?.value) || 1)),
     effectiveDate: staffAvailabilityEffectiveDate?.value || currentStaffWeekStart || "",
     availability: readAvailabilityDays(),
+    submissionStatus: existing?.submissionStatus || "",
+    submissionRequestId: existing?.submissionRequestId || "",
+    submittedWeekStart: existing?.submittedWeekStart || "",
     updatedAt: new Date().toISOString()
   };
   const next = existing
