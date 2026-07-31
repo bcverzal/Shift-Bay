@@ -806,6 +806,16 @@ async function persistStateToServer(options = {}) {
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
   if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
   if (serverSaveInFlight) {
+    // A profile save must not be reported as failed just because a queued
+    // scheduler save is already using the connection. Wait for that request,
+    // then send the profile merge as the last write.
+    if (options.immediate && options.scope === "employee-profile") {
+      const startedAt = Date.now();
+      while (serverSaveInFlight && Date.now() - startedAt < 15000) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      if (!serverSaveInFlight) return persistStateToServer(options);
+    }
     serverSavePending = true;
     return false;
   }
@@ -2488,12 +2498,11 @@ async function submitEmployeeFormDirectly() {
     return false;
   }
   try {
-    await form.onsubmit.call(form, {
+    return await form.onsubmit.call(form, {
       preventDefault() {},
       target: form,
       currentTarget: form
     });
-    return true;
   } catch (error) {
     console.error("Employee profile save failed", error);
     showConflict(`Employee profile could not be saved: ${error?.message || "unknown save error"}`);
@@ -13745,8 +13754,10 @@ function wireEvents() {
     if (saved || !SERVER_STORAGE_ENABLED) {
       markEmployeeFormClean();
       showEmployeeSavedToast(displayName(employee));
+      return true;
     } else {
       showConflict("The employee profile was kept in this browser, but the shared save did not confirm. Refresh before continuing schedule edits.");
+      return false;
     }
   };
   $("newEmployeeBtn").onclick = async () => {
