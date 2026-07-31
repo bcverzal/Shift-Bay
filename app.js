@@ -13710,7 +13710,9 @@ function wireEvents() {
     };
     const isExisting = state.employees.some((item) => item.id === id);
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
-    saveState();
+    // Employee profile edits should be durable before the user switches
+    // profiles; waiting for the general schedule debounce can lose a fast edit.
+    saveState({ immediate: true });
     renderAll();
     loadEmployee(id);
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
@@ -13854,7 +13856,11 @@ function wireEvents() {
     $("employeeAvailabilityEffectiveDate").value = normalized;
     markEmployeeFormDirty();
   };
-  $("stickySaveEmployeeBtn").onclick = () => $("employeeForm").requestSubmit();
+  $("stickySaveEmployeeBtn").onclick = () => {
+    const form = $("employeeForm");
+    if (!form) return;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  };
   $("toggleWeeklyAvailabilityBtn").onclick = () => {
     markEmployeeFormDirty();
     $("employeeCallWeekly").checked = true;
