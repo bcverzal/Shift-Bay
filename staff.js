@@ -914,10 +914,11 @@ staffAvailabilityForm?.addEventListener("submit", async (event) => {
   } catch (error) { setWorkflowMessage(staffAvailabilityMessage, error.message || "Could not submit availability."); }
 });
 
-saveStaffAvailabilityPatternButton?.addEventListener("click", () => {
+saveStaffAvailabilityPatternButton?.addEventListener("click", (event) => {
+  event.preventDefault();
   const name = staffAvailabilityPatternName?.value.trim() || `Availability ${readStaffAvailabilityPatterns().length + 1}`;
   const patterns = readStaffAvailabilityPatterns();
-  const existing = patterns.find((pattern) => pattern.name.toLowerCase() === name.toLowerCase());
+  const existing = patterns.find((pattern) => String(pattern.name || "").trim().toLowerCase() === name.toLowerCase());
   const pattern = {
     id: existing?.id || `pattern-${Date.now()}`,
     name,

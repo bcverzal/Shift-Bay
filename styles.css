@@ -4496,8 +4496,19 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+  overflow: hidden;
   cursor: pointer;
   user-select: none;
+}
+
+.schedule-role-group > span:not(.role-group-toggle) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .schedule-role-group[draggable="true"] {

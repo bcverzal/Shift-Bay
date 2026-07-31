@@ -3936,7 +3936,9 @@ function clearOpenShiftSelectionWithoutFullRender() {
   document.querySelectorAll(".unassigned-shift-card").forEach((card) => {
     card.classList.remove("selected", "pending-delete");
   });
-  renderSelectedStagedShiftInfo();
+  // The selected bay role is rendered into the schedule headers too. Refresh
+  // those headers when focus is cleared, while preserving the user's position.
+  renderSchedulePreservingGridScroll();
 }
 function renderSelectedStagedShiftInfo() {
   const panel = $("stagedShiftInfo");
