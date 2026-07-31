@@ -712,7 +712,9 @@ function saveState(options = {}) {
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (SERVER_STORAGE_ENABLED && serverStorageReady) {
-    if (cloudSaveBlockedByStale) {
+    // Profile-only saves merge one employee record on the server, so they can
+    // safely proceed while this browser's broader schedule snapshot is stale.
+    if (cloudSaveBlockedByStale && options.scope !== "employee-profile") {
       setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
       return Promise.resolve(false);
     }
