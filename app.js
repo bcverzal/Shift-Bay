@@ -101,6 +101,7 @@ let selectedAvailabilityPatternId = "";
 let selectedAvailabilityDayIndex = 0;
 let availabilityEditingPatternId = "";
 let submitAvailabilityPatternRequested = false;
+let deactivateAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
 let employeeNewProfileDraft = false;
@@ -1155,30 +1156,84 @@ function buildDemoSchedulerState() {
       canClose: true,
       canLunchClose: true,
       trainerRoles: ["Server"],
+      managerNotes: "Demo: alternating availability weeks. Compare the two live tabs above.",
       availabilityPatterns: [
         {
-          id: "demo-alex-regular",
-          name: "Regular Week",
+          id: "demo-alex-alternating-a",
+          name: "Alternating - Open Week",
           availability: makeDemoAvailability(),
           repeatWeeks: 2,
           active: true,
           effectiveDate: "2026-07-27"
         },
         {
-          id: "demo-alex-school",
-          name: "School Week",
+          id: "demo-alex-alternating-b",
+          name: "Alternating - School Week",
           availability: makeDemoAvailability({ 1: [{ start: "4:00 PM", end: "10:00 PM" }], 2: [{ start: "4:00 PM", end: "10:00 PM" }], 4: [{ start: "4:00 PM", end: "10:00 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }] }),
           repeatWeeks: 2,
           active: true,
           effectiveDate: "2026-08-03"
         }
-      ],
-      availabilitySubmissions: [{ id: "demo-alex-submission", weekStart: "2026-08-10", status: "submitted" }]
+      ]
     }),
-    buildDemoEmployee("Morgan", "Lane", ["Server"], { canClose: true, managerNotes: "Strong dinner seller; use for prime shifts in demos." }),
-    buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], { canLunchClose: true }),
+    buildDemoEmployee("Morgan", "Lane", ["Server"], {
+      canClose: true,
+      managerNotes: "Demo: live availability plus an approved change that starts two weeks from now.",
+      availabilityPatterns: [
+        {
+          id: "demo-morgan-live",
+          name: "Live - Regular Week",
+          availability: makeDemoAvailability(),
+          repeatWeeks: 1,
+          active: true,
+          effectiveDate: "2026-07-27"
+        },
+        {
+          id: "demo-morgan-future-approved",
+          name: "Approved - Starts in 2 Weeks",
+          availability: makeDemoAvailability({ 1: [{ start: "4:00 PM", end: "10:00 PM" }], 2: [{ start: "4:00 PM", end: "10:00 PM" }], 3: [{ start: "4:00 PM", end: "10:00 PM" }], 4: [{ start: "4:00 PM", end: "10:00 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }] }),
+          repeatWeeks: 1,
+          active: true,
+          effectiveDate: "2026-08-13",
+          active: false,
+          approvalStatus: "approved",
+          approved: true
+        }
+      ]
+    }),
+    buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], {
+      canLunchClose: true,
+      managerNotes: "Demo: live availability plus a submitted availability waiting for approval.",
+      availabilityPatterns: [{
+        id: "demo-taylor-live",
+        name: "Live - Host Week",
+        availability: makeDemoAvailability({ 0: [{ start: "9:00 AM", end: "2:00 PM" }], 1: [{ start: "9:00 AM", end: "2:00 PM" }], 2: [{ start: "9:00 AM", end: "2:00 PM" }], 3: [{ start: "9:00 AM", end: "2:00 PM" }], 4: [{ start: "9:00 AM", end: "2:00 PM" }], 5: [{ start: "9:00 AM", end: "2:00 PM" }], 6: [{ start: "9:00 AM", end: "2:00 PM" }] }),
+        repeatWeeks: 1,
+        active: true,
+        effectiveDate: "2026-07-27"
+      }],
+      availabilitySubmissions: [{
+        id: "demo-taylor-pending",
+        weekStart: "2026-08-10",
+        status: "submitted",
+        note: "Demo pending manager approval",
+        availability: makeDemoAvailability({ 0: [{ start: "11:00 AM", end: "6:00 PM" }], 1: [{ start: "11:00 AM", end: "6:00 PM" }], 2: [{ start: "11:00 AM", end: "6:00 PM" }], 3: [{ start: "11:00 AM", end: "6:00 PM" }], 4: [{ start: "11:00 AM", end: "6:00 PM" }], 5: [{ start: "11:00 AM", end: "6:00 PM" }], 6: [] })
+      }]
+    }),
     buildDemoEmployee("Jordan", "Kim", ["Busser"], { availability: makeDemoAvailability({ 2: [{ start: "4:00 PM", end: "11:59 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }], 6: [{ start: "9:00 AM", end: "11:59 PM" }] }) }),
-    buildDemoEmployee("Casey", "Stone", ["Bartender", "Server"], { canClose: true, noDoubles: true }),
+    buildDemoEmployee("Casey", "Stone", ["Bartender", "Server"], {
+      canClose: true,
+      noDoubles: true,
+      managerNotes: "Demo: saved availability draft that is inactive and available to activate later.",
+      availabilityPatterns: [{
+        id: "demo-casey-inactive-draft",
+        name: "College Break Draft",
+        availability: makeDemoAvailability({ 0: [{ start: "10:00 AM", end: "6:00 PM" }], 1: [{ start: "10:00 AM", end: "6:00 PM" }], 2: [{ start: "10:00 AM", end: "6:00 PM" }], 3: [{ start: "10:00 AM", end: "6:00 PM" }], 4: [{ start: "10:00 AM", end: "6:00 PM" }], 5: [{ start: "10:00 AM", end: "6:00 PM" }], 6: [{ start: "10:00 AM", end: "6:00 PM" }] }),
+        repeatWeeks: null,
+        active: false,
+        effectiveDate: ""
+      }]
+    }),
     buildDemoEmployee("Riley", "Chen", ["Server", "Banquet Server"], { canClose: true }),
     buildDemoEmployee("Sam", "Patel", ["Host", "Expo"], { canLunchClose: true }),
     buildDemoEmployee("Jamie", "Ortiz", ["Server"], { managerNotes: "Demo trainee candidate." }),
@@ -8100,6 +8155,17 @@ function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = curren
   if (!row) input.value = value;
 }
 
+function findDuplicateAvailabilityPatternName(name, employeeId = "", patternId = "") {
+  const normalizedName = String(name || "").trim().toLocaleLowerCase();
+  if (!normalizedName) return null;
+  for (const employee of state.employees || []) {
+    for (const pattern of Array.isArray(employee.availabilityPatterns) ? employee.availabilityPatterns : []) {
+      if (employee.id === employeeId && pattern.id === patternId) continue;
+      if (String(pattern.name || "").trim().toLocaleLowerCase() === normalizedName) return { employee, pattern };
+    }
+  }
+  return null;
+}
 function availabilityPatternsForEmployee(employee = null) {
   if (!employee) {
     return [{ id: "draft", name: "Regular availability", availability: emptyAvailability(), repeatWeeks: 1, effectiveDate: currentWeekKey() }];
@@ -8109,9 +8175,9 @@ function availabilityPatternsForEmployee(employee = null) {
       id: pattern.id || `pattern-${index + 1}`,
       name: pattern.name || `Availability ${index + 1}`,
       availability: pattern.availability || emptyAvailability(),
-      repeatWeeks: Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
+      repeatWeeks: pattern.repeatWeeks == null || pattern.repeatWeeks === "" ? null : Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
       active: pattern.active !== false,
-      effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || employee.availabilityEffectiveDate || currentWeekKey()),
+      effectiveDate: pattern.effectiveDate ? normalizeAvailabilityEffectiveDate(pattern.effectiveDate) : "",
       approvalStatus: String(pattern.approvalStatus || pattern.status || (pattern.approved === true ? "approved" : "")).toLowerCase(),
       approved: pattern.approved === true || String(pattern.approvalStatus || pattern.status || "").toLowerCase() === "approved"
     }));
@@ -8194,6 +8260,22 @@ function availabilityPatternConflicts(patterns = []) {
   return null;
 }
 
+function pendingAvailabilitySubmissionsForEmployee(employee = null) {
+  return (Array.isArray(employee?.availabilitySubmissions) ? employee.availabilitySubmissions : [])
+    .filter((submission) => ["submitted", "pending"].includes(String(submission.status || "").toLowerCase()))
+    .sort((left, right) => String(left.weekStart || "").localeCompare(String(right.weekStart || "")));
+}
+
+async function hydrateEmployeeAvailabilitySubmissions(employee) {
+  if (!employee || !currentUser || isDemoLocation()) return;
+  try {
+    const result = await fetchJson("/api/staff-availability", { cache: "no-store", headers: authRequestHeaders() });
+    employee.availabilitySubmissions = (result.submissions || []).filter((submission) => String(submission.legacyEmployeeId || "") === String(employee.id || ""));
+    renderActiveAvailabilitySummary(employee);
+  } catch (error) {
+    // The profile remains usable if the separate approval queue is unavailable.
+  }
+}
 function renderActiveAvailabilitySummary(employee = null, patterns = availabilityPatternsForEmployee(employee), selected = selectedAvailabilityPattern(employee)) {
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
@@ -8205,21 +8287,27 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
       if (leftFuture !== rightFuture) return leftFuture ? 1 : -1;
       return String(left.effectiveDate || "").localeCompare(String(right.effectiveDate || ""));
     });
-  tabs.innerHTML = activePatterns.map((pattern) => {
-    const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
+  const pendingSubmissions = pendingAvailabilitySubmissionsForEmployee(employee);
+  const activeTabMarkup = activePatterns.map((pattern) => {
     const futureApproved = isApprovedFutureAvailabilityPattern(pattern);
-    const stateLabel = futureApproved ? `Approved - starts ${escapeHtml(pattern.effectiveDate)}` : "Live for scheduling";
+    const stateLabel = futureApproved ? "Approved" : "Live";
     return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${futureApproved ? " approved-future" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
-      <span>${dayCount} days · every ${pattern.repeatWeeks} week${pattern.repeatWeeks === 1 ? "" : "s"}</span>
-      <small>${stateLabel}</small>
+      <span>${stateLabel}</span>
     </button>`;
   }).join("");
-  tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
-    const pattern = activePatterns.find((item) => item.id === button.dataset.activeAvailabilityId);
-    if (pattern) button.insertAdjacentHTML("beforeend", `<div class="active-availability-day-summary">${availabilityDaySummary(pattern.availability)}</div>`);
-  });
-  if (!activePatterns.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
+  const pendingTabMarkup = pendingSubmissions.map((submission) => `<button type="button" class="active-availability-tab pending-availability-tab" data-availability-submission-id="${escapeHtml(submission.id || submission.weekStart || "pending")}" disabled>
+    <strong>Submitted availability</strong>
+    <span>Awaiting approval</span>
+  </button>`).join("");
+  const selectedActivePattern = activePatterns.find((pattern) => pattern.id === selected?.id);
+  const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content">
+    <strong>${escapeHtml(selectedActivePattern.name)}</strong>
+    <span>${isApprovedFutureAvailabilityPattern(selectedActivePattern) ? "Approved" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}</span>
+    <div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>
+  </div>` : "";
+  tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
+  if (!activePatterns.length && !pendingSubmissions.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
   tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
     button.onclick = () => {
       selectedAvailabilityPatternId = button.dataset.activeAvailabilityId;
@@ -8255,7 +8343,7 @@ function availabilityPatternGuidance(pattern) {
   if (warnings.length) return { text: warnings[0], warning: true };
   const repeat = Number(pattern?.repeatWeeks) || 1;
   const gapText = gaps.length ? ` Intentional gaps: ${gaps.join(", ")}.` : "";
-  return { text: `Repeats every ${repeat} week${repeat === 1 ? "" : "s"}.${gapText} Blank days mean unavailable.`, warning: false };
+  return { text: `Repeats ${availabilityRepeatLabel(repeat).toLowerCase()}.${gapText} Blank days mean unavailable.`, warning: false };
 }
 
 function renderAvailabilityPatternWorkspace(employee = null) {
@@ -8271,7 +8359,8 @@ function renderAvailabilityPatternWorkspace(employee = null) {
     const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
     return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}${pattern.active ? "" : " inactive"}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
-      <span>${dayCount} available days · ${availabilityRepeatLabel(pattern.repeatWeeks)} · starts ${escapeHtml(pattern.effectiveDate)}</span>
+      <span>${dayCount} available days</span>
+      ${pattern.id === selected?.id ? `<div class="availability-pattern-selected-details"><strong>Selected availability</strong><div class="availability-pattern-day-grid">${availabilityDaySummary(pattern.availability)}</div></div>` : ""}
     </button>`;
   }).join("");
   list.querySelectorAll("[data-availability-pattern-id]").forEach((button) => {
@@ -8287,7 +8376,11 @@ function renderAvailabilityPatternWorkspace(employee = null) {
     $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
   }
   const submitButton = $("makeAvailabilityLiveBtn");
-  if (submitButton) submitButton.disabled = !selected;
+  if (submitButton) {
+    submitButton.disabled = !selected;
+    submitButton.textContent = selected?.active ? "Deactivate from Scheduling" : "Make Live for Scheduling";
+    submitButton.classList.toggle("danger", Boolean(selected?.active));
+  }
 }
 function renderAvailabilityEditor(employee = null) {
   const availability = selectedAvailabilityPattern(employee)?.availability || emptyAvailability();
@@ -8628,8 +8721,10 @@ function loadEmployee(id) {
   setCheckedValues("emergencyRoleIds", employee.emergencyRoleIds || []);
   setRoleMealTrainingValues(employee.roleMealTraining || {});
   setCheckedValues("trainerRoles", employee.trainerRoles || []);
+  renderAvailabilityPatternWorkspace(employee);
   renderAvailabilityEditor(employee);
   renderWeeklyAvailabilityEditor(employee);
+  hydrateEmployeeAvailabilitySubmissions(employee);
   renderWeeklyRuleEditor(employee);
   updateStickyEmployeeName();
   markEmployeeFormClean();
@@ -13492,7 +13587,9 @@ function wireEvents() {
   $("employeeForm").onsubmit = (event) => {
     event.preventDefault();
     const activateSubmittedAvailability = submitAvailabilityPatternRequested;
+    const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
     submitAvailabilityPatternRequested = false;
+    deactivateAvailabilityPatternRequested = false;
     pushUndo();
     const id = $("employeeId").value || uid("employee");
     const existingEmployee = state.employees.find((item) => item.id === id);
@@ -13518,14 +13615,21 @@ function wireEvents() {
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
     const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
-    const patternActive = activateSubmittedAvailability || selectedPattern?.active === true;
+    const patternName = $("employeeAvailabilityPatternName").value.trim() || "Regular availability";
+    const duplicatePattern = findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId);
+    if (duplicatePattern) {
+      undoStack.pop();
+      showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
+      return;
+    }
+    const patternActive = !deactivateAvailabilityPattern && (activateSubmittedAvailability || selectedPattern?.active === true);
     const updatedPattern = {
       id: selectedPatternId,
-      name: $("employeeAvailabilityPatternName").value.trim() || "Regular availability",
+      name: patternName,
       availability: parsedAvailability,
-      repeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
+      repeatWeeks: patternActive ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : null,
       active: patternActive,
-      effectiveDate: availabilityEffectiveDate,
+      effectiveDate: patternActive ? availabilityEffectiveDate : "",
       approvalStatus: selectedPattern?.approvalStatus || "",
       approved: selectedPattern?.approved === true
     };
@@ -13577,7 +13681,7 @@ function wireEvents() {
       trainerRoles: checkedValues("trainerRoles"),
       payRates: collectEmployeePayRates(),
       availabilityEffectiveDate,
-      availabilityPatternName: $("employeeAvailabilityPatternName").value.trim() || "Regular availability",
+      availabilityPatternName: patternName,
       availabilityRepeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
       availabilityPatterns,
       availabilitySchedule,
@@ -13627,14 +13731,18 @@ function wireEvents() {
   $("clearAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "");
   $("saveAvailabilityPatternBtn").onclick = () => {
     const current = employeeById($("employeeId")?.value);
-    const patterns = availabilityPatternsForEmployee(current);
     const name = $("employeeAvailabilityPatternName")?.value.trim();
     if (!name) {
       showConflict("Give this availability a name before saving it.");
       return;
     }
+    const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
+    if (duplicate) {
+      showConflict(`The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Choose a unique name.`);
+      return;
+    }
     if (!availabilityEditingPatternId) {
-      selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+      selectedAvailabilityPatternId = "pattern-" + Date.now();
     }
     markEmployeeFormDirty();
     $("employeeForm").requestSubmit();
@@ -13675,6 +13783,15 @@ function wireEvents() {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
     if (!selected) return;
+    if (selected.active) {
+      markEmployeeFormDirty();
+      deactivateAvailabilityPatternRequested = true;
+      availabilityEditingPatternId = selected.id;
+      $("employeeForm").requestSubmit();
+      selectedAvailabilityPatternId = "";
+      renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
+      return;
+    }
     const guidance = availabilityPatternGuidance(selected);
     if (guidance.warning) {
       showConflict(guidance.text);

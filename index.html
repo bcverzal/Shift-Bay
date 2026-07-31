@@ -217,16 +217,20 @@
                     <div><strong>Active availability</strong><small>Choose a saved pattern to view or edit it below.</small></div>
                   </div>
                   <div id="activeAvailabilityTabs" class="active-availability-tabs"></div>
+                  <div id="activeAvailabilityConflict" class="availability-conflict-notice" role="alert" hidden></div>
                 </section>
                 <div class="availability-editor-toolbar">
                   <strong>Weekly editor</strong>
                   <div class="availability-editor-save">
-                    <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Availability name" aria-label="Availability name">
+                    <label class="availability-name-field">
+                      <span>Availability name</span>
+                      <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Name this availability" aria-label="Availability name">
+                    </label>
                     <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save Availability</button>
                   </div>
                   <div class="availability-actions">
-                    <button id="openAllAvailabilityBtn" class="small-button" type="button">Open All</button>
-                    <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear All</button>
+                    <button id="openAllAvailabilityBtn" class="small-button" type="button">Open all days</button>
+                    <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear all days</button>
                   </div>
                 </div>
                 <div id="availabilityEditor"></div>
