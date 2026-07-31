@@ -104,6 +104,7 @@ let submitAvailabilityPatternRequested = false;
 let deactivateAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
+let employeeFormHydrating = false;
 let employeeNewProfileDraft = false;
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
@@ -2465,6 +2466,7 @@ function employeeFormSnapshot() {
 }
 
 function markEmployeeFormDirty() {
+  if (employeeFormHydrating) return;
   employeeFormDirty = true;
 }
 
@@ -6213,7 +6215,7 @@ function syncEmployeeAvailabilityMode() {
 function openEmployeeWeeklyAvailability(employeeId) {
   loadEmployee(employeeId);
   activateTab("employees");
-  setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
+  setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
   $("employeeCallWeekly").checked = true;
   syncEmployeeAvailabilityMode();
   renderWeeklyAvailabilityEditor(employeeById(employeeId));
@@ -8704,6 +8706,8 @@ function parseWeeklyAvailability() {
 function loadEmployee(id) {
   const employee = employeeById(id);
   if (!employee) return;
+  employeeFormHydrating = true;
+  employeeFormDirty = false;
   employeeNewProfileDraft = false;
   $("employeeId").value = employee.id;
   $("firstName").value = employee.firstName;
@@ -8723,7 +8727,7 @@ function loadEmployee(id) {
   $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || "Regular availability";
   $("employeeAvailabilityRepeatWeeks").value = String(employee.availabilityRepeatWeeks || 1);
   syncEmployeeAvailabilityMode();
-  setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
+  setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
   renderEmployeePayRates(employee);
   setCheckedValues("mealTraining", employee.mealTraining || []);
   setCheckedValues("roleTraining", employee.roleTraining || []);
@@ -8736,6 +8740,7 @@ function loadEmployee(id) {
   hydrateEmployeeAvailabilitySubmissions(employee);
   renderWeeklyRuleEditor(employee);
   updateStickyEmployeeName();
+  employeeFormHydrating = false;
   markEmployeeFormClean();
 }
 
@@ -8764,6 +8769,8 @@ function activateEmployeeProfileTab(tabName = "profile") {
 }
 
 function resetEmployeeForm() {
+  employeeFormHydrating = true;
+  employeeFormDirty = false;
   employeeNewProfileDraft = true;
   $("employeeForm").reset();
   $("employeeId").value = "";
@@ -8786,6 +8793,7 @@ function resetEmployeeForm() {
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
   activateEmployeeProfileTab("profile");
+  employeeFormHydrating = false;
   markEmployeeFormClean();
 }
 
@@ -13806,13 +13814,15 @@ function wireEvents() {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
     if (!selected) return;
+    const form = $("employeeForm");
+    if (!form) return;
     if (selected.active) {
       markEmployeeFormDirty();
       deactivateAvailabilityPatternRequested = true;
       availabilityEditingPatternId = selected.id;
-      $("employeeForm").requestSubmit();
-      selectedAvailabilityPatternId = "";
-      renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
+      // Invoke the existing save path without native form validation blocking
+      // the availability action on an unrelated employee field.
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       return;
     }
     const guidance = availabilityPatternGuidance(selected);
@@ -13823,9 +13833,9 @@ function wireEvents() {
     markEmployeeFormDirty();
     submitAvailabilityPatternRequested = true;
     availabilityEditingPatternId = selected.id;
-    $("employeeForm").requestSubmit();
-    selectedAvailabilityPatternId = "";
-    renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
+    // Keep the selected card in place so the new live state is visible after
+    // the save instead of briefly showing a stale, deselected copy.
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   };
   $("weeklyAvailabilityWeek").onchange = () => {
     setWeeklyAvailabilityWeek($("weeklyAvailabilityWeek").value);
