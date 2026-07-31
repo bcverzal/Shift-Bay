@@ -377,6 +377,20 @@ function scheduleChangeSummary(previous: JsonRecord = {}, next: JsonRecord = {})
   };
 }
 
+function mergeEmployeeProfileState(existingState: JsonRecord = {}, incomingState: JsonRecord = {}, employeeId = "") {
+  const incomingEmployees = Array.isArray(incomingState.employees) ? incomingState.employees : [];
+  const incomingEmployee = incomingEmployees.find((employee: any) => String(employee?.id || "") === String(employeeId));
+  if (!incomingEmployee) return null;
+  const existingEmployees = Array.isArray(existingState.employees) ? existingState.employees : [];
+  const found = existingEmployees.some((employee: any) => String(employee?.id || "") === String(employeeId));
+  return {
+    ...existingState,
+    employees: found
+      ? existingEmployees.map((employee: any) => String(employee?.id || "") === String(employeeId) ? incomingEmployee : employee)
+      : [...existingEmployees, incomingEmployee]
+  };
+}
+
 async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}, locationId = config().locationId) {
   await supabaseJson("/audit_events", {
     method: "POST",
@@ -897,12 +911,19 @@ async function handleSaveState(request: Request) {
   const cfg = config();
   const locationId = (validated.user as any).locationId;
   const payload = await request.json();
-  const state = (payload?.data || payload?.state || payload) as JsonRecord;
+  let state = (payload?.data || payload?.state || payload) as JsonRecord;
+  const saveScope = String(payload?.saveScope || "schedule");
+  const employeeId = String(payload?.employeeId || "");
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
   const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
-  if (baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
+  const profileMerge = saveScope === "employee-profile" && employeeId && existingRow?.state
+    ? mergeEmployeeProfileState(existingRow.state as JsonRecord, state, employeeId)
+    : null;
+  if (profileMerge) state = profileMerge;
+  const profileOnlySave = Boolean(profileMerge);
+  if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
       error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
       incomingUpdatedAt: baseServerSavedAt,
@@ -910,7 +931,7 @@ async function handleSaveState(request: Request) {
     });
   }
   const existingTime = dataUpdatedAt(existingRow?.state || { savedAt: existingRow?.saved_at || existingRow?.updated_at });
-  if (incomingTime && existingTime && incomingTime < existingTime - 1000) {
+  if (!profileOnlySave && incomingTime && existingTime && incomingTime < existingTime - 1000) {
     return json(409, {
       error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
       incomingUpdatedAt: new Date(incomingTime).toISOString(),

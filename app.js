@@ -718,7 +718,7 @@ function saveState(options = {}) {
     }
     if (options.immediate) {
       clearTimeout(serverSaveTimer);
-      return persistStateToServer();
+      return persistStateToServer(options);
     }
     queueServerSave();
   }
@@ -773,7 +773,7 @@ function updateStorageStatus() {
   button.setAttribute("aria-label", `Storage status: ${label.textContent}`);
 }
 
-function serverEnvelope() {
+function serverEnvelope(options = {}) {
   return {
     app: "restaurant-scheduler",
     schemaVersion: DATA_SCHEMA_VERSION,
@@ -781,6 +781,8 @@ function serverEnvelope() {
     savedByDeviceId: getDeviceId(),
     savedBy: currentSaveActor(),
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
+    saveScope: options.scope || "schedule",
+    employeeId: options.employeeId || "",
     data: state
   };
 }
@@ -795,14 +797,14 @@ function queueServerSave() {
   serverSaveTimer = setTimeout(() => persistStateToServer(), 500);
 }
 
-async function persistStateToServer() {
+async function persistStateToServer(options = {}) {
   if (!canEditScheduler()) {
     setStorageStatus("saved", readOnlyMessage());
     showReadOnlyNotice();
     return false;
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
-  if (cloudSaveBlockedByStale) return false;
+  if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
   if (serverSaveInFlight) {
     serverSavePending = true;
     return false;
@@ -813,7 +815,7 @@ async function persistStateToServer() {
     const response = await authFetch("/api/state", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(serverEnvelope())
+      body: JSON.stringify(serverEnvelope(options))
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
     if (response.status === 403) {
@@ -845,7 +847,11 @@ async function persistStateToServer() {
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     }
-    setStorageStatus("saved", "Connected to the shared scheduler data file.");
+    if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
+      setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
+    } else {
+      setStorageStatus("saved", "Connected to the shared scheduler data file.");
+    }
     saved = true;
   } catch (error) {
     setStorageStatus("error", error?.message || "Could not save to the shared scheduler file. Browser backup is still saved locally.");
@@ -2473,6 +2479,26 @@ function markEmployeeFormDirty() {
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
   employeeFormDirty = false;
+}
+
+async function submitEmployeeFormDirectly() {
+  const form = $("employeeForm");
+  if (!form || typeof form.onsubmit !== "function") {
+    showConflict("The employee save action is not available. Refresh Shift Bay and try again.");
+    return false;
+  }
+  try {
+    await form.onsubmit.call(form, {
+      preventDefault() {},
+      target: form,
+      currentTarget: form
+    });
+    return true;
+  } catch (error) {
+    console.error("Employee profile save failed", error);
+    showConflict(`Employee profile could not be saved: ${error?.message || "unknown save error"}`);
+    return false;
+  }
 }
 
 function employeeFormHasUnsavedChanges() {
@@ -13601,7 +13627,7 @@ function wireEvents() {
   $("employeeForm").addEventListener("change", (event) => {
     if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
   });
-  $("employeeForm").onsubmit = (event) => {
+  $("employeeForm").onsubmit = async (event) => {
     event.preventDefault();
     const activateSubmittedAvailability = submitAvailabilityPatternRequested;
     const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
@@ -13712,12 +13738,16 @@ function wireEvents() {
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
     // Employee profile edits should be durable before the user switches
     // profiles; waiting for the general schedule debounce can lose a fast edit.
-    saveState({ immediate: true });
+    const saved = await saveState({ immediate: true, scope: "employee-profile", employeeId: id });
     renderAll();
     loadEmployee(id);
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
-    markEmployeeFormClean();
-    showEmployeeSavedToast(displayName(employee));
+    if (saved || !SERVER_STORAGE_ENABLED) {
+      markEmployeeFormClean();
+      showEmployeeSavedToast(displayName(employee));
+    } else {
+      showConflict("The employee profile was kept in this browser, but the shared save did not confirm. Refresh before continuing schedule edits.");
+    }
   };
   $("newEmployeeBtn").onclick = async () => {
     if (!(await confirmDiscardEmployeeChanges())) return;
@@ -13824,7 +13854,7 @@ function wireEvents() {
       availabilityEditingPatternId = selected.id;
       // Invoke the existing save path without native form validation blocking
       // the availability action on an unrelated employee field.
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      submitEmployeeFormDirectly();
       return;
     }
     const guidance = availabilityPatternGuidance(selected);
@@ -13837,7 +13867,7 @@ function wireEvents() {
     availabilityEditingPatternId = selected.id;
     // Keep the selected card in place so the new live state is visible after
     // the save instead of briefly showing a stale, deselected copy.
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    submitEmployeeFormDirectly();
   };
   $("weeklyAvailabilityWeek").onchange = () => {
     setWeeklyAvailabilityWeek($("weeklyAvailabilityWeek").value);
@@ -13857,9 +13887,7 @@ function wireEvents() {
     markEmployeeFormDirty();
   };
   $("stickySaveEmployeeBtn").onclick = () => {
-    const form = $("employeeForm");
-    if (!form) return;
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    submitEmployeeFormDirectly();
   };
   $("toggleWeeklyAvailabilityBtn").onclick = () => {
     markEmployeeFormDirty();
