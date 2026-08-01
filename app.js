@@ -13766,14 +13766,22 @@ function wireEvents() {
     const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
     const patternName = $("employeeAvailabilityPatternName").value.trim() || "Regular availability";
-    const duplicatePattern = findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId);
+    // Call Weekly has its own per-week availability records. The regular
+    // availability editor is hidden in this mode, so its naming and overlap
+    // rules must not block or rewrite a Call Weekly profile save.
+    const regularAvailabilityMode = !callWeekly;
+    const duplicatePattern = regularAvailabilityMode
+      ? findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId)
+      : null;
     if (duplicatePattern) {
       undoStack.pop();
       setEmployeeSaveDebugStatus("Save stopped: duplicate availability name", "failed");
       showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
       return;
     }
-    const patternActive = !deactivateAvailabilityPattern && (activateSubmittedAvailability || selectedPattern?.active === true);
+    const patternActive = regularAvailabilityMode
+      && !deactivateAvailabilityPattern
+      && (activateSubmittedAvailability || selectedPattern?.active === true);
     const updatedPattern = {
       id: selectedPatternId,
       name: patternName,
@@ -13784,10 +13792,14 @@ function wireEvents() {
       approvalStatus: selectedPattern?.approvalStatus || "",
       approved: selectedPattern?.approved === true
     };
-    const availabilityPatterns = existingPatterns.some((pattern) => pattern.id === selectedPatternId)
-      ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
-      : [updatedPattern, ...existingPatterns];
-    const availabilityConflict = availabilityPatternConflicts(availabilityPatterns);
+    const availabilityPatterns = regularAvailabilityMode
+      ? (existingPatterns.some((pattern) => pattern.id === selectedPatternId)
+        ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
+        : [updatedPattern, ...existingPatterns])
+      : existingPatterns;
+    const availabilityConflict = regularAvailabilityMode
+      ? availabilityPatternConflicts(availabilityPatterns)
+      : null;
     if (availabilityConflict) {
       undoStack.pop();
       setEmployeeSaveDebugStatus("Save stopped: availability patterns overlap", "failed");

@@ -50,6 +50,8 @@ function run() {
   includes(app, "Cloud save confirmed", "employee profile saves must visibly confirm the cloud response");
   includes(app, "saveAttemptId", "employee profile saves must send a traceable attempt id");
   includes(edgeFunction, "saveAttemptId", "employee profile audit events must retain the traceable attempt id");
+  includes(app, "const regularAvailabilityMode = !callWeekly", "Call Weekly saves must use a separate availability-validation branch");
+  includes(app, "regularAvailabilityMode\n      ? findDuplicateAvailabilityPatternName", "Call Weekly saves must bypass regular availability-name validation");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
