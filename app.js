@@ -46,6 +46,7 @@ let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let employeeProfileSavePriority = false;
 let cloudSaveBlockedByStale = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
@@ -805,13 +806,16 @@ async function persistEmployeeProfileToServer(employee) {
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
 
   // A profile write must never be folded into the debounced whole-schedule
-  // save. Wait for any existing request, then send this employee by itself.
+  // save. Claim priority before waiting so another large schedule request
+  // cannot repeatedly jump ahead of this smaller, targeted profile update.
+  employeeProfileSavePriority = true;
   clearTimeout(serverSaveTimer);
   const startedAt = Date.now();
   while (serverSaveInFlight && Date.now() - startedAt < 15000) {
     await new Promise((resolve) => window.setTimeout(resolve, 50));
   }
   if (serverSaveInFlight) {
+    employeeProfileSavePriority = false;
     setStorageStatus("error", "Employee profile save is waiting on another cloud request. Try again in a moment.");
     return false;
   }
@@ -850,6 +854,11 @@ async function persistEmployeeProfileToServer(employee) {
     return false;
   } finally {
     serverSaveInFlight = false;
+    employeeProfileSavePriority = false;
+    if (serverSavePending) {
+      serverSavePending = false;
+      queueServerSave();
+    }
   }
 }
 
@@ -934,7 +943,10 @@ async function persistStateToServer(options = {}) {
     showConflict(error?.message || "Could not save to the shared scheduler file. Your browser copy is still saved locally.");
   } finally {
     serverSaveInFlight = false;
-    if (serverSavePending) {
+    // A targeted employee save may be waiting behind this whole-schedule
+    // request. Let it run next; it will resume any pending schedule save once
+    // the profile is safely confirmed.
+    if (!employeeProfileSavePriority && serverSavePending) {
       serverSavePending = false;
       queueServerSave();
     }

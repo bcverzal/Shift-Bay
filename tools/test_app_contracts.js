@@ -42,6 +42,8 @@ function run() {
   includes(app, 'data-availability-end-slot', "manager availability needs paired start/end time controls");
   includes(app, 'data-add-availability-window', "manager availability needs an add-window action");
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
+  includes(app, "employeeProfileSavePriority", "employee profile saves must take priority over queued full-schedule writes");
+  includes(app, "another large schedule request", "employee profile saves must reserve the next cloud write");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
