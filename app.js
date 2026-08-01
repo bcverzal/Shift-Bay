@@ -776,6 +776,10 @@ function updateStorageStatus() {
 }
 
 function serverEnvelope(options = {}) {
+  const employeeId = options.employeeId || "";
+  const employeeProfile = options.scope === "employee-profile" && employeeId
+    ? state.employees.find((employee) => String(employee?.id || "") === String(employeeId)) || null
+    : null;
   return {
     app: "restaurant-scheduler",
     schemaVersion: DATA_SCHEMA_VERSION,
@@ -784,7 +788,10 @@ function serverEnvelope(options = {}) {
     savedBy: currentSaveActor(),
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     saveScope: options.scope || "schedule",
-    employeeId: options.employeeId || "",
+    employeeId,
+    // Send the exact profile being saved. The server deliberately ignores the
+    // rest of the browser's schedule snapshot for this scoped operation.
+    employeeProfile,
     data: state
   };
 }

@@ -391,6 +391,18 @@ function mergeEmployeeProfileState(existingState: JsonRecord = {}, incomingState
   };
 }
 
+function mergeSingleEmployeeProfile(existingState: JsonRecord = {}, employee: JsonRecord = {}, employeeId = "") {
+  if (!employeeId || String(employee?.id || "") !== String(employeeId)) return null;
+  const existingEmployees = Array.isArray(existingState.employees) ? existingState.employees : [];
+  const found = existingEmployees.some((item: any) => String(item?.id || "") === String(employeeId));
+  return {
+    ...existingState,
+    employees: found
+      ? existingEmployees.map((item: any) => String(item?.id || "") === String(employeeId) ? employee : item)
+      : [...existingEmployees, employee]
+  };
+}
+
 async function logAuditEvent(eventType: string, userId: string, details: JsonRecord = {}, locationId = config().locationId) {
   await supabaseJson("/audit_events", {
     method: "POST",
@@ -914,13 +926,18 @@ async function handleSaveState(request: Request) {
   let state = (payload?.data || payload?.state || payload) as JsonRecord;
   const saveScope = String(payload?.saveScope || "schedule");
   const employeeId = String(payload?.employeeId || "");
+  const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
   const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
-  const profileMerge = saveScope === "employee-profile" && employeeId && existingRow?.state
-    ? mergeEmployeeProfileState(existingRow.state as JsonRecord, state, employeeId)
+  const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
+  const profileMerge = profileRequested
+    ? mergeSingleEmployeeProfile(existingRow?.state as JsonRecord || {}, employeeProfile || {}, employeeId)
     : null;
+  if (profileRequested && !profileMerge) {
+    return json(400, { ok: false, error: "Employee profile save did not include a valid employee record." });
+  }
   if (profileMerge) state = profileMerge;
   const profileOnlySave = Boolean(profileMerge);
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
@@ -962,6 +979,8 @@ async function handleSaveState(request: Request) {
     savedByEmail: (validated.user as any).email || "",
     savedByRole: (validated.user as any).role || "",
     savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
+    saveScope,
+    employeeId: profileOnlySave ? employeeId : null,
     schemaVersion: body[0].schema_version,
     changeSummary
   }, locationId);
