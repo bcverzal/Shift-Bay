@@ -343,6 +343,29 @@ async function loadDocumentRow(select = "*", locationId = config().locationId) {
   return Array.isArray(rows) ? rows[0] : null;
 }
 
+// Employee profiles change independently from the large scheduling document.
+// Keeping their current version in a small row prevents a full schedule save
+// from overwriting an employee edit made by another manager or device.
+async function loadEmployeeProfileOverrides(locationId: string) {
+  const rows = await supabaseJson(
+    `/employee_profile_overrides?location_id=eq.${encodeURIComponent(locationId)}&select=employee_id,profile`,
+    { headers: serviceHeaders() }
+  ).catch(() => []);
+  return new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row: any) => row?.employee_id && row?.profile)
+      .map((row: any) => [String(row.employee_id), row.profile as JsonRecord])
+  );
+}
+
+function applyEmployeeProfileOverrides(state: JsonRecord = {}, overrides: Map<string, JsonRecord>) {
+  if (!overrides.size || !Array.isArray(state.employees)) return state;
+  return {
+    ...state,
+    employees: state.employees.map((employee: any) => overrides.get(String(employee?.id || "")) || employee)
+  };
+}
+
 function scheduleChangeSummary(previous: JsonRecord = {}, next: JsonRecord = {}) {
   const compare = (key: string) => {
     const before = new Map((Array.isArray(previous[key]) ? previous[key] : []).map((item: any) => [item.id, item]));
@@ -906,13 +929,14 @@ async function handleLoadState(request: Request) {
   const locationId = (validated.user as any).locationId;
   const row = await loadDocumentRow("*", locationId);
   if (!row) return json(404, { error: "No scheduler data file has been created yet." });
+  const overrides = await loadEmployeeProfileOverrides(locationId);
   return json(200, {
     app: "restaurant-scheduler",
     schemaVersion: row.schema_version,
     savedAt: row.saved_at,
     savedBy: row.saved_by || null,
     savedByDeviceId: row.saved_by_device_id,
-    data: row.state
+    data: applyEmployeeProfileOverrides(row.state as JsonRecord || {}, overrides)
   });
 }
 
@@ -932,14 +956,36 @@ async function handleSaveState(request: Request) {
   const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
-  const profileMerge = profileRequested
-    ? mergeSingleEmployeeProfile(existingRow?.state as JsonRecord || {}, employeeProfile || {}, employeeId)
-    : null;
-  if (profileRequested && !profileMerge) {
+  if (profileRequested && (!employeeProfile || String(employeeProfile?.id || "") !== employeeId)) {
     return json(400, { ok: false, error: "Employee profile save did not include a valid employee record." });
   }
-  if (profileMerge) state = profileMerge;
-  const profileOnlySave = Boolean(profileMerge);
+  const profileOnlySave = profileRequested;
+  if (profileOnlySave) {
+    const savedAt = new Date().toISOString();
+    await supabaseJson("/employee_profile_overrides?on_conflict=location_id,employee_id", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
+      body: JSON.stringify([{
+        location_id: locationId,
+        employee_id: employeeId,
+        profile: employeeProfile,
+        saved_by: (validated.user as any).id,
+        saved_at: savedAt,
+        updated_at: savedAt
+      }])
+    });
+    await logAuditEvent("employee_profile_saved", (validated.user as any).id, {
+      documentKey: cfg.documentKey,
+      savedAt,
+      savedByEmail: (validated.user as any).email || "",
+      savedByRole: (validated.user as any).role || "",
+      savedByDeviceId: payload?.savedByDeviceId || null,
+      saveScope,
+      employeeId,
+      changeSummary: { employeesChanged: 1 }
+    }, locationId);
+    return json(200, { ok: true, savedAt });
+  }
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
       error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
