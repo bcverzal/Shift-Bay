@@ -6241,6 +6241,20 @@ body.problem-focus .shift-card.has-issue {
   font-size: 12px;
 }
 
+.employee-sticky-actions .employee-save-debug-status {
+  color: #1d4ed8;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.employee-sticky-actions .employee-save-debug-status[data-state="confirmed"] {
+  color: #166534;
+}
+
+.employee-sticky-actions .employee-save-debug-status[data-state="failed"] {
+  color: #b91c1c;
+}
+
 .employee-sticky-actions button,
 .settings-sticky-actions button {
   min-width: 142px;

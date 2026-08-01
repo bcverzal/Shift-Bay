@@ -803,7 +803,13 @@ async function persistEmployeeProfileToServer(employee) {
     showReadOnlyNotice();
     return false;
   }
-  if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
+  if (!SERVER_STORAGE_ENABLED || !serverStorageReady) {
+    setEmployeeSaveDebugStatus("Cloud request did not start: cloud storage is not ready", "failed");
+    return false;
+  }
+
+  const saveAttemptId = `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  setEmployeeSaveDebugStatus(`Cloud request started [${saveAttemptId}]`);
 
   // A profile write must never be folded into the debounced whole-schedule
   // save. Claim priority before waiting so another large schedule request
@@ -834,6 +840,7 @@ async function persistEmployeeProfileToServer(employee) {
         savedBy: currentSaveActor(),
         baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
         saveScope: "employee-profile",
+        saveAttemptId,
         employeeId: employee.id,
         employeeProfile: employee
       })
@@ -846,10 +853,12 @@ async function persistEmployeeProfileToServer(employee) {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     }
     setStorageStatus("saved", "Employee profile saved to the shared scheduler data file.");
+    setEmployeeSaveDebugStatus(`Cloud save confirmed [${saveAttemptId}]`, "confirmed");
     return true;
   } catch (error) {
     const message = error?.message || "Could not save the employee profile to the shared scheduler data file.";
     setStorageStatus("error", message);
+    setEmployeeSaveDebugStatus(`Cloud save failed [${saveAttemptId}]: ${message}`, "failed");
     showConflict(message);
     return false;
   } finally {
@@ -8154,6 +8163,15 @@ function showEmployeeSavedToast(employeeName = "Employee") {
   }, 2600);
 }
 
+function setEmployeeSaveDebugStatus(message, status = "saving") {
+  const indicator = $("employeeSaveDebugStatus");
+  if (!indicator) return;
+  const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  indicator.textContent = `${message} (${timestamp})`;
+  indicator.dataset.state = status;
+  indicator.hidden = false;
+}
+
 function renderEmployeePayRates(employee = null) {
   const rates = employee?.payRates || {};
   $("employeePayRates").innerHTML = state.roles.map((role) => {
@@ -13716,6 +13734,7 @@ function wireEvents() {
   });
   $("employeeForm").onsubmit = async (event) => {
     event.preventDefault();
+    setEmployeeSaveDebugStatus("Employee form handler reached");
     const activateSubmittedAvailability = submitAvailabilityPatternRequested;
     const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
     submitAvailabilityPatternRequested = false;
@@ -13733,6 +13752,7 @@ function wireEvents() {
     const duplicateEmployee = importMatch.employee || importMatch.possible?.[0];
     if (duplicateEmployee) {
       undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: possible duplicate employee", "failed");
       showConflict(`${displayName(duplicateEmployee)} may already be in the employee list. I opened that profile instead of creating a duplicate.`);
       loadEmployee(duplicateEmployee.id);
       return;
@@ -13749,6 +13769,7 @@ function wireEvents() {
     const duplicatePattern = findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId);
     if (duplicatePattern) {
       undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: duplicate availability name", "failed");
       showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
       return;
     }
@@ -13769,6 +13790,7 @@ function wireEvents() {
     const availabilityConflict = availabilityPatternConflicts(availabilityPatterns);
     if (availabilityConflict) {
       undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: availability patterns overlap", "failed");
       showConflict(`${availabilityConflict.left.name} and ${availabilityConflict.right.name} overlap on ${displayDate(availabilityConflict.date)}. Deactivate or edit one pattern before saving or submitting availability.`);
       return;
     }
@@ -13989,6 +14011,7 @@ function wireEvents() {
     markEmployeeFormDirty();
   };
   $("stickySaveEmployeeBtn").onclick = () => {
+    setEmployeeSaveDebugStatus("Save Employee button clicked");
     submitEmployeeFormDirectly();
   };
   $("toggleWeeklyAvailabilityBtn").onclick = () => {

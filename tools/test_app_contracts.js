@@ -6,6 +6,7 @@ const root = path.join(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const staff = fs.readFileSync(path.join(root, "staff.js"), "utf8");
+const edgeFunction = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay-api", "index.ts"), "utf8");
 
 function includes(source, value, message) {
   assert.ok(source.includes(value), message || `Expected source to include ${value}`);
@@ -44,6 +45,11 @@ function run() {
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
   includes(app, "employeeProfileSavePriority", "employee profile saves must take priority over queued full-schedule writes");
   includes(app, "another large schedule request", "employee profile saves must reserve the next cloud write");
+  includes(index, 'id="employeeSaveDebugStatus"', "employee profile saves must expose their current stage");
+  includes(app, "Save Employee button clicked", "the employee save button must immediately confirm its click handler ran");
+  includes(app, "Cloud save confirmed", "employee profile saves must visibly confirm the cloud response");
+  includes(app, "saveAttemptId", "employee profile saves must send a traceable attempt id");
+  includes(edgeFunction, "saveAttemptId", "employee profile audit events must retain the traceable attempt id");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");

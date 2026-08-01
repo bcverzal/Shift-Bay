@@ -949,6 +949,7 @@ async function handleSaveState(request: Request) {
   const payload = await request.json();
   let state = (payload?.data || payload?.state || payload) as JsonRecord;
   const saveScope = String(payload?.saveScope || "schedule");
+  const saveAttemptId = String(payload?.saveAttemptId || "");
   const employeeId = String(payload?.employeeId || "");
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
@@ -981,10 +982,11 @@ async function handleSaveState(request: Request) {
       savedByRole: (validated.user as any).role || "",
       savedByDeviceId: payload?.savedByDeviceId || null,
       saveScope,
+      saveAttemptId: saveAttemptId || null,
       employeeId,
       changeSummary: { employeesChanged: 1 }
     }, locationId);
-    return json(200, { ok: true, savedAt });
+    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null });
   }
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
