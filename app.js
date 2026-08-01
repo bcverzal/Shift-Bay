@@ -796,6 +796,63 @@ function serverEnvelope(options = {}) {
   };
 }
 
+async function persistEmployeeProfileToServer(employee) {
+  if (!canEditScheduler()) {
+    setStorageStatus("saved", readOnlyMessage());
+    showReadOnlyNotice();
+    return false;
+  }
+  if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
+
+  // A profile write must never be folded into the debounced whole-schedule
+  // save. Wait for any existing request, then send this employee by itself.
+  clearTimeout(serverSaveTimer);
+  const startedAt = Date.now();
+  while (serverSaveInFlight && Date.now() - startedAt < 15000) {
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  if (serverSaveInFlight) {
+    setStorageStatus("error", "Employee profile save is waiting on another cloud request. Try again in a moment.");
+    return false;
+  }
+
+  serverSaveInFlight = true;
+  setStorageStatus("saving", "Saving employee profile...");
+  try {
+    const response = await authFetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app: "restaurant-scheduler",
+        schemaVersion: DATA_SCHEMA_VERSION,
+        savedAt: nowIso(),
+        savedByDeviceId: getDeviceId(),
+        savedBy: currentSaveActor(),
+        baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
+        saveScope: "employee-profile",
+        employeeId: employee.id,
+        employeeProfile: employee
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Employee profile save failed: ${response.status}`);
+    if (result.savedAt) {
+      lastKnownServerSavedAt = result.savedAt;
+      state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    }
+    setStorageStatus("saved", "Employee profile saved to the shared scheduler data file.");
+    return true;
+  } catch (error) {
+    const message = error?.message || "Could not save the employee profile to the shared scheduler data file.";
+    setStorageStatus("error", message);
+    showConflict(message);
+    return false;
+  } finally {
+    serverSaveInFlight = false;
+  }
+}
+
 function queueServerSave() {
   if (cloudSaveBlockedByStale) {
     setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
@@ -2831,7 +2888,7 @@ function focusScheduleIssue(issue, number, total, options = {}) {
   if (options.announce !== false) showConflict(`Issue ${number} of ${total}: ${issue.message}`);
 }
 
-function renderAll() {
+function renderAll(options = {}) {
   renderTabs();
   renderSettings();
   renderRoles();
@@ -2843,7 +2900,7 @@ function renderAll() {
   renderScheduleHistory();
   renderStaffingAnalysis();
   renderFloorPlan();
-  saveState();
+  if (!options.skipSave) saveState();
 }
 
 function renderAllPreservingScheduleScroll() {
@@ -13756,8 +13813,21 @@ function wireEvents() {
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
     // Employee profile edits should be durable before the user switches
     // profiles; waiting for the general schedule debounce can lose a fast edit.
-    const saved = await saveState({ immediate: true, scope: "employee-profile", employeeId: id });
-    renderAll();
+    state.meta = {
+      ...(state.meta || {}),
+      schemaVersion: DATA_SCHEMA_VERSION,
+      deviceId: getDeviceId(),
+      updatedAt: nowIso(),
+      updatedBy: currentSaveActor()
+    };
+    migrateState(state, state);
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    const saved = SERVER_STORAGE_ENABLED
+      ? await persistEmployeeProfileToServer(employee)
+      : (saveState(), true);
+    // The scoped employee save already completed above. Do not let this render
+    // immediately enqueue a stale whole-schedule write behind it.
+    renderAll({ skipSave: true });
     loadEmployee(id);
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
     if (saved || !SERVER_STORAGE_ENABLED) {
