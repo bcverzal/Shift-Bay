@@ -101,6 +101,7 @@ let employeeWeeklyAvailabilityWeekKey = "";
 let selectedAvailabilityPatternId = "";
 let selectedAvailabilityDayIndex = 0;
 let availabilityEditingPatternId = "";
+let availabilitySaveRequested = false;
 let submitAvailabilityPatternRequested = false;
 let deactivateAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
@@ -13735,8 +13736,10 @@ function wireEvents() {
   $("employeeForm").onsubmit = async (event) => {
     event.preventDefault();
     setEmployeeSaveDebugStatus("Employee form handler reached");
+    const saveAvailability = availabilitySaveRequested;
     const activateSubmittedAvailability = submitAvailabilityPatternRequested;
     const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
+    availabilitySaveRequested = false;
     submitAvailabilityPatternRequested = false;
     deactivateAvailabilityPatternRequested = false;
     pushUndo();
@@ -13759,18 +13762,19 @@ function wireEvents() {
     }
     const callWeekly = $("employeeCallWeekly").checked;
     const weeklyPanelOpen = !$("weeklyAvailabilityFieldset").hidden;
-    const availabilityEffectiveDate = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value || currentWeekKey());
+    const availabilityEffectiveDate = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value || existingEmployee?.availabilityEffectiveDate || currentWeekKey());
     $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
     const parsedAvailability = parseAvailability();
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
     const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
-    const patternName = $("employeeAvailabilityPatternName").value.trim() || "Regular availability";
+    const patternName = $("employeeAvailabilityPatternName").value.trim() || selectedPattern?.name || existingEmployee?.availabilityPatternName || "Regular availability";
     // Call Weekly has its own per-week availability records. The regular
     // availability editor is hidden in this mode, so its naming and overlap
     // rules must not block or rewrite a Call Weekly profile save.
     const regularAvailabilityMode = !callWeekly;
-    const duplicatePattern = regularAvailabilityMode
+    const availabilityAction = regularAvailabilityMode && (saveAvailability || activateSubmittedAvailability || deactivateAvailabilityPattern);
+    const duplicatePattern = saveAvailability
       ? findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId)
       : null;
     if (duplicatePattern) {
@@ -13779,25 +13783,25 @@ function wireEvents() {
       showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
       return;
     }
-    const patternActive = regularAvailabilityMode
+    const patternActive = availabilityAction
       && !deactivateAvailabilityPattern
       && (activateSubmittedAvailability || selectedPattern?.active === true);
     const updatedPattern = {
       id: selectedPatternId,
       name: patternName,
-      availability: parsedAvailability,
+      availability: saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability),
       repeatWeeks: patternActive ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : null,
       active: patternActive,
       effectiveDate: patternActive ? availabilityEffectiveDate : "",
       approvalStatus: selectedPattern?.approvalStatus || "",
       approved: selectedPattern?.approved === true
     };
-    const availabilityPatterns = regularAvailabilityMode
+    const availabilityPatterns = availabilityAction
       ? (existingPatterns.some((pattern) => pattern.id === selectedPatternId)
         ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
         : [updatedPattern, ...existingPatterns])
       : existingPatterns;
-    const availabilityConflict = regularAvailabilityMode
+    const availabilityConflict = availabilityAction
       ? availabilityPatternConflicts(availabilityPatterns)
       : null;
     if (availabilityConflict) {
@@ -13809,7 +13813,7 @@ function wireEvents() {
     const availabilitySchedule = Array.isArray(existingEmployee?.availabilitySchedule)
       ? existingEmployee.availabilitySchedule.map((item) => ({ ...item, availability: { ...(item.availability || {}) } }))
       : [];
-    if (patternActive) {
+    if (availabilityAction && patternActive) {
       const scheduledIndex = availabilitySchedule.findIndex((item) => item.effectiveDate === availabilityEffectiveDate);
       const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: parsedAvailability };
       if (scheduledIndex >= 0) availabilitySchedule[scheduledIndex] = scheduledVersion;
@@ -13844,12 +13848,12 @@ function wireEvents() {
       roleMealTraining: collectRoleMealTraining(),
       trainerRoles: checkedValues("trainerRoles"),
       payRates: collectEmployeePayRates(),
-      availabilityEffectiveDate,
-      availabilityPatternName: patternName,
-      availabilityRepeatWeeks: Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)),
+      availabilityEffectiveDate: availabilityAction ? availabilityEffectiveDate : (existingEmployee?.availabilityEffectiveDate || availabilityEffectiveDate),
+      availabilityPatternName: availabilityAction ? patternName : (existingEmployee?.availabilityPatternName || patternName),
+      availabilityRepeatWeeks: availabilityAction ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : (existingEmployee?.availabilityRepeatWeeks || 1),
       availabilityPatterns,
       availabilitySchedule,
-      availability: patternActive && (availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee)
+      availability: availabilityAction && patternActive && (availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee)
         ? parsedAvailability
         : (existingEmployee?.availability || emptyAvailability()),
       weeklyAvailability,
@@ -13930,6 +13934,7 @@ function wireEvents() {
       selectedAvailabilityPatternId = "pattern-" + Date.now();
     }
     markEmployeeFormDirty();
+    availabilitySaveRequested = true;
     $("employeeForm").requestSubmit();
   };
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
