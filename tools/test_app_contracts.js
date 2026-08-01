@@ -53,6 +53,7 @@ function run() {
   includes(app, "const regularAvailabilityMode = !callWeekly", "Call Weekly saves must use a separate availability-validation branch");
   includes(app, "const duplicatePattern = saveAvailability", "Only explicit availability saves may be blocked by duplicate availability names");
   includes(app, "availabilitySaveRequested = true", "Save Availability must explicitly request availability validation");
+  includes(app, 'currentAccessRole() !== "owner"', "temporary employee save diagnostics must remain owner-only");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");

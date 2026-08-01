@@ -1511,6 +1511,8 @@ async function handleLocationSwitcherChange(event) {
 }
 function updateAccountUi() {
   document.body.classList.toggle("viewer-read-only", currentAccessRole() === "viewer");
+  const employeeSaveDebugStatus = $("employeeSaveDebugStatus");
+  if (employeeSaveDebugStatus && currentAccessRole() !== "owner") employeeSaveDebugStatus.hidden = true;
   const avatar = $("accountAvatar");
   const title = $("accountMenuTitle");
   const status = $("accountMenuStatus");
@@ -8167,6 +8169,10 @@ function showEmployeeSavedToast(employeeName = "Employee") {
 function setEmployeeSaveDebugStatus(message, status = "saving") {
   const indicator = $("employeeSaveDebugStatus");
   if (!indicator) return;
+  if (currentAccessRole() !== "owner") {
+    indicator.hidden = true;
+    return;
+  }
   const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
   indicator.textContent = `${message} (${timestamp})`;
   indicator.dataset.state = status;
