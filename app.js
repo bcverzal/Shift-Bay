@@ -50,6 +50,8 @@ let employeeProfileSavePriority = false;
 let cloudSaveBlockedByStale = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
+let lastKnownServerState = null;
+let cloudFreshnessCheckInFlight = false;
 let skipLocalRecoveryOnce = false;
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
@@ -717,6 +719,7 @@ function saveState(options = {}) {
     // Profile-only saves merge one employee record on the server, so they can
     // safely proceed while this browser's broader schedule snapshot is stale.
     if (cloudSaveBlockedByStale && options.scope !== "employee-profile") {
+      refreshBlockedCloudRecovery(state);
       setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
       return Promise.resolve(false);
     }
@@ -852,6 +855,9 @@ async function persistEmployeeProfileToServer(employee) {
       lastKnownServerSavedAt = result.savedAt;
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (lastKnownServerState?.employees) {
+        lastKnownServerState.employees = lastKnownServerState.employees.map((item) => String(item?.id || "") === String(employee?.id || "") ? cloneSchedulerState(employee) : item);
+      }
     }
     setStorageStatus("saved", "Employee profile saved to the shared scheduler data file.");
     setEmployeeSaveDebugStatus(`Cloud save confirmed [${saveAttemptId}]`, "confirmed");
@@ -941,6 +947,7 @@ async function persistStateToServer(options = {}) {
       lastKnownServerSavedAt = result.savedAt;
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      lastKnownServerState = cloneSchedulerState(state);
     }
     if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
       setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
@@ -1735,14 +1742,30 @@ async function hydrateStateFromServer() {
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
       const skipLocalRecovery = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
+      const recovery = readCloudRecovery();
+      if (recovery?.autoReapplyPending && recovery.baseData) {
+        state = serverState;
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        serverStorageReady = true;
+        cloudSaveBlockedByStale = false;
+        lastKnownServerSavedAt = serverSavedAt;
+        lastKnownServerState = cloneSchedulerState(serverState);
+        const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
+        renderAll();
+        updateZoomVisibility();
+        if (!restored?.saved) showStaleRecoveryAlert(readCloudRecovery() || recovery);
+        return;
+      }
       if (!skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
         // A browser copy can be newer than the shared document because another
         // device saved first. Never push that copy automatically on startup:
         // doing so creates an immediate 409 and can overwrite another user's
         // work if the server's guard is ever bypassed. Preserve it for review.
-        const recovery = createCloudRecovery(state, state.meta?.serverSavedAt || "", serverSavedAt);
-        recovery.changes = stateCollectionChanges(state, serverState);
-        saveCloudRecovery(recovery);
+        const newerBrowserRecovery = createCloudRecovery(state, state.meta?.serverSavedAt || "", serverSavedAt);
+        newerBrowserRecovery.changes = stateCollectionChanges(state, serverState);
+        saveCloudRecovery(newerBrowserRecovery);
         state = serverState;
         state.meta = { ...(state.meta || {}), serverSavedAt };
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -1750,7 +1773,7 @@ async function hydrateStateFromServer() {
         cloudSaveBlockedByStale = false;
         lastKnownServerSavedAt = serverSavedAt;
         setStorageStatus("saved", "Loaded the latest shared schedule. An older browser copy was preserved for recovery.");
-        showStaleRecoveryAlert(recovery);
+        showStaleRecoveryAlert(newerBrowserRecovery);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
         renderAll();
@@ -1758,6 +1781,7 @@ async function hydrateStateFromServer() {
         return;
       }
       lastKnownServerSavedAt = serverSavedAt;
+      lastKnownServerState = cloneSchedulerState(serverState);
       cloudSaveBlockedByStale = false;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -1770,13 +1794,13 @@ async function hydrateStateFromServer() {
       saveLocalActiveWeek({ shared: false });
       renderAll();
       updateZoomVisibility();
-      const recovery = readCloudRecovery();
-      if (recovery && !recovery.presentedAt) {
-        if (!recovery.changes?.length) {
-          recovery.changes = stateCollectionChanges(recovery.data, serverState);
-          saveCloudRecovery(recovery);
+      const pendingRecovery = readCloudRecovery();
+      if (pendingRecovery && !pendingRecovery.presentedAt) {
+        if (!pendingRecovery.changes?.length) {
+          pendingRecovery.changes = stateCollectionChanges(pendingRecovery.data, serverState);
+          saveCloudRecovery(pendingRecovery);
         }
-        showStaleRecoveryAlert(recovery);
+        showStaleRecoveryAlert(pendingRecovery);
       }
       return;
     }
@@ -1820,6 +1844,40 @@ function localStateIsNewerThanServer(localState, serverState) {
   const localCounts = stateRecordCount(localState);
   const serverCounts = stateRecordCount(serverState);
   return localCounts > serverCounts || localTime > serverTime + 5000;
+}
+
+function hasUnsavedSchedulerChanges() {
+  if (!lastKnownServerState) return false;
+  return REBASABLE_STATE_COLLECTIONS.some((key) => !sameSchedulerValue(state[key] || [], lastKnownServerState[key] || []))
+    || REBASABLE_STATE_OBJECTS.some((key) => !sameSchedulerValue(state[key] || {}, lastKnownServerState[key] || {}));
+}
+
+async function checkForNewerSharedSchedule() {
+  if (!SERVER_STORAGE_ENABLED || !serverStorageReady || cloudFreshnessCheckInFlight || serverSaveInFlight || serverSavePending || cloudSaveBlockedByStale) return;
+  if (document.visibilityState === "hidden") return;
+  cloudFreshnessCheckInFlight = true;
+  try {
+    const response = await authFetch("/api/status", { cache: "no-store" });
+    if (!response.ok) return;
+    const status = await response.json().catch(() => ({}));
+    const remoteSavedAt = String(status.updatedAt || "");
+    if (!remoteSavedAt || !lastKnownServerSavedAt || Date.parse(remoteSavedAt) <= Date.parse(lastKnownServerSavedAt) + 1000) return;
+    if (employeeFormHasUnsavedChanges()) {
+      setStorageStatus("saving", "A newer shared schedule is available. Save or discard this employee profile before refreshing.");
+      return;
+    }
+    if (hasUnsavedSchedulerChanges()) {
+      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, remoteSavedAt, lastKnownServerState);
+      recovery.changes = stateCollectionChanges(state, lastKnownServerState);
+      saveCloudRecovery(recovery);
+    }
+    await hydrateStateFromServer();
+  } catch {
+    // A transient network failure should not interrupt schedule work. The next
+    // focus, reconnect, or interval check will try again.
+  } finally {
+    cloudFreshnessCheckInFlight = false;
+  }
 }
 
 function stateRecordCount(candidate) {
@@ -7625,13 +7683,104 @@ function stateCollectionChanges(localState = {}, serverState = {}) {
   return changes.slice(0, 100);
 }
 
-function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "") {
+function cloneSchedulerState(snapshot = {}) {
+  return JSON.parse(JSON.stringify(snapshot || {}));
+}
+
+const REBASABLE_STATE_COLLECTIONS = ["roles", "employees", "templates", "shifts", "unassignedShifts", "timeOffRequests", "scheduleHistory"];
+const REBASABLE_STATE_OBJECTS = ["settings", "salesProjections", "coverageRequirements"];
+
+function sameSchedulerValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function describeRebasedRecord(collection, record) {
+  if (collection === "shifts" || collection === "unassignedShifts") return `${collection === "shifts" ? "Shift" : "Open shift"}: ${record?.date || "undated"} ${record?.start || ""}`.trim();
+  if (collection === "employees") return `Employee: ${displayName(record) || "profile"}`;
+  if (collection === "timeOffRequests") return `${isScheduleBlock(record) ? "Block" : "RO"}: ${record?.date || "undated"}`;
+  if (collection === "templates") return `Template: ${record?.name || "unnamed"}`;
+  return `${collection}: ${record?.id || "record"}`;
+}
+
+// Reapply only the records that changed in the rejected browser copy. A record
+// changed by someone else at the same time is left untouched and preserved for
+// review instead of silently overwriting their work.
+function rebaseCloudRecovery(baseState = {}, localState = {}, latestState = {}) {
+  const rebased = cloneSchedulerState(latestState);
+  const applied = [];
+  const conflicts = [];
+  REBASABLE_STATE_COLLECTIONS.forEach((collection) => {
+    const base = new Map((Array.isArray(baseState[collection]) ? baseState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const local = new Map((Array.isArray(localState[collection]) ? localState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const latest = new Map((Array.isArray(latestState[collection]) ? latestState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const result = Array.isArray(rebased[collection]) ? [...rebased[collection]] : [];
+    const resultIndex = new Map(result.map((item, index) => [String(item?.id || ""), index]));
+    const replace = (id, item) => {
+      const index = resultIndex.get(id);
+      if (index == null) {
+        resultIndex.set(id, result.length);
+        result.push(item);
+      } else result[index] = item;
+    };
+    const remove = (id) => {
+      const index = resultIndex.get(id);
+      if (index != null) {
+        result.splice(index, 1);
+        resultIndex.clear();
+        result.forEach((item, nextIndex) => resultIndex.set(String(item?.id || ""), nextIndex));
+      }
+    };
+    const ids = new Set([...base.keys(), ...local.keys()]);
+    ids.forEach((id) => {
+      const before = base.get(id);
+      const changed = local.get(id);
+      const remote = latest.get(id);
+      if (sameSchedulerValue(before, changed)) return;
+      const label = describeRebasedRecord(collection, changed || before || remote);
+      if (!before && changed) {
+        if (!remote || sameSchedulerValue(remote, changed)) {
+          replace(id, changed);
+          applied.push(`Restored ${label}`);
+        } else conflicts.push(`Both windows added ${label}`);
+        return;
+      }
+      if (before && !changed) {
+        if (!remote || sameSchedulerValue(remote, before)) {
+          remove(id);
+          applied.push(`Restored deletion of ${label}`);
+        } else conflicts.push(`Both windows changed ${label}`);
+        return;
+      }
+      if (!remote || sameSchedulerValue(remote, before)) {
+        replace(id, changed);
+        applied.push(`Restored ${label}`);
+      } else if (!sameSchedulerValue(remote, changed)) conflicts.push(`Both windows changed ${label}`);
+    });
+    rebased[collection] = result;
+  });
+  REBASABLE_STATE_OBJECTS.forEach((key) => {
+    const before = baseState[key] || {};
+    const changed = localState[key] || {};
+    const remote = latestState[key] || {};
+    if (sameSchedulerValue(before, changed)) return;
+    if (sameSchedulerValue(remote, before) || sameSchedulerValue(remote, changed)) {
+      rebased[key] = cloneSchedulerState(changed);
+      applied.push(`Restored ${key} changes`);
+    } else conflicts.push(`Both windows changed ${key}`);
+  });
+  rebased.meta = { ...(latestState.meta || {}), updatedAt: nowIso(), updatedBy: currentSaveActor() };
+  return { state: rebased, applied, conflicts };
+}
+
+function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "", baseState = lastKnownServerState) {
   return {
     savedAt: nowIso(),
     baseServerSavedAt,
     existingUpdatedAt,
-    data: localState,
-    changes: []
+    data: cloneSchedulerState(localState),
+    baseData: baseState ? cloneSchedulerState(baseState) : null,
+    changes: [],
+    autoReapplyPending: Boolean(baseState)
   };
 }
 
@@ -7646,6 +7795,66 @@ function readCloudRecovery() {
   } catch {
     return null;
   }
+}
+
+function clearCloudRecovery() {
+  try { localStorage.removeItem(CLOUD_RECOVERY_KEY); } catch { /* local recovery is best effort */ }
+}
+
+function refreshBlockedCloudRecovery(localState) {
+  const recovery = readCloudRecovery();
+  if (!recovery) return;
+  recovery.data = cloneSchedulerState(localState);
+  if (recovery.baseData) recovery.changes = stateCollectionChanges(recovery.data, recovery.baseData);
+  saveCloudRecovery(recovery);
+}
+
+async function reapplyCloudRecoveryAfterRefresh(recovery, latestState, latestSavedAt) {
+  const rebased = rebaseCloudRecovery(recovery.baseData, recovery.data, latestState);
+  recovery.autoReapplyPending = false;
+  recovery.rebasedAt = nowIso();
+  recovery.applied = rebased.applied;
+  recovery.conflicts = rebased.conflicts;
+  if (!rebased.applied.length) {
+    saveCloudRecovery(recovery);
+    if (rebased.conflicts.length) {
+      showAppAlert({
+        title: "Some changes need review",
+        message: "Another user changed the same records. Their shared changes were kept, and your browser copy remains available for review.",
+        items: rebased.conflicts,
+        type: "warning"
+      });
+    }
+    return { saved: false, conflicts: rebased.conflicts };
+  }
+  state = normalizeLoadedState(rebased.state);
+  state.meta = { ...(state.meta || {}), serverSavedAt: latestSavedAt, updatedAt: nowIso(), updatedBy: currentSaveActor() };
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  // Preserve this rebased copy until the cloud confirms it. If another write
+  // wins the race, the normal stale handler starts a new rebase from this one.
+  recovery.data = cloneSchedulerState(state);
+  recovery.baseData = cloneSchedulerState(latestState);
+  recovery.autoReapplyPending = true;
+  saveCloudRecovery(recovery);
+  const saved = await persistStateToServer({ immediate: true });
+  if (saved) {
+    lastKnownServerState = cloneSchedulerState(state);
+    if (!rebased.conflicts.length) clearCloudRecovery();
+    else {
+      recovery.autoReapplyPending = false;
+      recovery.presentedAt = nowIso();
+      saveCloudRecovery(recovery);
+    }
+    showAppAlert({
+      title: "Changes restored",
+      message: rebased.conflicts.length
+        ? "Your non-conflicting changes were restored and saved. A few same-record conflicts still need review."
+        : "Your saved browser changes were automatically restored after reconnecting to the newest shared schedule.",
+      items: [...rebased.applied, ...rebased.conflicts],
+      type: rebased.conflicts.length ? "warning" : "info"
+    });
+  }
+  return { saved, conflicts: rebased.conflicts };
 }
 
 function showStaleRecoveryAlert(recovery, blocking = false) {
@@ -14358,4 +14567,10 @@ initializeAuth().then((canLoad) => {
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedEmployeeChanges);
 window.addEventListener("beforeunload", flushServerSaveOnClose);
+window.addEventListener("focus", () => { checkForNewerSharedSchedule(); });
+window.addEventListener("online", () => { checkForNewerSharedSchedule(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkForNewerSharedSchedule();
+});
+window.setInterval(checkForNewerSharedSchedule, 30000);
 

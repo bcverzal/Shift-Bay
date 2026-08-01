@@ -54,6 +54,9 @@ function run() {
   includes(app, "const duplicatePattern = saveAvailability", "Only explicit availability saves may be blocked by duplicate availability names");
   includes(app, "availabilitySaveRequested = true", "Save Availability must explicitly request availability validation");
   includes(app, 'currentAccessRole() !== "owner"', "temporary employee save diagnostics must remain owner-only");
+  includes(app, "rebaseCloudRecovery", "stale browser edits must be rebased onto the newest shared schedule");
+  includes(app, "checkForNewerSharedSchedule", "the app must check for newer shared schedule versions after reconnecting");
+  includes(app, "refreshBlockedCloudRecovery(state)", "edits made while stale must remain in the recovery copy");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
