@@ -2972,6 +2972,12 @@ function visibleEmployee(employee) {
   return departmentMatch && (roleMatch || !(employee.roleTraining || []).length);
 }
 
+function printableEmployee(employeeId) {
+  if (!employeeId) return true;
+  const employee = employeeById(employeeId);
+  return Boolean(employee && employee.active !== false && !employee.archived);
+}
+
 function renderFilters() {
   const visibleRoles = visibleRoleIds();
   const visibleDepartmentText = (state.settings.visibleDepartments || []).join(", ") || "No departments";
@@ -8128,7 +8134,7 @@ function toggleCompactPreview() {
 
 function renderSimpleRolePrintView(sortMode, options = {}) {
   const dates = weekDates();
-  const visible = state.shifts.filter((shift) => visibleShift(shift));
+  const visible = state.shifts.filter((shift) => visibleShift(shift) && printableEmployee(shift.employeeId));
   const roleGroups = groupPrintShiftsByRole(visible, sortMode);
   const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes() : "";
   const shiftOrder = options.shiftOrder || "time";
@@ -8142,13 +8148,18 @@ function renderSimpleRolePrintView(sortMode, options = {}) {
 function renderSimpleEmployeePrintView(sortMode, options = {}) {
   const dates = weekDates();
   const dateKeys = dates.map(formatDateKey);
-  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift));
+  const visible = state.shifts.filter((shift) => (
+    dateKeys.includes(shift.date) &&
+    visibleShift(shift) &&
+    printableEmployee(shift.employeeId)
+  ));
   const shiftOrder = options.shiftOrder || "time";
   const employeeIds = Array.from(new Set([
     ...visible.map((shift) => shift.employeeId).filter(Boolean),
     ...schedulableEmployees()
       .filter(visibleEmployee)
       .filter((employee) => employeeHasPrintableWeekExceptions(employee, dateKeys))
+      .filter((employee) => printableEmployee(employee.id))
       .map((employee) => employee.id)
   ])).sort((a, b) => comparePrintEmployees(a, b, visible, sortMode));
   $("printView").hidden = false;
@@ -8183,7 +8194,12 @@ function renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder) {
   const employee = employeeById(employeeId);
   const extras = renderSimplePrintExtras(employee, employeeId, dateKey);
   const dayShifts = state.shifts
-    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId && visibleShift(shift))
+    .filter((shift) => (
+      shift.date === dateKey &&
+      shift.employeeId === employeeId &&
+      visibleShift(shift) &&
+      printableEmployee(shift.employeeId)
+    ))
     .sort((a, b) => compareCompactCellShifts(a, b, shiftOrder));
   const shiftLines = dayShifts.map((shift) => {
     const role = roleById(shift.roleId);
@@ -8367,6 +8383,7 @@ function shouldBreakBeforeRole(group, previousGroup) {
 function renderSimpleRoleGrid(group, sortMode, breakBefore, shiftOrder = "time") {
   const dates = weekDates();
   const employeeIds = Array.from(group.employeeIds || new Set(group.shifts.map((shift) => shift.employeeId)))
+    .filter((employeeId) => printableEmployee(employeeId))
     .sort((a, b) => comparePrintEmployees(a, b, group.shifts, sortMode));
   const roleColor = group.shifts.map((shift) => shiftColor(shift)).find(Boolean) || "#2563eb";
   return `
@@ -8403,7 +8420,11 @@ function renderSimpleEmployeePrintCell(group, employeeId, dateKey, shiftOrder) {
   const employee = employeeById(employeeId);
   const extras = renderSimplePrintExtras(employee, employeeId, dateKey);
   const dayShifts = group.shifts
-    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId)
+    .filter((shift) => (
+      shift.date === dateKey &&
+      shift.employeeId === employeeId &&
+      printableEmployee(shift.employeeId)
+    ))
     .sort((a, b) => compareCompactCellShifts(a, b, shiftOrder));
   const shiftLines = dayShifts.map((shift) => {
     const end = shift.untilVolume ? "Vol" : shift.end;
