@@ -2,6 +2,7 @@ const STORE_KEY = "restaurantScheduler.v1";
 const STAFF_RESET_KEY = "restaurantScheduler.staffReset.20260611";
 const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
+const SCHEDULE_VIEW_PREFERENCE_KEY = "restaurantScheduler.scheduleViewPreference.v1";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -118,6 +119,49 @@ function latestSharedActiveWeek() {
   return preferences[0]?.activeWeek || "";
 }
 
+function scheduleViewPreferenceStorageKey() {
+  const documentId = state?.meta?.documentId || "default";
+  return `${SCHEDULE_VIEW_PREFERENCE_KEY}:${documentId}:${getDeviceId()}`;
+}
+
+function readScheduleViewPreference() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(scheduleViewPreferenceStorageKey()) || "null");
+    if (saved && typeof saved === "object") return saved;
+    const legacy = state?.localPreferences?.[getDeviceId()];
+    if (legacy?.activeWeek) return { weekStart: legacy.activeWeek, viewMode: "week", dayDate: "", savedAt: legacy.updatedAt || "" };
+  } catch {
+    // A missing or malformed preference should never block the scheduler.
+  }
+  return null;
+}
+
+function saveScheduleViewPreference() {
+  const preference = { weekStart: formatDateKey(currentDate), viewMode: focusedDateKey ? "day" : "week", dayDate: focusedDateKey || "", savedAt: nowIso() };
+  try {
+    localStorage.setItem(scheduleViewPreferenceStorageKey(), JSON.stringify(preference));
+  } catch {
+    // The view still works for this session if browser storage is unavailable.
+  }
+}
+
+function restoreScheduleViewPreference() {
+  const saved = readScheduleViewPreference();
+  const savedAt = Date.parse(saved?.savedAt || "");
+  const isRecent = Boolean(saved?.weekStart && /^\d{4}-\d{2}-\d{2}$/.test(saved.weekStart)) && Number.isFinite(savedAt) && Date.now() - savedAt <= 7 * 24 * 60 * 60 * 1000;
+  if (!isRecent) {
+    currentDate = startOfWeek(new Date(), state.settings.weekStart);
+    focusedDateKey = "";
+    saveLocalActiveWeek({ shared: false });
+    saveScheduleViewPreference();
+    return;
+  }
+  currentDate = startOfWeek(parseDateKey(saved.weekStart), state.settings.weekStart);
+  focusedDateKey = saved.viewMode === "day" && /^\d{4}-\d{2}-\d{2}$/.test(saved.dayDate) ? saved.dayDate : "";
+  if (focusedDateKey && !weekDates().some((date) => formatDateKey(date) === focusedDateKey)) currentDate = startOfWeek(parseDateKey(focusedDateKey), state.settings.weekStart);
+  saveLocalActiveWeek({ shared: false });
+}
+
 function saveLocalActiveWeek(options = {}) {
   try {
     localStorage.setItem(ACTIVE_WEEK_KEY, formatDateKey(currentDate));
@@ -193,6 +237,7 @@ function templateDayCollapseKey(templateId, dayIndex) {
 function setCurrentWeek(date, options = {}) {
   currentDate = startOfWeek(date, state.settings.weekStart);
   saveLocalActiveWeek({ shared: options.shared !== false });
+  saveScheduleViewPreference();
 }
 
 function defaultState() {
@@ -806,6 +851,7 @@ async function hydrateStateFromServer() {
         queueServerSave();
       }
       currentDate = loadLocalActiveWeek(state.settings.weekStart);
+      restoreScheduleViewPreference();
       saveLocalActiveWeek({ shared: false });
       renderAll();
       updateZoomVisibility();
@@ -2778,6 +2824,7 @@ function selectOpenShiftWithoutFullRender(unassignedId) {
   pendingTrayWarning = null;
   if (focusedDateKey && shift?.date && shift.date !== focusedDateKey) {
     focusedDateKey = shift.date;
+    saveScheduleViewPreference();
     renderSchedule();
     showConflict(`Showing ${displayDate(parseDateKey(shift.date))} for selected bay shift.`);
     return;
@@ -3259,6 +3306,7 @@ function moveFocusedDay(delta) {
   if (!focusedDateKey) return;
   const date = addDays(parseDateKey(focusedDateKey), delta);
   focusedDateKey = formatDateKey(date);
+  saveScheduleViewPreference();
   setCurrentWeek(date);
   renderSchedule();
 }
@@ -3280,6 +3328,7 @@ function renderDayFocusHeader(date, employees) {
   head.querySelector("[data-day-focus-next]").onclick = () => moveFocusedDay(1);
   head.querySelector("[data-exit-day-focus]").onclick = () => {
     focusedDateKey = "";
+    saveScheduleViewPreference();
     renderSchedule();
   };
   return head;
@@ -4692,6 +4741,7 @@ function renderDayHeader(date) {
     if (event.target.closest("button, input, select, .projection-popover")) return;
     event.stopPropagation();
     focusedDateKey = dateKey;
+    saveScheduleViewPreference();
     selectedCell = null;
     selectedShiftId = null;
     renderSchedule();
@@ -10806,6 +10856,7 @@ function wireEvents() {
 
 setupTimePicker();
 wireEvents();
+restoreScheduleViewPreference();
 renderAll();
 updateZoomVisibility();
 updateStorageStatus();
