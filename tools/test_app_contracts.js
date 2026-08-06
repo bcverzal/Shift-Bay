@@ -86,7 +86,9 @@ function run() {
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
   includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
+  includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
+  includes(app, '"normalized-sandbox-direct-revision"', "the app must identify revision-locked Sandbox schedule saves explicitly");
   includes(app, "!NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged", "the direct-write canary must not compare normalized saves against the untouched snapshot");
   includes(app, "LEGACY_SNAPSHOT_OVERRIDE", "the normalized default must retain an immediate compatibility rollback override");
   includes(app, "!LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged && !skipLocalRecovery", "read-source switches and direct Sandbox saves must not create a false stale-state recovery");
@@ -118,6 +120,8 @@ function run() {
   includes(edgeFunction, "async function syncNormalizedSchedule", "schedule saves must mirror normalized records");
   includes(edgeFunction, 'saveMode === "normalized-sandbox-direct"', "the server must gate the direct-write canary explicitly");
   includes(edgeFunction, "Direct normalized schedule writes are limited to the Sandbox location.", "direct normalized writes must reject live locations");
+  includes(edgeFunction, "claimNormalizedScheduleRevision", "revision-locked normalized writes must claim a server revision");
+  includes(edgeFunction, "Revision-locked normalized schedule writes are limited to the Sandbox location.", "revision-locked direct writes must reject live locations");
   includes(edgeFunction, 'if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" }', "normalized schedule writes must remain limited to enabled transition locations");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");
   includes(edgeFunction, "changedSnapshotItems", "live schedule mirroring must limit normal saves to changed records");

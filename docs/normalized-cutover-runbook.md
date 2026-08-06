@@ -80,6 +80,17 @@ lock, so a manager with an old schedule copy receives a conflict instead of
 silently replacing another manager's newer work. Creating this table does not
 change reads or writes by itself.
 
+After the migration is applied, use the separate revision-lock Sandbox test:
+
+```text
+https://shift-bay.com/?normalizedSchedule=direct-sandbox-revision
+```
+
+Open that URL in two Sandbox browser windows. Save a disposable change in the
+first window, then attempt a different save from the untouched second window.
+The second save must be rejected and must not change the first window's saved
+data. Refresh the second window before continuing.
+
 ## Not Yet Part Of The Cutover
 
 Machine Shed direct normalized writes are intentionally deferred. Today,

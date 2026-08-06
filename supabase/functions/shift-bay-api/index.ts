@@ -372,6 +372,31 @@ function normalizedReadAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
+async function loadNormalizedScheduleRevision(locationId: string) {
+  const rows = await supabaseJson(
+    `/normalized_schedule_revisions?location_id=eq.${encodeURIComponent(locationId)}&select=revision,updated_at`,
+    { headers: serviceHeaders() }
+  ).catch(() => []);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return {
+    revision: Number.isInteger(Number(row?.revision)) ? Number(row.revision) : 0,
+    updatedAt: row?.updated_at || null
+  };
+}
+
+async function claimNormalizedScheduleRevision(locationId: string, expectedRevision: number, userId: string) {
+  const rows = await supabaseJson("/rpc/claim_normalized_schedule_revision", {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify({
+      p_location_id: locationId,
+      p_expected_revision: expectedRevision,
+      p_user_id: userId || null
+    })
+  });
+  return Array.isArray(rows) ? rows[0] || null : null;
+}
+
 function normalizedTimeValue(value: unknown) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -1041,14 +1066,15 @@ async function handleNormalizedSchedule(request: Request) {
   const locationId = (validated.user as any).locationId;
   if (!normalizedReadAllowed(locationId)) return json(403, { ok: false, error: "Normalized schedule reads are not enabled for this location." });
 
-  const [employees, roles, scheduleWeeks, shifts, requestOffs, blocks, templates] = await Promise.all([
+  const [employees, roles, scheduleWeeks, shifts, requestOffs, blocks, templates, scheduleRevision] = await Promise.all([
     supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_weeks?location_id=eq.${encodeURIComponent(locationId)}&select=id,week_start,status`, { headers: serviceHeaders() }),
     supabaseJson(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,request_date,start_time,end_time,all_day,reason,source,kind,daypart,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_blocks?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,block_date,start_time,end_time,all_day,block_type,note,source,metadata`, { headers: serviceHeaders() }),
-    supabaseJson(`/templates?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,active,metadata`, { headers: serviceHeaders() })
+    supabaseJson(`/templates?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,active,metadata`, { headers: serviceHeaders() }),
+    loadNormalizedScheduleRevision(locationId)
   ]);
   const employeeLegacyIds = new Map((Array.isArray(employees) ? employees : []).map((employee: any) => [String(employee.id), String(employee.legacy_id || "")]));
   const roleLegacyIds = new Map((Array.isArray(roles) ? roles : []).map((role: any) => [String(role.id), String(role.legacy_id || "")]));
@@ -1086,6 +1112,7 @@ async function handleNormalizedSchedule(request: Request) {
     mode: "normalized-shadow",
     locationId,
     generatedAt: new Date().toISOString(),
+    normalizedScheduleRevision: scheduleRevision.revision,
     scheduleWeeks: (Array.isArray(scheduleWeeks) ? scheduleWeeks : []).map((week: any) => ({ weekStart: week.week_start, status: week.status })),
     shifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && !shift.is_open_bay).map(mapShift),
     unassignedShifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && shift.is_open_bay).map(mapShift),
@@ -1718,6 +1745,7 @@ async function handleLoadState(request: Request) {
       savedBy: row.saved_by || null,
       savedByDeviceId: row.saved_by_device_id,
       readSource: locationId === SANDBOX_LOCATION_ID ? "normalized-sandbox" : "normalized-live-canary",
+      normalizedScheduleRevision: normalized.normalizedScheduleRevision,
       data: {
         ...snapshotState,
         shifts: normalized.shifts || [],
@@ -1747,6 +1775,7 @@ async function handleSaveState(request: Request) {
   let state = (payload?.data || payload?.state || payload) as JsonRecord;
   const saveScope = String(payload?.saveScope || "schedule");
   const saveMode = String(payload?.saveMode || "snapshot-bridge");
+  const expectedNormalizedScheduleRevision = Number(payload?.normalizedScheduleRevision);
   const saveAttemptId = String(payload?.saveAttemptId || "");
   const employeeId = String(payload?.employeeId || "");
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
@@ -1829,6 +1858,49 @@ async function handleSaveState(request: Request) {
       normalizedScheduleSync
     }, locationId);
     return json(200, { ok: true, savedAt, normalizedDirect: true, normalizedScheduleSync });
+  }
+
+  if (saveMode === "normalized-sandbox-direct-revision") {
+    if (locationId !== SANDBOX_LOCATION_ID) {
+      return json(403, { ok: false, error: "Revision-locked normalized schedule writes are limited to the Sandbox location." });
+    }
+    if (profileOnlySave || !Number.isInteger(expectedNormalizedScheduleRevision) || expectedNormalizedScheduleRevision < 0) {
+      return json(400, { ok: false, error: "A current normalized schedule revision is required for this Sandbox save." });
+    }
+    const claimedRevision = await claimNormalizedScheduleRevision(locationId, expectedNormalizedScheduleRevision, (validated.user as any).id);
+    if (!claimedRevision) {
+      const currentRevision = await loadNormalizedScheduleRevision(locationId);
+      return json(409, {
+        error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
+        expectedNormalizedScheduleRevision,
+        normalizedScheduleRevision: currentRevision.revision
+      });
+    }
+    const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, null);
+    if (!normalizedScheduleSync.synced) {
+      return json(503, {
+        ok: false,
+        error: "Could not save the revision-locked normalized Sandbox schedule. Refresh before retrying.",
+        normalizedScheduleRevision: Number(claimedRevision.revision)
+      });
+    }
+    const savedAt = new Date().toISOString();
+    await logAuditEvent("normalized_schedule_revision_saved", (validated.user as any).id, {
+      savedAt,
+      savedByEmail: (validated.user as any).email || "",
+      savedByRole: (validated.user as any).role || "",
+      saveScope,
+      saveMode,
+      normalizedScheduleRevision: Number(claimedRevision.revision),
+      normalizedScheduleSync
+    }, locationId);
+    return json(200, {
+      ok: true,
+      savedAt,
+      normalizedDirect: true,
+      normalizedScheduleRevision: Number(claimedRevision.revision),
+      normalizedScheduleSync
+    });
   }
 
   const savedAt = new Date().toISOString();

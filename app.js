@@ -29,10 +29,12 @@ const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvai
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
+const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
+  NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 // Direct writes are a controlled Sandbox-only canary. The normal application
 // continues to write the compatibility snapshot while this path is proven.
 const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
-  NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox";
+  ["direct-sandbox", "direct-sandbox-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule"));
 const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
 let normalizedScheduleReadState = "off";
 let normalizedAvailabilityReadState = "off";
@@ -61,7 +63,9 @@ let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
 const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
   ? "legacy-snapshot"
-  : NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
+  : NORMALIZED_SCHEDULE_REVISION_CANARY_MODE
+    ? "normalized-sandbox-direct-revision"
+    : NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
     ? "normalized-sandbox-direct"
     : NORMALIZED_LIVE_CANARY_MODE
     ? "normalized"
@@ -77,6 +81,7 @@ let lastKnownServerSavedAt = "";
 let lastKnownServerState = null;
 let cloudFreshnessCheckInFlight = false;
 let skipLocalRecoveryOnce = false;
+let lastKnownNormalizedScheduleRevision = null;
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
@@ -823,8 +828,11 @@ function serverEnvelope(options = {}) {
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     saveScope: options.scope || "schedule",
     saveMode: NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && options.scope !== "employee-profile"
-      ? "normalized-sandbox-direct"
+      ? (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE ? "normalized-sandbox-direct-revision" : "normalized-sandbox-direct")
       : "snapshot-bridge",
+    normalizedScheduleRevision: NORMALIZED_SCHEDULE_REVISION_CANARY_MODE
+      ? lastKnownNormalizedScheduleRevision
+      : null,
     employeeId,
     // Send the exact profile being saved. The server deliberately ignores the
     // rest of the browser's schedule snapshot for this scoped operation.
@@ -980,6 +988,9 @@ async function persistStateToServer(options = {}) {
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       lastKnownServerState = cloneSchedulerState(state);
+    }
+    if (Number.isInteger(Number(result.normalizedScheduleRevision))) {
+      lastKnownNormalizedScheduleRevision = Number(result.normalizedScheduleRevision);
     }
     if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
       setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
@@ -2220,6 +2231,9 @@ async function hydrateStateFromServer() {
       );
       serverState = await applyNormalizedAvailabilityRead(serverState) || serverState;
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
+      if (Number.isInteger(Number(envelope.normalizedScheduleRevision))) {
+        lastKnownNormalizedScheduleRevision = Number(envelope.normalizedScheduleRevision);
+      }
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
       const previousReadSource = localStorage.getItem(readSourceKey()) || "";
       const readSourceChanged = Boolean(previousReadSource && previousReadSource !== CURRENT_READ_SOURCE);
