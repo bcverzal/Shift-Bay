@@ -72,6 +72,14 @@ The direct canary rejects every non-Sandbox location on the server, including
 Machine Shed. Do not relax that guard until a separate production-write design,
 rollback, and concurrency pass is complete.
 
+## Direct-Write Prerequisite
+
+Before any location can use direct normalized schedule writes, run
+`supabase/normalized-schedule-revisions.sql`. It adds a server-owned revision
+lock, so a manager with an old schedule copy receives a conflict instead of
+silently replacing another manager's newer work. Creating this table does not
+change reads or writes by itself.
+
 ## Not Yet Part Of The Cutover
 
 Machine Shed direct normalized writes are intentionally deferred. Today,

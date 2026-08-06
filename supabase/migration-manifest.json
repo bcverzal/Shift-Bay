@@ -50,6 +50,14 @@
       "rollback": "Do not drop additive columns; leave schedule reads on the snapshot and stop normalized schedule writes."
     },
     {
+      "id": "normalized-schedule-revisions",
+      "file": "normalized-schedule-revisions.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["schedule-normalization-bridge"],
+      "purpose": "Adds a location-scoped optimistic revision lock before normalized schedule tables become an authoritative write source.",
+      "rollback": "Keep the revision row and disable direct normalized writes; the snapshot bridge remains available."
+    },
+    {
       "id": "staff-accounts",
       "file": "staff-accounts-mvp.sql",
       "environment": "sandbox-first",
