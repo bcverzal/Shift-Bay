@@ -31,10 +31,12 @@ const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZ
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
+const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
+  NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-sandbox-revision";
 // Direct writes are a controlled Sandbox-only canary. The normal application
 // continues to write the compatibility snapshot while this path is proven.
 const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
-  ["direct-sandbox", "direct-sandbox-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule"));
+  ["direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule"));
 const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
 let normalizedScheduleReadState = "off";
 let normalizedAvailabilityReadState = "off";
@@ -63,6 +65,8 @@ let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
 const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
   ? "legacy-snapshot"
+  : NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE
+    ? "normalized-sandbox-atomic-revision"
   : NORMALIZED_SCHEDULE_REVISION_CANARY_MODE
     ? "normalized-sandbox-direct-revision"
     : NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
@@ -828,9 +832,11 @@ function serverEnvelope(options = {}) {
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     saveScope: options.scope || "schedule",
     saveMode: NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && options.scope !== "employee-profile"
-      ? (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE ? "normalized-sandbox-direct-revision" : "normalized-sandbox-direct")
+      ? (NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE
+        ? "normalized-sandbox-atomic-revision"
+        : (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE ? "normalized-sandbox-direct-revision" : "normalized-sandbox-direct"))
       : "snapshot-bridge",
-    normalizedScheduleRevision: NORMALIZED_SCHEDULE_REVISION_CANARY_MODE
+    normalizedScheduleRevision: (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE || NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE)
       ? lastKnownNormalizedScheduleRevision
       : null,
     employeeId,

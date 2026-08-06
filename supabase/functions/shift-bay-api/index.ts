@@ -397,6 +397,23 @@ async function claimNormalizedScheduleRevision(locationId: string, expectedRevis
   return Array.isArray(rows) ? rows[0] || null : null;
 }
 
+// This is intentionally not used by any save route yet. The normal hybrid
+// bridge remains authoritative until the atomic procedure completes a
+// Sandbox-only canary and its rollback checks.
+async function writeNormalizedScheduleAtomically(locationId: string, expectedRevision: number, state: JsonRecord, userId: string) {
+  const rows = await supabaseJson("/rpc/write_normalized_schedule_atomically", {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify({
+      p_location_id: locationId,
+      p_expected_revision: expectedRevision,
+      p_state: state,
+      p_user_id: userId || null
+    })
+  });
+  return Array.isArray(rows) ? rows[0] || null : rows;
+}
+
 function normalizedTimeValue(value: unknown) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -1900,6 +1917,57 @@ async function handleSaveState(request: Request) {
       normalizedDirect: true,
       normalizedScheduleRevision: Number(claimedRevision.revision),
       normalizedScheduleSync
+    });
+  }
+
+  // The atomic canary sends the entire compatibility schedule state to one
+  // database procedure. The procedure claims the revision and updates every
+  // normalized schedule table inside a single transaction, so a failure does
+  // not leave a partially mirrored Sandbox schedule behind.
+  if (saveMode === "normalized-sandbox-atomic-revision") {
+    if (locationId !== SANDBOX_LOCATION_ID) {
+      return json(403, { ok: false, error: "Atomic normalized schedule writes are limited to the Sandbox location." });
+    }
+    if (profileOnlySave || !Number.isInteger(expectedNormalizedScheduleRevision) || expectedNormalizedScheduleRevision < 0) {
+      return json(400, { ok: false, error: "A current normalized schedule revision is required for this Sandbox save." });
+    }
+    let normalizedAtomicWrite: any;
+    try {
+      normalizedAtomicWrite = await writeNormalizedScheduleAtomically(
+        locationId,
+        expectedNormalizedScheduleRevision,
+        state,
+        (validated.user as any).id
+      );
+    } catch (error) {
+      if (String((error as Error)?.message || "").includes("Normalized schedule revision conflict")) {
+        const currentRevision = await loadNormalizedScheduleRevision(locationId);
+        return json(409, {
+          error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
+          expectedNormalizedScheduleRevision,
+          normalizedScheduleRevision: currentRevision.revision
+        });
+      }
+      throw error;
+    }
+    const savedAt = new Date().toISOString();
+    const revision = Number(normalizedAtomicWrite?.revision);
+    await logAuditEvent("normalized_schedule_atomic_saved", (validated.user as any).id, {
+      savedAt,
+      savedByEmail: (validated.user as any).email || "",
+      savedByRole: (validated.user as any).role || "",
+      saveScope,
+      saveMode,
+      normalizedScheduleRevision: revision,
+      normalizedAtomicWrite
+    }, locationId);
+    return json(200, {
+      ok: true,
+      savedAt,
+      normalizedDirect: true,
+      normalizedAtomic: true,
+      normalizedScheduleRevision: revision,
+      normalizedAtomicWrite
     });
   }
 

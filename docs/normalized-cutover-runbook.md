@@ -88,8 +88,53 @@ https://shift-bay.com/?normalizedSchedule=direct-sandbox-revision
 
 Open that URL in two Sandbox browser windows. Save a disposable change in the
 first window, then attempt a different save from the untouched second window.
-The second save must be rejected and must not change the first window's saved
-data. Refresh the second window before continuing.
+The second save must initially be rejected and must not overwrite the first
+window's saved data. After refresh, Shift Bay restores the rejected local
+change on top of the newest shared version; confirm both changes persist.
+
+## Durable Snapshot History
+
+Before a production direct-write canary, run
+`supabase/scheduler-state-history.sql`. It archives the previous complete
+compatibility snapshot whenever the normal whole-schedule bridge updates it.
+This is additive: it neither changes application reads nor enables direct
+writes. It creates durable rollback points while the hybrid bridge remains in
+use.
+
+## Atomic Normalized Write Prerequisite
+
+`supabase/normalized-schedule-atomic-write.sql` is the next Sandbox-only
+prerequisite. It adds a service-only PostgreSQL procedure that accepts the
+complete compatibility schedule state, validates it, replaces its
+snapshot-backed normalized schedule rows, and advances the normalized revision
+in one transaction. A failure rolls back every row and the revision together.
+
+Running this migration is still inert: the API does not call the procedure
+until a separate Sandbox canary is added and tested. Do not apply it to
+Machine Shed during active scheduling.
+
+## Atomic Write Sandbox Canary
+
+After the procedure has been applied and the corresponding Edge Function and
+frontend are deployed, the hosted Sandbox-only canary is:
+
+```text
+https://shift-bay.com/?normalizedSchedule=atomic-sandbox-revision
+```
+
+1. Confirm the account is switched to the Sandbox location.
+2. Create a disposable open shift, edit it, then delete it. Refresh after each
+   step and confirm the normalized schedule retains the result.
+3. Repeat the two-window stale-write check from the revision canary. The older
+   window must receive a conflict before it overwrites anything; after refresh,
+   its preserved local change can be restored against the latest revision.
+4. Verify the legacy snapshot URL does not contain the disposable shift. This
+   is expected: the canary proves normalized-only writes while the production
+   path remains snapshot-first.
+
+The server refuses this save mode for every non-Sandbox location. Do not add a
+production equivalent until the canary, rollback, and history checks have all
+passed.
 
 ## Not Yet Part Of The Cutover
 

@@ -58,6 +58,22 @@
       "rollback": "Keep the revision row and disable direct normalized writes; the snapshot bridge remains available."
     },
     {
+      "id": "scheduler-state-history",
+      "file": "scheduler-state-history.sql",
+      "environment": "production-safe",
+      "dependsOn": ["core-schema"],
+      "purpose": "Archives the previous complete scheduler snapshot on every whole-schedule update so compatibility rollback has durable restore points.",
+      "rollback": "Disable the archive trigger if necessary; retain existing history rows for recovery."
+    },
+    {
+      "id": "normalized-schedule-atomic-write",
+      "file": "normalized-schedule-atomic-write.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["schedule-normalization-bridge", "normalized-schedule-revisions", "scheduler-state-history"],
+      "purpose": "Adds an inactive service-only PostgreSQL procedure that writes one complete normalized schedule and its revision in a single transaction.",
+      "rollback": "Do not call the procedure; continue using the snapshot bridge while retaining the additive function for audit and recovery."
+    },
+    {
       "id": "staff-accounts",
       "file": "staff-accounts-mvp.sql",
       "environment": "sandbox-first",

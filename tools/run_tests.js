@@ -15,6 +15,8 @@ const tests = [
   "test_normalized_availability_migration.js",
   "test_normalized_schedule_migration.js",
   "test_normalized_field_coverage.js",
+  "test_scheduler_state_history_migration.js",
+  "test_normalized_schedule_atomic_write_migration.js",
   "test_migration_manifest.js"
 ];
 
