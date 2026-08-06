@@ -22,7 +22,10 @@
         </label>
         <label>
           Password
-          <input id="staffPassword" type="password" autocomplete="current-password" required>
+          <span class="password-input-wrap">
+            <input id="staffPassword" type="password" autocomplete="current-password" required>
+            <button type="button" class="password-toggle" data-password-toggle="staffPassword" aria-pressed="false">Show</button>
+          </span>
         </label>
         <button type="submit" class="staff-primary">Sign In</button>
       </form>
@@ -203,11 +206,17 @@
       <p class="staff-muted">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
       <label>
         New password
-        <input id="newStaffPassword" type="password" autocomplete="new-password" required>
+        <span class="password-input-wrap">
+          <input id="newStaffPassword" type="password" autocomplete="new-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="newStaffPassword" aria-pressed="false">Show</button>
+        </span>
       </label>
       <label>
         Confirm password
-        <input id="confirmStaffPassword" type="password" autocomplete="new-password" required>
+        <span class="password-input-wrap">
+          <input id="confirmStaffPassword" type="password" autocomplete="new-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="confirmStaffPassword" aria-pressed="false">Show</button>
+        </span>
       </label>
       <div id="staffPasswordMessage" class="staff-message" hidden></div>
       <div class="staff-password-actions">

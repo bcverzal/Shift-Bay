@@ -12335,11 +12335,13 @@ function renderTemporaryManagerLogin(details = null) {
   const loginUrl = details.loginUrl || "https://shift-bay.netlify.app";
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
+    `<strong>${details.temporaryPasswordReissued ? "New temporary password issued. The previous password no longer works." : details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    details.inviteEmailSent
+    details.temporaryPasswordReissued
+      ? "<small>This replacement password remains valid until the manager creates a permanent password.</small>"
+      : details.inviteEmailSent
       ? "<small>The email includes these login details. Keep this panel available as a backup until the manager confirms receipt.</small>"
       : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
@@ -12366,6 +12368,7 @@ function renderManagerAccessList(managers = []) {
             </select>
           </label>
           <span class="manager-access-added">${manager.createdAt ? escapeHtml(new Date(manager.createdAt).toLocaleDateString()) : ""}</span>
+          <button type="button" class="temporary-password-action" data-manager-temp-password ${manager.passwordChangeRequired ? "" : "disabled title=\"This password has already been replaced by a permanent password.\""}>${manager.passwordChangeRequired ? "Issue temp password" : "Password set"}</button>
           <button type="button" data-manager-remove ${manager.userId === currentUser?.id ? "disabled" : ""}>Remove</button>
         </section>
       `).join("")}
@@ -12381,6 +12384,12 @@ function renderManagerAccessList(managers = []) {
     button.addEventListener("click", async (event) => {
       const row = event.target.closest("[data-manager-user-id]");
       await removeManagerAccess(row?.dataset.managerUserId);
+    });
+  });
+  target.querySelectorAll("[data-manager-temp-password]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const row = event.target.closest("[data-manager-user-id]");
+      await issueManagerTemporaryPassword(row?.dataset.managerUserId, button);
     });
   });
 }
@@ -12479,6 +12488,33 @@ async function removeManagerAccess(userId) {
     setManagerAccessMessage(error.message || "Could not remove manager access.");
   }
 }
+
+async function issueManagerTemporaryPassword(userId, button) {
+  if (!userId || button?.disabled) return;
+  button.disabled = true;
+  setManagerAccessMessage("Issuing a replacement temporary password...");
+  try {
+    const result = await fetchJson("/api/managers/temporary-password", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ userId })
+    });
+    renderTemporaryManagerLogin({
+      email: result.email,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl,
+      temporaryPasswordReissued: true,
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
+    });
+    setManagerAccessMessage("A replacement temporary password is ready above. The old one is no longer valid.");
+    await loadManagerAccess();
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not issue a temporary password.");
+    button.disabled = false;
+  }
+}
+
 function staffAccountStatusLabel(status = "") {
   const labels = { invited: "Invited", active: "Active", disabled: "Disabled" };
   return labels[String(status).toLowerCase()] || status || "Invited";
@@ -12519,12 +12555,14 @@ function renderTemporaryStaffLogin(details = null) {
   const loginUrl = details.loginUrl || `${window.location.origin}/staff.html`;
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
+    `<strong>${details.temporaryPasswordReissued ? "New temporary password issued. The previous password no longer works." : details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
     `<div>Employee: <code>${escapeHtml(details.displayName || "")}</code></div>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    details.inviteEmailSent
+    details.temporaryPasswordReissued
+      ? "<small>This replacement password remains valid until the staff member creates a permanent password.</small>"
+      : details.inviteEmailSent
       ? "<small>The email includes these login details. Keep this panel available as a backup until the staff member confirms receipt.</small>"
       : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
@@ -12551,6 +12589,7 @@ function renderStaffAccessList(staff = []) {
             <span class="staff-access-status">${staffAccountStatusLabel(account.status)}</span>
             <span class="staff-access-privacy">${escapeHtml(staffPhoneVisibilityLabel(account.phoneVisibility))}</span>
             <span class="manager-access-added">${account.invitedAt ? escapeHtml(new Date(account.invitedAt).toLocaleDateString()) : ""}</span>
+            <button type="button" class="temporary-password-action" data-staff-temp-password="${escapeHtml(account.id || "")}" data-staff-user-id="${escapeHtml(account.userId || "")}" ${account.passwordChangeRequired ? "" : "disabled title=\"This password has already been replaced by a permanent password.\""}>${account.passwordChangeRequired ? "Issue temp password" : "Password set"}</button>
             <button type="button" class="staff-access-remove" data-staff-remove="${escapeHtml(account.id || "")}" data-staff-user-id="${escapeHtml(account.userId || "")}">Remove Login</button>
           </section>
         `;
@@ -12560,6 +12599,11 @@ function renderStaffAccessList(staff = []) {
   target.querySelectorAll("[data-staff-remove]").forEach((button) => {
     button.addEventListener("click", async () => {
       await removeStaffLogin(button.dataset.staffRemove, button.dataset.staffUserId, button);
+    });
+  });
+  target.querySelectorAll("[data-staff-temp-password]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await issueStaffTemporaryPassword(button.dataset.staffTempPassword, button.dataset.staffUserId, button);
     });
   });
 }
@@ -12590,6 +12634,33 @@ async function removeStaffLogin(accountId, userId, button) {
   } catch (error) {
     setStaffAccessMessage(error.message || "Could not remove staff login.");
     if (button) button.disabled = false;
+  }
+}
+
+async function issueStaffTemporaryPassword(accountId, userId, button) {
+  if (!accountId || !userId || button?.disabled) return;
+  button.disabled = true;
+  setStaffAccessMessage("Issuing a replacement temporary password...");
+  try {
+    const result = await fetchJson("/api/staff-accounts/temporary-password", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ accountId, userId })
+    });
+    renderTemporaryStaffLogin({
+      email: result.email,
+      displayName: result.displayName,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl,
+      temporaryPasswordReissued: true,
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
+    });
+    setStaffAccessMessage("A replacement temporary password is ready above. The old one is no longer valid.");
+    await loadStaffAccess();
+  } catch (error) {
+    setStaffAccessMessage(error.message || "Could not issue a temporary password.");
+    button.disabled = false;
   }
 }
 
@@ -14020,6 +14091,22 @@ function selectTimeInputText(input) {
     if (document.activeElement === input) input.select();
   }, 0);
 }
+
+function wirePasswordToggles(root = document) {
+  root.querySelectorAll("[data-password-toggle]").forEach((button) => {
+    if (button.dataset.passwordToggleBound === "true") return;
+    button.dataset.passwordToggleBound = "true";
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.passwordToggle);
+      if (!input) return;
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      button.textContent = visible ? "Show" : "Hide";
+      button.setAttribute("aria-pressed", String(!visible));
+    });
+  });
+}
+
 function openTimePicker(input) {
   activeTimeInput = input;
   const picker = $("timePicker");
@@ -14100,6 +14187,7 @@ function armDeleteButton(button, onConfirm) {
 }
 
 function wireEvents() {
+  wirePasswordToggles();
   document.querySelectorAll(".toolbar-menu").forEach((menu) => {
     menu.addEventListener("toggle", () => {
       if (!menu.open) return;

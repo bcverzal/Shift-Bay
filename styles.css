@@ -607,7 +607,7 @@ summary:focus-visible {
 
 .manager-access-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px 78px 92px;
+  grid-template-columns: minmax(0, 1fr) 120px 78px 92px auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -660,7 +660,7 @@ summary:focus-visible {
 
 .staff-access-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px 132px 92px auto;
+  grid-template-columns: minmax(0, 1fr) 86px 132px 92px auto auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -772,6 +772,51 @@ summary:focus-visible {
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.temporary-password-action {
+  justify-self: end;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+  white-space: nowrap;
+}
+
+.temporary-password-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.password-input-wrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.password-input-wrap > input {
+  padding-right: 62px !important;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  min-width: 48px;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid #b8cbe6;
+  border-radius: 7px;
+  background: #f8fbff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  background: #e0edff;
 }
 
 .normalized-read-badge[data-state="requested"] {

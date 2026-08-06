@@ -1826,16 +1826,60 @@ async function handleListManagers(request: Request) {
 
   const locationId = (validated.user as any).locationId;
   const rows = await supabaseJson(
-    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&select=user_id,role,created_at&order=created_at.asc`,
+    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&select=user_id,role,password_change_required,created_at&order=created_at.asc`,
     { headers: serviceHeaders() }
   );
   const managers = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row: any) => ({
     userId: row.user_id,
     email: await userEmailById(row.user_id),
     role: row.role,
+    passwordChangeRequired: Boolean(row.password_change_required),
     createdAt: row.created_at
   })));
   return json(200, { ok: true, managers });
+}
+
+async function handleIssueManagerTemporaryPassword(request: Request) {
+  const validated = await requireOwner(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const locationId = (validated.user as any).locationId;
+  const body = await request.json().catch(() => ({}));
+  const userId = String(body.userId || "").trim();
+  if (!userId) return json(400, { ok: false, error: "Manager user ID is required." });
+
+  const rows = await supabaseJson(
+    `/location_users?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(userId)}&select=user_id,role,password_change_required`,
+    { headers: serviceHeaders() }
+  );
+  const membership = Array.isArray(rows) ? rows[0] : null;
+  if (!membership) return json(404, { ok: false, error: "That manager is not linked to this location." });
+  if (!membership.password_change_required) return json(409, { ok: false, error: "That manager has already created a permanent password." });
+
+  const email = await userEmailById(userId);
+  const password = temporaryPassword();
+  await authAdminJson(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ password, email_confirm: true })
+  });
+  const emailResult = await sendInviteEmail({
+    email,
+    displayName: email,
+    role: membership.role || "manager",
+    temporaryPassword: password,
+    loginUrl: cfg.siteUrl
+  });
+  await logAuditEvent("manager_temporary_password_reissued", (validated.user as any).id, { email, userId }, locationId);
+  return json(200, {
+    ok: true,
+    email,
+    temporaryPassword: password,
+    loginUrl: cfg.siteUrl,
+    inviteEmailSent: emailResult.sent,
+    inviteEmailId: emailResult.id || "",
+    inviteEmailError: emailResult.sent ? "" : emailResult.reason || ""
+  });
 }
 
 async function handleInviteManager(request: Request) {
@@ -1991,6 +2035,58 @@ async function handleListStaffAccounts(request: Request) {
     if (isMissingStaffSchema(error)) return json(200, { ok: true, schemaReady: false, staff: [] });
     throw error;
   }
+}
+
+async function handleIssueStaffTemporaryPassword(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+
+  const cfg = config();
+  const locationId = (validated.user as any).locationId;
+  const body = await request.json().catch(() => ({}));
+  const accountId = String(body.accountId || "").trim();
+  const userId = String(body.userId || "").trim();
+  if (!accountId || !userId) return json(400, { ok: false, error: "Staff account details are required." });
+
+  const rows = await supabaseJson(
+    `/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,password_change_required`,
+    { headers: serviceHeaders() }
+  );
+  const account = Array.isArray(rows) ? rows[0] : null;
+  if (!account) return json(404, { ok: false, error: "That staff login is not linked to this location." });
+  if (String(account.user_id || "") !== userId) return json(400, { ok: false, error: "The staff login details did not match." });
+  if (!account.password_change_required) return json(409, { ok: false, error: "That staff member has already created a permanent password." });
+
+  const email = await userEmailById(userId);
+  const password = temporaryPassword();
+  await authAdminJson(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ password, email_confirm: true })
+  });
+  await supabaseJson(`/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}`, {
+    method: "PATCH",
+    headers: serviceHeaders({ Prefer: "return=minimal" }),
+    body: JSON.stringify({ password_change_required: true, status: "invited", updated_at: new Date().toISOString() })
+  });
+  const emailResult = await sendInviteEmail({
+    email,
+    displayName: account.display_name || email,
+    role: "staff",
+    temporaryPassword: password,
+    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    isStaff: true
+  });
+  await logAuditEvent("staff_temporary_password_reissued", (validated.user as any).id, { email, userId, accountId, legacyEmployeeId: account.legacy_employee_id || "" }, locationId);
+  return json(200, {
+    ok: true,
+    email,
+    displayName: account.display_name || email,
+    temporaryPassword: password,
+    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    inviteEmailSent: emailResult.sent,
+    inviteEmailId: emailResult.id || "",
+    inviteEmailError: emailResult.sent ? "" : emailResult.reason || ""
+  });
 }
 
 async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
@@ -2219,10 +2315,12 @@ Deno.serve(async (request) => {
     if (path === "/audit/recent" && request.method === "GET") return await handleRecentAudit(request);
     if (path === "/managers" && request.method === "GET") return await handleListManagers(request);
     if (path === "/managers/invite" && request.method === "POST") return await handleInviteManager(request);
+    if (path === "/managers/temporary-password" && request.method === "POST") return await handleIssueManagerTemporaryPassword(request);
     if (path === "/managers/role" && request.method === "POST") return await handleUpdateManager(request);
     if (path === "/managers/remove" && request.method === "POST") return await handleRemoveManager(request);
     if (path === "/staff-accounts" && request.method === "GET") return await handleListStaffAccounts(request);
     if (path === "/staff-accounts/invite" && request.method === "POST") return await handleInviteStaff(request);
+    if (path === "/staff-accounts/temporary-password" && request.method === "POST") return await handleIssueStaffTemporaryPassword(request);
     if (path === "/staff-accounts/remove" && request.method === "POST") return await handleRemoveStaffAccount(request);
     if (path === "/parse-time-off-pdf") return json(501, { error: "PDF request-off imports still require the local Shift Bay server for now." });
     return json(404, { error: `Unknown Shift Bay API route: ${path}` });

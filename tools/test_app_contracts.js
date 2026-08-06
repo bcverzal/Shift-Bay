@@ -6,6 +6,7 @@ const root = path.join(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const staff = fs.readFileSync(path.join(root, "staff.js"), "utf8");
+const staffHtml = fs.readFileSync(path.join(root, "staff.html"), "utf8");
 const edgeFunction = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay-api", "index.ts"), "utf8");
 const employeeMigration = fs.readFileSync(path.join(root, "supabase", "employee-normalization-migration.sql"), "utf8");
 
@@ -93,6 +94,15 @@ function run() {
   includes(app, "function setNormalizedScheduleReadBadge", "normalized read mode must expose a persistent confirmed source marker");
   includes(app, 'setNormalizedScheduleReadBadge(envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary" ? "active" : "unavailable")', "normalized read marker must only show as active after a confirmed normalized response");
   includes(index, 'id="normalizedReadBadge"', "normalized read marker must be present in the header");
+  includes(index, 'data-password-toggle="loginPassword"', "manager login must provide a show-password control");
+  includes(index, 'data-password-toggle="newManagerPassword"', "manager password creation must provide a show-password control");
+  includes(staffHtml, 'data-password-toggle="staffPassword"', "staff login must provide a show-password control");
+  includes(staffHtml, 'data-password-toggle="newStaffPassword"', "staff password creation must provide a show-password control");
+  includes(app, '"/api/managers/temporary-password"', "manager access must provide a safe temporary-password replacement flow");
+  includes(app, '"/api/staff-accounts/temporary-password"', "staff access must provide a safe temporary-password replacement flow");
+  includes(edgeFunction, 'path === "/managers/temporary-password"', "the manager temporary-password route must be deployed through the protected API");
+  includes(edgeFunction, 'path === "/staff-accounts/temporary-password"', "the staff temporary-password route must be deployed through the protected API");
+  includes(edgeFunction, "passwordChangeRequired: Boolean(row.password_change_required)", "access lists must expose whether the temporary password is still pending");
   includes(edgeFunction, "async function syncNormalizedSchedule", "schedule saves must mirror normalized records");
   includes(edgeFunction, 'if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" }', "normalized schedule writes must remain limited to enabled transition locations");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");

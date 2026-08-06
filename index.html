@@ -696,7 +696,10 @@
         <input id="loginEmail" type="email" autocomplete="email" required>
       </label>
       <label>Password
-        <input id="loginPassword" type="password" autocomplete="current-password" required>
+        <span class="password-input-wrap">
+          <input id="loginPassword" type="password" autocomplete="current-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-pressed="false">Show</button>
+        </span>
       </label>
       <button id="loginSubmitBtn" type="submit">Sign In</button>
       <p id="loginMessage" class="login-message"></p>
@@ -714,10 +717,16 @@
         <h2>Create Your Password</h2>
         <p class="app-confirm-message">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
         <label>New password
-          <input id="newManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+          <span class="password-input-wrap">
+            <input id="newManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button type="button" class="password-toggle" data-password-toggle="newManagerPassword" aria-pressed="false">Show</button>
+          </span>
         </label>
         <label>Confirm password
-          <input id="confirmManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+          <span class="password-input-wrap">
+            <input id="confirmManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button type="button" class="password-toggle" data-password-toggle="confirmManagerPassword" aria-pressed="false">Show</button>
+          </span>
         </label>
         <p id="passwordChangeMessage" class="login-message"></p>
       </div>
