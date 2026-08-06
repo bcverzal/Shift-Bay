@@ -5,6 +5,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const staff = fs.readFileSync(path.join(root, "staff.js"), "utf8");
 const staffHtml = fs.readFileSync(path.join(root, "staff.html"), "utf8");
 const edgeFunction = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay-api", "index.ts"), "utf8");
@@ -84,6 +85,8 @@ function run() {
   includes(app, 'authFetch("/api/normalized/schedule"', "normalized schedule comparison must use the protected API route");
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
+  includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
+  includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
   includes(app, "LEGACY_SNAPSHOT_OVERRIDE", "the normalized default must retain an immediate compatibility rollback override");
   includes(app, "!LEGACY_SNAPSHOT_OVERRIDE && !readSourceChanged && !skipLocalRecovery", "read-source switches must not create a false stale-state recovery");
   includes(app, "quarantinedByLegacySnapshot", "the compatibility rollback view must not auto-replay a previously captured browser recovery");
@@ -96,14 +99,24 @@ function run() {
   includes(index, 'id="normalizedReadBadge"', "normalized read marker must be present in the header");
   includes(index, 'data-password-toggle="loginPassword"', "manager login must provide a show-password control");
   includes(index, 'data-password-toggle="newManagerPassword"', "manager password creation must provide a show-password control");
-  includes(staffHtml, 'data-password-toggle="staffPassword"', "staff login must provide a show-password control");
+  excludes(index, "Staff Portal sign in", "the manager login must not expose a separate staff sign-in link");
+  includes(staffHtml, "Use Shift Bay sign in", "the staff page must point unauthenticated users to the shared login");
+  excludes(staffHtml, 'id="staffLoginForm"', "the staff page must not expose a second credential form");
   includes(staffHtml, 'data-password-toggle="newStaffPassword"', "staff password creation must provide a show-password control");
+  includes(app, 'result.accountType === "staff"', "shared login must route linked staff accounts to the staff portal");
+  includes(app, "currentLoginEmail = result.profile?.user?.email || normalizedEmail", "staff redirects must retain the login email for password recovery");
+  includes(app, 'locationId: result.profile?.locationId || ""', "staff sessions must retain their linked location");
+  includes(server, 'accountType: "staff"', "local login must identify linked staff accounts");
+  includes(edgeFunction, 'accountType: "staff"', "hosted login must identify linked staff accounts");
+  excludes(edgeFunction, 'loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`', "staff invitations must use the shared root login");
   includes(app, '"/api/managers/temporary-password"', "manager access must provide a safe temporary-password replacement flow");
   includes(app, '"/api/staff-accounts/temporary-password"', "staff access must provide a safe temporary-password replacement flow");
   includes(edgeFunction, 'path === "/managers/temporary-password"', "the manager temporary-password route must be deployed through the protected API");
   includes(edgeFunction, 'path === "/staff-accounts/temporary-password"', "the staff temporary-password route must be deployed through the protected API");
   includes(edgeFunction, "passwordChangeRequired: Boolean(row.password_change_required)", "access lists must expose whether the temporary password is still pending");
   includes(edgeFunction, "async function syncNormalizedSchedule", "schedule saves must mirror normalized records");
+  includes(edgeFunction, 'saveMode === "normalized-sandbox-direct"', "the server must gate the direct-write canary explicitly");
+  includes(edgeFunction, "Direct normalized schedule writes are limited to the Sandbox location.", "direct normalized writes must reject live locations");
   includes(edgeFunction, 'if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" }', "normalized schedule writes must remain limited to enabled transition locations");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");
   includes(edgeFunction, "changedSnapshotItems", "live schedule mirroring must limit normal saves to changed records");
@@ -128,6 +141,25 @@ function run() {
   includes(staff, 'data-staff-availability-end-slot', "staff availability needs paired start/end time controls");
   includes(staff, 'data-add-staff-window', "staff availability needs an add-window action");
   includes(staff, "function renderAvailabilityDays", "staff availability UI must remain present");
+  includes(staff, "let currentStaffLoginEmail = readSession()?.email || \"\"", "staff password recovery must retain the email across the shared-login redirect");
+  includes(staff, "function rememberStaffProfileLocation", "staff sessions must persist the account-resolved location");
+  includes(staff, "return \"\";", "real staff login must not inherit the manager's browser-selected location");
+
+  // Keep the local bridge and hosted Edge Function route surfaces in lockstep.
+  // A missing route here otherwise appears to users as an unexplained
+  // "Unknown API endpoint" after a deploy.
+  const sharedRoutes = [
+    "/auth/config", "/auth/login", "/auth/refresh", "/auth/change-password", "/auth/session",
+    "/locations", "/state", "/staff/login", "/staff/change-password", "/staff/me", "/staff/schedule",
+    "/staff/availability", "/staff/privacy", "/staff/profile", "/staff/request-offs", "/staff/directory",
+    "/staff-requests", "/staff-availability", "/staff-requests/review", "/staff-accounts",
+    "/staff-accounts/invite", "/staff-accounts/temporary-password", "/staff-accounts/remove",
+    "/status", "/state", "/audit/recent"
+  ];
+  for (const route of sharedRoutes) {
+    includes(server, `"/api${route}`, `local bridge route must include /api${route}`);
+    includes(edgeFunction, `"${route}`, `hosted Edge Function route must include ${route}`);
+  }
   console.log("app contract tests passed");
 }
 

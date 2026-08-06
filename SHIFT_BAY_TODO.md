@@ -99,6 +99,7 @@
 
 ## Staff Portal MVP
 
+- [ ] Fix the false `Invalid URL` banner in the Staff Portal: authenticated staff data can load correctly while the portal still shows this error.
 - [ ] Create staff account invitation/linking flow from employee profiles.
 - [ ] Add staff-only portal route/UI separate from the manager scheduler.
 - [ ] Build "My Schedule" for staff with upcoming shifts and location context.

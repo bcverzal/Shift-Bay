@@ -428,6 +428,11 @@ textarea {
   gap: 7px;
 }
 
+.staff-shared-login {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .staff-availability-day-toolbar {
   display: flex;
   align-items: center;

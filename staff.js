@@ -62,6 +62,7 @@ const submitStaffAvailabilityButton = document.getElementById("submitStaffAvaila
 let demoState = null;
 let currentStaffWeekStart = "";
 let currentStaffProfile = null;
+let currentStaffLoginEmail = readSession()?.email || "";
 let activeStaffTimeInput = null;
 
 function wirePasswordToggles(root = document) {
@@ -247,7 +248,13 @@ function apiUrl(path) {
 }
 
 function selectedLocationId() {
-  return String(localStorage.getItem(SELECTED_LOCATION_KEY) || localStorage.getItem(LEGACY_SELECTED_LOCATION_KEY) || STAFF_CONFIG.locationId || "").trim();
+  const session = readSession();
+  // A real staff session must use only the location returned for that account.
+  // The manager's selected-location key is shared by the browser and can point
+  // at a different restaurant. Demo preview is the one intentional fallback.
+  if (session?.locationId) return String(session.locationId).trim();
+  if (DEMO_PORTAL_MODE) return String(localStorage.getItem(SELECTED_LOCATION_KEY) || localStorage.getItem(LEGACY_SELECTED_LOCATION_KEY) || DEMO_LOCATION_ID).trim();
+  return "";
 }
 
 function setMessage(message) {
@@ -301,6 +308,13 @@ function writeSession(session) {
   else localStorage.removeItem(STAFF_SESSION_KEY);
 }
 
+function rememberStaffProfileLocation(profile) {
+  const session = readSession();
+  const locationId = String(profile?.locationId || "").trim();
+  if (!session || !locationId || session.locationId === locationId) return;
+  writeSession({ ...session, locationId });
+}
+
 async function fetchWithSession(path, session, options = {}) {
   const headers = {
     "Content-Type": "application/json",
@@ -321,16 +335,20 @@ async function staffFetch(path, options = {}) {
 }
 
 async function signIn(email, password) {
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPassword = String(password || "");
+  if (!normalizedEmail || !normalizedPassword) throw new Error("Email and password are required.");
   const locationId = selectedLocationId();
   const headers = locationId ? { "x-shift-bay-location-id": locationId } : {};
   const response = await fetch(apiUrl("/api/staff/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email: normalizedEmail, password: normalizedPassword })
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.ok) throw new Error(body.error || "Could not sign in.");
-  writeSession(body.session);
+  currentStaffLoginEmail = normalizedEmail;
+  writeSession({ ...(body.session || {}), email: body.session?.user?.email || normalizedEmail, locationId: body.profile?.locationId || "" });
   return body.profile || body;
 }
 
@@ -343,6 +361,9 @@ async function changeStaffPassword(password) {
 }
 
 function showPasswordDialog() {
+  if (staffPasswordDialog) {
+    staffPasswordDialog.dataset.loginEmail = currentStaffLoginEmail || currentStaffProfile?.user?.email || readSession()?.email || "";
+  }
   if (!staffPasswordDialog?.open) staffPasswordDialog?.showModal();
   setPasswordMessage("");
   document.getElementById("newStaffPassword")?.focus();
@@ -355,6 +376,7 @@ function hidePasswordDialog() {
 }
 
 function showSignedOut() {
+  currentStaffLoginEmail = "";
   loginCard.hidden = false;
   staffApp.hidden = true;
   if (demoPortalSwitcher) demoPortalSwitcher.hidden = true;
@@ -365,6 +387,8 @@ function showSignedOut() {
 function showSignedIn(profile) {
   loginCard.hidden = true;
   staffApp.hidden = false;
+  rememberStaffProfileLocation(profile);
+  currentStaffLoginEmail = profile?.user?.email || currentStaffLoginEmail || readSession()?.email || "";
   if (profile?.user?.passwordChangeRequired) {
     showPasswordDialog();
   } else {
@@ -753,6 +777,8 @@ async function loadStaffProfile() {
   }
   try {
    const profile = await staffFetch("/api/staff/me");
+   rememberStaffProfileLocation(profile);
+   currentStaffLoginEmail = profile?.user?.email || currentStaffLoginEmail || readSession()?.email || "";
    showSignedIn(profile);
     await loadStaffDirectory();
   } catch (error) {
@@ -762,7 +788,7 @@ async function loadStaffProfile() {
   }
 }
 
-loginForm.addEventListener("submit", async (event) => {
+loginForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   setMessage("");
   const email = document.getElementById("staffEmail").value.trim();
@@ -799,6 +825,16 @@ staffPasswordForm?.addEventListener("submit", async (event) => {
   try {
     setPasswordMessage("Saving password...");
     await changeStaffPassword(password);
+    // Supabase invalidates the temporary-password session after a password change.
+    // Sign in again so the portal replaces that stale token before loading the profile.
+    const email = currentStaffLoginEmail
+      || currentStaffProfile?.user?.email
+      || readSession()?.email
+      || staffPasswordDialog?.dataset.loginEmail
+      || document.getElementById("staffEmail")?.value.trim()
+      || "";
+    if (!email) throw new Error("Your login email could not be recovered. Sign in again before saving the password.");
+    await signIn(email, password);
     hidePasswordDialog();
     await loadStaffProfile();
   } catch (error) {
@@ -814,6 +850,7 @@ staffPasswordForm?.addEventListener("submit", async (event) => {
 signOutButton.addEventListener("click", () => {
   writeSession(null);
   currentStaffProfile = null;
+  currentStaffLoginEmail = "";
   currentStaffWeekStart = "";
   hidePasswordDialog();
   showSignedOut();

@@ -29,6 +29,10 @@ const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvai
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
+// Direct writes are a controlled Sandbox-only canary. The normal application
+// continues to write the compatibility snapshot while this path is proven.
+const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
+  NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox";
 const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
 let normalizedScheduleReadState = "off";
 let normalizedAvailabilityReadState = "off";
@@ -52,6 +56,7 @@ let authConfig = null;
 let authRequired = false;
 let authSession = loadAuthSession();
 let currentUser = null;
+let currentLoginEmail = authSession?.email || "";
 let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
 const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
@@ -815,6 +820,9 @@ function serverEnvelope(options = {}) {
     savedBy: currentSaveActor(),
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
     saveScope: options.scope || "schedule",
+    saveMode: NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && options.scope !== "employee-profile"
+      ? "normalized-sandbox-direct"
+      : "snapshot-bridge",
     employeeId,
     // Send the exact profile being saved. The server deliberately ignores the
     // rest of the browser's schedule snapshot for this scoped operation.
@@ -973,6 +981,8 @@ async function persistStateToServer(options = {}) {
     }
     if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
       setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
+    } else if (result.normalizedDirect) {
+      setStorageStatus("saved", "Saved directly to normalized Sandbox schedule records.");
     } else {
       setStorageStatus("saved", "Connected to the shared scheduler data file.");
     }
@@ -1075,6 +1085,7 @@ function saveAuthSession(session) {
 function clearAuthSession() {
   authSession = null;
   currentUser = null;
+  currentLoginEmail = "";
   try {
     localStorage.removeItem(AUTH_SESSION_KEY);
   } catch {
@@ -1167,6 +1178,7 @@ function showPasswordChangeDialog() {
   setPasswordChangeMessage("");
   const dialog = $("passwordChangeDialog");
   if (!dialog) return;
+  dialog.dataset.loginEmail = currentLoginEmail || currentUser?.email || authSession?.email || authSession?.user?.email || "";
   if (!dialog.open) dialog.showModal();
   window.setTimeout(() => $("newManagerPassword")?.focus(), 50);
 }
@@ -1309,6 +1321,21 @@ async function runNormalizedEmployeeShadowCheck() {
       message: error.message || "Could not load normalized employee records.",
       type: "warning"
     });
+  }
+}
+
+function saveStaffSession(session, email = "") {
+  const normalized = {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600),
+    email: session.user?.email || email,
+    locationId: session.locationId || ""
+  };
+  try {
+    localStorage.setItem("shiftBay.staffSession.v1", JSON.stringify(normalized));
+  } catch {
+    // The staff page can still use the redirect if storage is unavailable.
   }
 }
 
@@ -2057,6 +2084,7 @@ async function validateAuthSession(session = authSession) {
   const result = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(result?.error || "Could not verify login.");
   currentUser = result.user;
+  currentLoginEmail = result.user?.email || currentLoginEmail || authSession?.email || "";
   await loadUserLocations().catch(() => []);
   updateAccountUi();
   return result.user;
@@ -2064,16 +2092,26 @@ async function validateAuthSession(session = authSession) {
 
 async function signInWithPassword(email, password) {
   if (!authConfig?.enabled) throw new Error("Cloud login is missing the Supabase anon key setup.");
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPassword = String(password || "");
+  if (!normalizedEmail || !normalizedPassword) throw new Error("Email and password are required.");
   const result = await fetchJson("/api/auth/login", {
     method: "POST",
     headers: {
-      ...selectedLocationHeaders(),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email: normalizedEmail, password: normalizedPassword })
   });
   const session = result.session;
   if (!session?.access_token) throw new Error("Supabase did not return a login session.");
+  if (result.accountType === "staff") {
+    currentLoginEmail = result.profile?.user?.email || normalizedEmail;
+    clearAuthSession();
+    saveStaffSession({ ...session, locationId: result.profile?.locationId || "" }, email);
+    window.location.href = "staff.html";
+    return { redirectingToStaffPortal: true };
+  }
+  currentLoginEmail = normalizedEmail;
   saveAuthSession({
     access_token: session.access_token,
     refresh_token: session.refresh_token,
@@ -12552,7 +12590,7 @@ function renderTemporaryStaffLogin(details = null) {
     target.innerHTML = "";
     return;
   }
-  const loginUrl = details.loginUrl || `${window.location.origin}/staff.html`;
+  const loginUrl = details.loginUrl || window.location.origin;
   target.hidden = false;
   target.innerHTML = [
     `<strong>${details.temporaryPasswordReissued ? "New temporary password issued. The previous password no longer works." : details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
@@ -12714,7 +12752,7 @@ function renderStaffRequestsReview(requests = [], submissions = []) {
   }
   if (availabilityTarget) {
     availabilityTarget.innerHTML = submissions.length ? submissions.map((submission) => `
-      <section class="staff-review-row"><div><strong>${escapeHtml(staffRequestEmployeeName(submission))}</strong><span>Week of ${escapeHtml(submission.weekStart)} | ${escapeHtml(submission.status)}</span>${submission.note ? `<small>${escapeHtml(submission.note)}</small>` : ""}</div><code>${escapeHtml(JSON.stringify(submission.availability || {}))}</code></section>`).join("") : `<p class="hint">No availability submissions have been received.</p>`;
+      <section class="staff-review-row"><div><strong>${escapeHtml(staffRequestEmployeeName(submission))}</strong><span>Week of ${escapeHtml(submission.weekStart)} | ${escapeHtml(submission.status)}</span>${submission.note ? `<small>${escapeHtml(submission.note)}</small>` : ""}</div><div class="staff-review-actions"><code>${escapeHtml(JSON.stringify(submission.availability || {}))}</code>${["submitted", "pending", "awaiting_approval"].includes(String(submission.status || "").toLowerCase()) ? `<button type="button" data-staff-request-review="${escapeHtml(submission.id)}" data-review-status="approved">Approve</button><button type="button" data-staff-request-review="${escapeHtml(submission.id)}" data-review-status="denied">Deny</button>` : ""}</div></section>`).join("") : `<p class="hint">No availability submissions have been received.</p>`;
   }
 }
 
@@ -14343,6 +14381,7 @@ function wireEvents() {
     try {
       setLoginMessage("Checking account...");
       const user = await signInWithPassword($("loginEmail").value.trim(), $("loginPassword").value);
+      if (user?.redirectingToStaffPortal) return;
       if (user?.passwordChangeRequired) {
         showPasswordChangeDialog();
         return;
@@ -14352,7 +14391,8 @@ function wireEvents() {
     } catch (error) {
       clearAuthSession();
       updateAccountUi();
-      setLoginMessage("Sign in failed. Check the email and password, then try again.", error.message);
+      const errorMessage = String(error?.message || "");
+      setLoginMessage("Sign in failed. Check the email and password, then try again.", errorMessage);
     } finally {
       if (button) { button.disabled = false; button.textContent = "Sign In"; }
     }
@@ -14362,8 +14402,8 @@ function wireEvents() {
   });
   $("passwordChangeForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const password = $("newManagerPassword")?.value || "";
-    const confirm = $("confirmManagerPassword")?.value || "";
+      const password = $("newManagerPassword")?.value || "";
+      const confirm = $("confirmManagerPassword")?.value || "";
     if (password.length < 8) { setPasswordChangeMessage("Use at least 8 characters."); return; }
     if (password !== confirm) { setPasswordChangeMessage("The passwords do not match."); return; }
     const button = $("passwordChangeSubmitBtn");
@@ -14371,6 +14411,17 @@ function wireEvents() {
     try {
       setPasswordChangeMessage("Saving password...");
       await changeRequiredPassword(password);
+      // Supabase can invalidate the temporary-password session after the
+      // admin password update. Re-authenticate before loading the scheduler so
+      // the next request does not fail with a misleading blank-login error.
+      const email = currentLoginEmail
+        || currentUser?.email
+        || authSession?.email
+        || authSession?.user?.email
+        || $("passwordChangeDialog")?.dataset.loginEmail
+        || "";
+      if (!email) throw new Error("Your login email could not be recovered. Sign in again before saving the password.");
+      await signInWithPassword(email, password);
       hidePasswordChangeDialog();
       hideLoginOverlay();
       await hydrateStateFromServer();

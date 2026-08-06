@@ -30,7 +30,7 @@ create table if not exists public.staff_availability_submissions (
   week_start date not null,
   availability jsonb not null default '{}'::jsonb,
   note text not null default '',
-  status text not null default 'submitted' check (status in ('submitted', 'reviewed')),
+  status text not null default 'submitted' check (status in ('submitted', 'pending', 'approved', 'denied', 'cancelled', 'reviewed')),
   reviewed_by uuid references auth.users(id) on delete set null,
   reviewed_at timestamptz,
   created_at timestamptz not null default now(),

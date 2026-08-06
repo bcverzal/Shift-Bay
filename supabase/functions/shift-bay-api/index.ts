@@ -69,7 +69,7 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const message = body?.message || body?.error_description || body?.details || `Supabase request failed with ${response.status}.`;
+    const message = body?.message || body?.msg || body?.error_description || body?.details || body?.error_code || `Supabase request failed with ${response.status}.`;
     throw Object.assign(new Error(message), { status: response.status });
   }
   return body;
@@ -1235,30 +1235,39 @@ function isMissingStaffSchema(error: any) {
     || message.includes("does not exist");
 }
 
-async function handleStaffMe(request: Request) {
+async function handleStaffMe(request: Request, allowAnyLocation = false) {
   const validated = await validateAuthUser(request);
   if (!validated.ok) return json(validated.status || 401, validated);
 
-  const locationId = selectedLocationFromRequest(request) || config().locationId;
+  const requestedLocationId = selectedLocationFromRequest(request);
+  const locationId = requestedLocationId || config().locationId;
   try {
+    const accountScope = allowAnyLocation
+      ? `user_id=eq.${encodeURIComponent((validated.user as any).id)}`
+      : `location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}`;
     let rows: any[];
     try {
       rows = await supabaseJson(
-        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,phone_visibility,created_at,updated_at`,
+        `/staff_accounts?${accountScope}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,phone_visibility,created_at,updated_at`,
         { headers: serviceHeaders() }
       );
     } catch (error) {
       if (!String((error as Error)?.message || "").toLowerCase().includes("phone_visibility")) throw error;
       rows = await supabaseJson(
-        `/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent((validated.user as any).id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,created_at,updated_at`,
+        `/staff_accounts?${accountScope}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,preferred_name,phone,contact_preference,status,password_change_required,created_at,updated_at`,
         { headers: serviceHeaders() }
       );
       rows = (Array.isArray(rows) ? rows : []).map((row: any) => ({ ...row, phone_visibility: "managers_only" }));
     }
-    const account = Array.isArray(rows) ? rows[0] : null;
+    const account = Array.isArray(rows)
+      ? (allowAnyLocation && !requestedLocationId
+        ? rows.slice().sort((a: any, b: any) => Date.parse(b.updated_at || b.created_at || "") - Date.parse(a.updated_at || a.created_at || ""))[0] || null
+        : rows.find((row: any) => row.location_id === locationId) || rows.find((row: any) => row.location_id === config().locationId) || rows[0] || null)
+      : null;
+    const resolvedLocationId = account?.location_id || locationId;
     let employee: any = null;
     if (account) {
-      const row = await loadDocumentRow("*", locationId);
+      const row = await loadDocumentRow("*", resolvedLocationId);
       const state = (row?.state || {}) as any;
       const employeeId = String(account.legacy_employee_id || account.employee_id || "");
       const employeeRow = (Array.isArray(state.employees) ? state.employees : []).find((item: any) => String(item.id || "") === employeeId);
@@ -1278,7 +1287,7 @@ async function handleStaffMe(request: Request) {
       schemaReady: true,
       linked: Boolean(account),
       user: { ...(validated.user as any), passwordChangeRequired: Boolean(account?.password_change_required) },
-      locationId,
+      locationId: resolvedLocationId,
       account: account || null,
       employee,
       message: account ? "" : "No staff employee profile is linked to this login yet."
@@ -1327,7 +1336,7 @@ function staffWeekStart(value: string, weekStart: number) {
 }
 
 async function handleStaffSchedule(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, profile);
   if (!profile.linked || !profile.account) {
@@ -1375,7 +1384,7 @@ function validDateKey(value: string) {
 }
 
 async function handleStaffRequestOffs(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, profile);
   if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
@@ -1413,7 +1422,7 @@ async function handleStaffRequestOffs(request: Request) {
 }
 
 async function handleStaffAvailability(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, profile);
   if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
@@ -1474,12 +1483,32 @@ async function handleReviewStaffRequest(request: Request) {
   const locationId = (validated.user as any).locationId;
   const rows = await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}&select=*`, { headers: serviceHeaders() });
   const requestRow = Array.isArray(rows) ? rows[0] : null;
-  if (!requestRow) return json(404, { ok: false, error: "Request-off not found." });
   const reviewedAt = new Date().toISOString();
-  await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}`, { method: "PATCH", headers: serviceHeaders({ Prefer: "return=minimal" }), body: JSON.stringify({ status, reviewed_by: (validated.user as any).id, reviewed_at: reviewedAt, updated_at: reviewedAt }) });
-  if (status === "approved") await applyApprovedStaffRequest(locationId, requestRow);
-  await logAuditEvent("staff_request_off_reviewed", (validated.user as any).id, { requestId, status }, locationId);
+  if (requestRow) {
+    await supabaseJson(`/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}`, { method: "PATCH", headers: serviceHeaders({ Prefer: "return=minimal" }), body: JSON.stringify({ status, reviewed_by: (validated.user as any).id, reviewed_at: reviewedAt, updated_at: reviewedAt }) });
+    if (status === "approved") await applyApprovedStaffRequest(locationId, requestRow);
+    await logAuditEvent("staff_request_off_reviewed", (validated.user as any).id, { requestId, status }, locationId);
+    return json(200, { ok: true, requestId, status });
+  }
+  const availabilityRows = await supabaseJson(`/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}&select=*`, { headers: serviceHeaders() });
+  const availability = Array.isArray(availabilityRows) ? availabilityRows[0] : null;
+  if (!availability) return json(404, { ok: false, error: "Request-off or availability submission not found." });
+  await supabaseJson(`/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}`, { method: "PATCH", headers: serviceHeaders({ Prefer: "return=minimal" }), body: JSON.stringify({ status, reviewed_by: (validated.user as any).id, reviewed_at: reviewedAt, updated_at: reviewedAt }) });
+  if (status === "approved") await applyApprovedStaffAvailability(locationId, availability);
+  await logAuditEvent("staff_availability_reviewed", (validated.user as any).id, { requestId, status }, locationId);
   return json(200, { ok: true, requestId, status });
+}
+
+async function applyApprovedStaffAvailability(locationId: string, submission: any) {
+  const document = await loadDocumentRow("*", locationId);
+  if (!document?.state) return;
+  const state = { ...(document.state as any) };
+  const employeeId = String(submission.legacy_employee_id || "");
+  state.employees = (Array.isArray(state.employees) ? state.employees : []).map((employee: any) => String(employee.id || "") === employeeId
+    ? { ...employee, availability: submission.availability || {}, availabilityEffectiveDate: submission.week_start || "" }
+    : employee);
+  const savedAt = new Date().toISOString();
+  await supabaseJson("/scheduler_state_documents?on_conflict=location_id,document_key", { method: "POST", headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify([{ location_id: locationId, document_key: config().documentKey, schema_version: Number(document.schema_version || 1), state, saved_at: savedAt, updated_at: savedAt }]) });
 }
 
 async function applyApprovedStaffRequest(locationId: string, requestRow: any) {
@@ -1520,8 +1549,15 @@ async function handleLogin(request: Request) {
   const validated = await validateSession(new Request(request.url, {
     headers
   }));
-  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
-  return json(200, { ok: true, session, user: validated.user });
+  if (!validated.ok) {
+    const staffProfileResponse = await handleStaffMe(new Request(request.url, { headers }), true);
+    const staffProfile = await staffProfileResponse.json();
+    if (staffProfile.ok && staffProfile.linked) {
+      return json(200, { ok: true, accountType: "staff", session, profile: staffProfile });
+    }
+    return json(validated.status || 401, { ok: false, error: validated.error });
+  }
+  return json(200, { ok: true, accountType: "manager", session, user: validated.user });
 }
 
 async function handleStaffLogin(request: Request) {
@@ -1542,14 +1578,14 @@ async function handleStaffLogin(request: Request) {
   const headers = new Headers({ Authorization: `Bearer ${session.access_token}` });
   const requestedLocationId = selectedLocationFromRequest(request);
   if (requestedLocationId) headers.set("x-shift-bay-location-id", requestedLocationId);
-  const profileResponse = await handleStaffMe(new Request(request.url, { headers }));
+  const profileResponse = await handleStaffMe(new Request(request.url, { headers }), true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, { ok: false, error: profile.error || "Could not load staff profile." });
   return json(200, { ok: true, session, profile });
 }
 
 async function handleStaffChangePassword(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, { ok: false, error: profile.error || "Could not load staff profile." });
   if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
@@ -1579,7 +1615,7 @@ async function handleStaffChangePassword(request: Request) {
 }
 
 async function handleStaffPrivacy(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, profile);
   if (!profile.linked || !profile.account?.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
@@ -1710,6 +1746,7 @@ async function handleSaveState(request: Request) {
   const payload = await request.json();
   let state = (payload?.data || payload?.state || payload) as JsonRecord;
   const saveScope = String(payload?.saveScope || "schedule");
+  const saveMode = String(payload?.saveMode || "snapshot-bridge");
   const saveAttemptId = String(payload?.saveAttemptId || "");
   const employeeId = String(payload?.employeeId || "");
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
@@ -1765,6 +1802,33 @@ async function handleSaveState(request: Request) {
       incomingUpdatedAt: new Date(incomingTime).toISOString(),
       existingUpdatedAt: new Date(existingTime).toISOString()
     });
+  }
+
+  // This is deliberately narrower than the normal save path: only the
+  // disposable Sandbox can write directly to normalized schedule tables while
+  // the production location retains the snapshot bridge and rollback path.
+  if (saveMode === "normalized-sandbox-direct") {
+    if (locationId !== SANDBOX_LOCATION_ID) {
+      return json(403, { ok: false, error: "Direct normalized schedule writes are limited to the Sandbox location." });
+    }
+    if (profileOnlySave) {
+      return json(400, { ok: false, error: "Employee profile saves use their dedicated normalized path." });
+    }
+    const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, null);
+    if (!normalizedScheduleSync.synced) {
+      return json(503, { ok: false, error: "Could not save the normalized Sandbox schedule. The legacy snapshot was not changed." });
+    }
+    const savedAt = new Date().toISOString();
+    await logAuditEvent("normalized_schedule_saved", (validated.user as any).id, {
+      savedAt,
+      savedByEmail: (validated.user as any).email || "",
+      savedByRole: (validated.user as any).role || "",
+      savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
+      saveScope,
+      saveMode,
+      normalizedScheduleSync
+    }, locationId);
+    return json(200, { ok: true, savedAt, normalizedDirect: true, normalizedScheduleSync });
   }
 
   const savedAt = new Date().toISOString();
@@ -2073,7 +2137,7 @@ async function handleIssueStaffTemporaryPassword(request: Request) {
     displayName: account.display_name || email,
     role: "staff",
     temporaryPassword: password,
-    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    loginUrl: cfg.siteUrl.replace(/\/$/, ""),
     isStaff: true
   });
   await logAuditEvent("staff_temporary_password_reissued", (validated.user as any).id, { email, userId, accountId, legacyEmployeeId: account.legacy_employee_id || "" }, locationId);
@@ -2082,17 +2146,17 @@ async function handleIssueStaffTemporaryPassword(request: Request) {
     email,
     displayName: account.display_name || email,
     temporaryPassword: password,
-    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    loginUrl: cfg.siteUrl.replace(/\/$/, ""),
     inviteEmailSent: emailResult.sent,
     inviteEmailId: emailResult.id || "",
     inviteEmailError: emailResult.sent ? "" : emailResult.reason || ""
   });
 }
 
-async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
+async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request, true); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
 
 async function handleStaffDirectory(request: Request) {
-  const profileResponse = await handleStaffMe(request);
+  const profileResponse = await handleStaffMe(request, true);
   const profile = await profileResponse.json();
   if (!profile.ok) return json(profile.status || 401, profile);
   if (!profile.linked || !profile.account) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." });
@@ -2257,7 +2321,7 @@ async function handleInviteStaff(request: Request) {
     displayName,
     role: "staff",
     temporaryPassword: password,
-    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    loginUrl: cfg.siteUrl.replace(/\/$/, ""),
     isStaff: true
   });
   await logAuditEvent(reusedExistingLogin ? "staff_login_relinked" : "staff_login_created", (validated.user as any).id, { email, userId, legacyEmployeeId, displayName }, locationId);
@@ -2273,7 +2337,7 @@ async function handleInviteStaff(request: Request) {
       passwordChangeRequired: true
     },
     temporaryPassword: password,
-    loginUrl: `${cfg.siteUrl.replace(/\/$/, "")}/staff.html`,
+    loginUrl: cfg.siteUrl.replace(/\/$/, ""),
     reusedExistingLogin,
     inviteEmailSent: emailResult.sent,
     inviteEmailId: emailResult.id || "",
@@ -2297,7 +2361,7 @@ Deno.serve(async (request) => {
       return json(result.ok ? 200 : result.status || 401, result);
     }
     if (path === "/locations" && request.method === "GET") return await handleListLocations(request);
-    if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request);
+    if (path === "/staff/me" && request.method === "GET") return await handleStaffMe(request, true);
    if (path === "/staff/schedule" && request.method === "GET") return await handleStaffSchedule(request);
    if (path === "/staff/directory" && request.method === "GET") return await handleStaffDirectory(request);
     if (path === "/staff/request-offs" && ["GET", "POST", "PATCH"].includes(request.method)) return await handleStaffRequestOffs(request);

@@ -72,7 +72,7 @@ async function supabaseJson(url, options = {}) {
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const message = body?.message || body?.error_description || body?.details || `Supabase request failed with ${response.status}.`;
+    const message = body?.message || body?.msg || body?.error_description || body?.details || body?.error_code || `Supabase request failed with ${response.status}.`;
     const error = new Error(message);
     error.status = response.status;
     throw error;
@@ -215,35 +215,66 @@ function isMissingStaffSchema(error) {
     || message.includes("does not exist");
 }
 
-async function staffAccountForUser(request) {
+async function staffAccountForUser(request, allowAnyLocation = false) {
   const validated = await validateSupabaseAuthUser(request);
   if (!validated.ok) return validated;
   const config = supabaseServerConfig();
-  const locationId = selectedLocationFromRequest(request) || config.locationId;
+  const requestedLocationId = selectedLocationFromRequest(request);
+  const locationId = requestedLocationId || config.locationId;
   try {
     const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+    const accountScope = allowAnyLocation
+      ? `user_id=eq.${encodeURIComponent(validated.user.id)}`
+      : `location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}`;
     let rows;
     try {
       rows = await supabaseJson(
-        `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,phone_visibility,created_at,updated_at`,
+        `${config.url}/rest/v1/staff_accounts?${accountScope}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,phone_visibility,created_at,updated_at`,
         { headers }
       );
     } catch (error) {
       if (!String(error?.message || "").toLowerCase().includes("phone_visibility")) throw error;
       rows = await supabaseJson(
-        `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&user_id=eq.${encodeURIComponent(validated.user.id)}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,created_at,updated_at`,
+        `${config.url}/rest/v1/staff_accounts?${accountScope}&select=id,location_id,user_id,employee_id,legacy_employee_id,display_name,status,password_change_required,created_at,updated_at`,
         { headers }
       );
       rows = (Array.isArray(rows) ? rows : []).map((row) => ({ ...row, phone_visibility: "managers_only" }));
     }
-    const account = Array.isArray(rows) ? rows[0] : null;
+    const account = Array.isArray(rows)
+      ? (allowAnyLocation && !requestedLocationId
+        ? rows.slice().sort((a, b) => Date.parse(b.updated_at || b.created_at || "") - Date.parse(a.updated_at || a.created_at || ""))[0] || null
+        : rows.find((row) => row.location_id === locationId) || rows.find((row) => row.location_id === config.locationId) || rows[0] || null)
+      : null;
+    const resolvedLocationId = account?.location_id || locationId;
+    let employee = null;
+    if (account) {
+      const stateResult = await schedulerStore.loadState(resolvedLocationId);
+      const state = stateResult?.payload?.data || {};
+      const employeeId = String(account.legacy_employee_id || account.employee_id || "");
+      const employeeRow = (Array.isArray(state.employees) ? state.employees : [])
+        .find((item) => String(item?.id || "") === employeeId);
+      if (employeeRow) {
+        employee = {
+          id: employeeRow.id,
+          displayName: [employeeRow.nickname || employeeRow.firstName, employeeRow.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim() || account.display_name || "Employee",
+          availability: employeeRow.availability || {},
+          availabilityEffectiveDate: employeeRow.availabilityEffectiveDate || "",
+          availabilityPatterns: Array.isArray(employeeRow.availabilityPatterns) ? employeeRow.availabilityPatterns : [],
+          availabilitySchedule: Array.isArray(employeeRow.availabilitySchedule) ? employeeRow.availabilitySchedule : []
+        };
+      }
+    }
     return {
       ok: true,
       schemaReady: true,
       linked: Boolean(account),
-      user: validated.user,
-      locationId,
+      user: { ...validated.user, passwordChangeRequired: Boolean(account?.password_change_required) },
+      locationId: resolvedLocationId,
       account: account || null,
+      employee,
       message: account ? "" : "No staff employee profile is linked to this login yet."
     };
   } catch (error) {
@@ -255,6 +286,7 @@ async function staffAccountForUser(request) {
         user: validated.user,
         locationId,
         account: null,
+        employee: null,
         message: "Staff portal tables have not been created yet."
       };
     }
@@ -289,7 +321,7 @@ function staffWeekStart(value, weekStart) {
 }
 
 async function staffScheduleForUser(request) {
-  const profile = await staffAccountForUser(request);
+  const profile = await staffAccountForUser(request, true);
   if (!profile.ok) return profile;
   if (!profile.linked || !profile.account) {
     return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
@@ -334,8 +366,86 @@ async function staffScheduleForUser(request) {
   };
 }
 
+async function staffAvailabilityForUser(request) {
+  const profile = await staffAccountForUser(request, true);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account?.id) {
+    return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  }
+
+  const stateResult = await schedulerStore.loadState(profile.locationId);
+  const state = stateResult?.payload?.data || {};
+  const query = new URL(request.url, `http://${request.headers?.host || "localhost"}`).searchParams;
+  const requestedWeek = String(query.get("weekStart") || "").trim();
+  const weekStart = staffWeekStart(requestedWeek, Number(state.settings?.weekStart || 0));
+  const accountId = encodeURIComponent(profile.account.id);
+  const config = supabaseServerConfig();
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+
+  if (request.method === "GET") {
+    let row = null;
+    try {
+      const rows = await supabaseJson(
+        `${config.url}/rest/v1/staff_availability_submissions?location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&week_start=eq.${encodeURIComponent(weekStart)}&select=id,week_start,availability,note,status,updated_at`,
+        { headers }
+      );
+      row = Array.isArray(rows) ? rows[0] : null;
+    } catch (error) {
+      if (!isMissingStaffSchema(error)) throw error;
+    }
+    return {
+      ok: true,
+      locationId: profile.locationId,
+      requestId: row?.id || "",
+      weekStart,
+      availability: row?.availability || profile.employee?.availability || {},
+      note: row?.note || "",
+      status: row?.status || ""
+    };
+  }
+
+  if (request.method === "PATCH") {
+    let body = {};
+    try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+    const requestId = String(body.requestId || "").trim();
+    if (!requestId || body.status !== "cancelled") {
+      return { ok: false, status: 400, error: "A submission and cancelled status are required." };
+    }
+    const rows = await supabaseJson(
+      `${config.url}/rest/v1/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${accountId}&select=id,status`,
+      { headers }
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return { ok: false, status: 404, error: "Availability submission not found." };
+    if (!["submitted", "pending"].includes(String(row.status || "").toLowerCase())) {
+      return { ok: false, status: 409, error: "Only a pending submission can be withdrawn." };
+    }
+    await supabaseJson(
+      `${config.url}/rest/v1/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(profile.locationId)}`,
+      {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "cancelled", updated_at: new Date().toISOString() })
+      }
+    );
+    return { ok: true, requestId, status: "cancelled" };
+  }
+
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  const availability = body.availability && typeof body.availability === "object" ? body.availability : {};
+  const note = String(body.note || "").trim().slice(0, 240);
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_availability_submissions?on_conflict=location_id,staff_account_id,week_start`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify([{ location_id: profile.locationId, staff_account_id: profile.account.id, legacy_employee_id: profile.account.legacy_employee_id || profile.account.employee_id || "", week_start: weekStart, availability, note, status: "submitted", updated_at: new Date().toISOString() }])
+  });
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return { ok: true, requestId: row?.id || "", weekStart, availability: row?.availability || availability, note: row?.note || note, status: "submitted" };
+}
+
 async function staffPrivacyForUser(request) {
-  const profile = await staffAccountForUser(request);
+  const profile = await staffAccountForUser(request, true);
   if (!profile.ok) return profile;
   if (!profile.linked || !profile.account?.id) return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
   let body = {};
@@ -352,6 +462,341 @@ async function staffPrivacyForUser(request) {
   });
   const account = Array.isArray(rows) ? rows[0] : null;
   return { ok: true, phoneVisibility: account?.phone_visibility || phoneVisibility };
+}
+
+async function staffProfileUpdateForUser(request) {
+  const profile = await staffAccountForUser(request, true);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account?.id) return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  const preferredName = String(body.preferredName || "").trim().slice(0, 80);
+  const phone = String(body.phone || "").trim().slice(0, 40);
+  const contactPreference = String(body.contactPreference || "in_app").trim();
+  if (!["sms", "email", "in_app"].includes(contactPreference)) return { ok: false, status: 400, error: "Choose a valid contact preference." };
+  const config = supabaseServerConfig();
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}`, "Content-Type": "application/json", Prefer: "return=representation" };
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(profile.account.id)}&location_id=eq.${encodeURIComponent(profile.locationId)}`, {
+    method: "PATCH", headers, body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() })
+  });
+  const account = Array.isArray(rows) ? rows[0] : null;
+  return { ok: true, profile: { preferredName: account?.preferred_name || preferredName, phone: account?.phone || phone, contactPreference: account?.contact_preference || contactPreference } };
+}
+
+async function staffRequestOffsForUser(request) {
+  const profile = await staffAccountForUser(request, true);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account?.id) return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  const config = supabaseServerConfig();
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}`, "Content-Type": "application/json" };
+  const scope = `location_id=eq.${encodeURIComponent(profile.locationId)}&staff_account_id=eq.${encodeURIComponent(profile.account.id)}`;
+  if (request.method === "GET") {
+    const rows = await supabaseJson(`${config.url}/rest/v1/staff_request_offs?${scope}&select=id,start_date,end_date,start_time,end_time,note,status,created_at&order=start_date.asc,created_at.desc`, { headers });
+    return { ok: true, requests: (Array.isArray(rows) ? rows : []).map((row) => ({ id: row.id, startDate: row.start_date, endDate: row.end_date, startTime: row.start_time || "", endTime: row.end_time || "", note: row.note || "", status: row.status, createdAt: row.created_at })) };
+  }
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  if (request.method === "PATCH") {
+    const requestId = String(body.requestId || "").trim();
+    if (!requestId || body.status !== "cancelled") return { ok: false, status: 400, error: "Only a pending request can be cancelled from the staff portal." };
+    const rows = await supabaseJson(`${config.url}/rest/v1/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&${scope}&select=id,status`, { headers });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return { ok: false, status: 404, error: "Request-off not found." };
+    if (String(row.status || "").toLowerCase() !== "pending") return { ok: false, status: 409, error: "Only a pending request can be cancelled." };
+    await supabaseJson(`${config.url}/rest/v1/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&${scope}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "cancelled", updated_at: new Date().toISOString() }) });
+    return { ok: true, requestId, status: "cancelled" };
+  }
+  const startDate = String(body.startDate || "").trim();
+  const endDate = String(body.endDate || startDate).trim();
+  const startTime = String(body.startTime || "").trim();
+  const endTime = String(body.endTime || "").trim();
+  const note = String(body.note || "").trim().slice(0, 240);
+  if (!staffDateFromKey(startDate) || !staffDateFromKey(endDate)) return { ok: false, status: 400, error: "Choose a valid start and end date." };
+  if (endDate < startDate) return { ok: false, status: 400, error: "The end date cannot be before the start date." };
+  if ((startTime && !endTime) || (!startTime && endTime)) return { ok: false, status: 400, error: "Enter both times or leave both blank for a full-day request." };
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_request_offs`, { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify([{ location_id: profile.locationId, staff_account_id: profile.account.id, legacy_employee_id: profile.account.legacy_employee_id || profile.account.employee_id || "", start_date: startDate, end_date: endDate, start_time: startTime, end_time: endTime, note, status: "pending" }]) });
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return { ok: true, request: { id: row?.id || "", startDate, endDate, startTime, endTime, note, status: "pending" } };
+}
+
+async function staffDirectoryForUser(request) {
+  const profile = await staffAccountForUser(request, true);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account) return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  const stateResult = await schedulerStore.loadState(profile.locationId);
+  const state = stateResult?.payload?.data || {};
+  const config = supabaseServerConfig();
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(profile.locationId)}&select=legacy_employee_id,phone,phone_visibility,status,display_name`, { headers });
+  const accounts = new Map((Array.isArray(rows) ? rows : []).map((row) => [String(row.legacy_employee_id || ""), row]));
+  const currentId = String(profile.account.legacy_employee_id || profile.account.employee_id || "");
+  const entries = (Array.isArray(state.employees) ? state.employees : [])
+    .filter((employee) => employee.active !== false && !employee.archived)
+    .map((employee) => {
+      const id = String(employee.id || "");
+      const account = accounts.get(id) || {};
+      const visible = id === currentId || account.phone_visibility === "all_staff";
+      return { displayName: [employee.nickname || employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee", phone: visible ? String(account.phone || employee.phone || "") : "", phoneVisible: visible };
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return { ok: true, entries };
+}
+
+async function managerStaffRequestsForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  if (!["owner", "manager"].includes(String(validated.user?.role || "").toLowerCase())) return { ok: false, status: 403, error: "This account does not have permission to review staff requests." };
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=id,staff_account_id,legacy_employee_id,start_date,end_date,start_time,end_time,note,status,created_at,reviewed_at&order=status.asc,start_date.asc`, { headers });
+  return { ok: true, requests: (Array.isArray(rows) ? rows : []).map((row) => ({ id: row.id, staffAccountId: row.staff_account_id, legacyEmployeeId: row.legacy_employee_id, startDate: row.start_date, endDate: row.end_date, startTime: row.start_time || "", endTime: row.end_time || "", note: row.note || "", status: row.status, createdAt: row.created_at, reviewedAt: row.reviewed_at })) };
+}
+
+async function managerStaffAvailabilityForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  if (!["owner", "manager"].includes(String(validated.user?.role || "").toLowerCase())) return { ok: false, status: 403, error: "This account does not have permission to review staff availability." };
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_availability_submissions?location_id=eq.${encodeURIComponent(locationId)}&select=id,staff_account_id,legacy_employee_id,week_start,availability,note,status,created_at,updated_at&order=week_start.asc,updated_at.desc`, { headers: { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` } });
+  return { ok: true, submissions: (Array.isArray(rows) ? rows : []).map((row) => ({ id: row.id, staffAccountId: row.staff_account_id, legacyEmployeeId: row.legacy_employee_id, weekStart: row.week_start, availability: row.availability || {}, note: row.note || "", status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) };
+}
+
+async function reviewStaffRequestForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  if (!["owner", "manager"].includes(String(validated.user?.role || "").toLowerCase())) return { ok: false, status: 403, error: "This account does not have permission to review staff requests." };
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  const requestId = String(body.requestId || "").trim();
+  const status = String(body.status || "").trim();
+  if (!requestId || !["approved", "denied", "cancelled"].includes(status)) return { ok: false, status: 400, error: "A request and valid review status are required." };
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}`, "Content-Type": "application/json" };
+  const now = new Date().toISOString();
+  const requestRows = await supabaseJson(`${config.url}/rest/v1/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}&select=*`, { headers });
+  const requestRow = Array.isArray(requestRows) ? requestRows[0] : null;
+  if (requestRow) {
+    await supabaseJson(`${config.url}/rest/v1/staff_request_offs?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status, reviewed_by: validated.user.id, reviewed_at: now, updated_at: now }) });
+    return { ok: true, requestId, status };
+  }
+  const availabilityRows = await supabaseJson(`${config.url}/rest/v1/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}&select=*`, { headers });
+  const availability = Array.isArray(availabilityRows) ? availabilityRows[0] : null;
+  if (!availability) return { ok: false, status: 404, error: "Staff request or availability submission not found." };
+  await supabaseJson(`${config.url}/rest/v1/staff_availability_submissions?id=eq.${encodeURIComponent(requestId)}&location_id=eq.${encodeURIComponent(locationId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status, reviewed_by: validated.user.id, reviewed_at: now, updated_at: now }) });
+  if (status === "approved") {
+    const stateResult = await schedulerStore.loadState(locationId);
+    const state = stateResult?.payload?.data;
+    if (state && Array.isArray(state.employees)) {
+      const nextState = { ...state, employees: state.employees.map((employee) => String(employee.id || "") === String(availability.legacy_employee_id || "") ? { ...employee, availability: availability.availability || {}, availabilityEffectiveDate: availability.week_start || "" } : employee) };
+      await schedulerStore.saveState({ ...(stateResult.payload || {}), data: nextState, saveScope: "employee-profile", employeeId: availability.legacy_employee_id || "", baseServerSavedAt: state.meta?.serverSavedAt || "" }, validated.user);
+    }
+  }
+  return { ok: true, requestId, status };
+}
+
+async function listStaffAccountsForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  const role = String(validated.user?.role || "").toLowerCase();
+  if (!["owner", "manager"].includes(role)) {
+    return {
+      ok: false,
+      status: 403,
+      error: "This account does not have permission to manage staff access."
+    };
+  }
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}` };
+  try {
+    const rows = await supabaseJson(
+      `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,status,phone_visibility,password_change_required,invited_at,activated_at,created_at,updated_at&order=display_name.asc`,
+      { headers }
+    );
+    const staff = await Promise.all((Array.isArray(rows) ? rows : []).map(async (row) => ({
+      id: row.id,
+      userId: row.user_id,
+      email: await userEmailById(row.user_id),
+      legacyEmployeeId: row.legacy_employee_id,
+      displayName: row.display_name,
+      status: row.status,
+      phoneVisibility: row.phone_visibility || "managers_only",
+      passwordChangeRequired: Boolean(row.password_change_required),
+      invitedAt: row.invited_at,
+      activatedAt: row.activated_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    })));
+    return { ok: true, staff };
+  } catch (error) {
+    if (isMissingStaffSchema(error)) return { ok: true, schemaReady: false, staff: [] };
+    throw error;
+  }
+}
+
+async function removeStaffAccountForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  const role = String(validated.user?.role || "").toLowerCase();
+  if (!["owner", "manager"].includes(role)) {
+    return { ok: false, status: 403, error: "This account does not have permission to manage staff access." };
+  }
+  const rawBody = await readRequestBody(request);
+  const body = JSON.parse(rawBody || "{}");
+  const accountId = String(body.accountId || "").trim();
+  const userId = String(body.userId || "").trim();
+  if (!accountId || !userId) {
+    return { ok: false, status: 400, error: "Staff account details are required." };
+  }
+
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = {
+    apikey: config.serviceRoleKey,
+    Authorization: `Bearer ${config.serviceRoleKey}`,
+    "Content-Type": "application/json"
+  };
+  const rows = await supabaseJson(
+    `${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name`,
+    { headers }
+  );
+  const account = Array.isArray(rows) ? rows[0] : null;
+  if (!account) return { ok: false, status: 404, error: "That staff login is no longer linked to this location." };
+  if (String(account.user_id || "") !== userId) {
+    return { ok: false, status: 400, error: "The staff login details did not match." };
+  }
+
+  const otherLinks = await supabaseJson(
+    `${config.url}/rest/v1/staff_accounts?user_id=eq.${encodeURIComponent(userId)}&select=id,location_id`,
+    { headers }
+  );
+  const userDeleted = !Array.isArray(otherLinks) || otherLinks.length <= 1;
+  if (userDeleted) {
+    await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+      headers
+    });
+  }
+  await supabaseJson(
+    `${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}`,
+    { method: "DELETE", headers: { ...headers, Prefer: "return=minimal" } }
+  );
+  return { ok: true, userDeleted };
+}
+
+function localTemporaryPassword() {
+  const words = ["Lake", "Lime", "Mint", "Pine", "Ruby", "Salt", "Star", "Wave"];
+  const symbols = ["!", "#", "$", "%"];
+  const pick = (items) => items[Math.floor(Math.random() * items.length)];
+  return `${pick(words)}${pick(words).toLowerCase()}${pick(symbols)}`;
+}
+
+async function inviteStaffAccountForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  const role = String(validated.user?.role || "").toLowerCase();
+  if (!["owner", "manager"].includes(role)) {
+    return { ok: false, status: 403, error: "This account does not have permission to manage staff access." };
+  }
+  const rawBody = await readRequestBody(request);
+  const body = JSON.parse(rawBody || "{}");
+  const email = String(body.email || "").trim().toLowerCase();
+  const legacyEmployeeId = String(body.legacyEmployeeId || "").trim();
+  const displayName = String(body.displayName || "").trim();
+  if (!email || !email.includes("@")) return { ok: false, status: 400, error: "Enter a valid staff email address." };
+  if (!legacyEmployeeId) return { ok: false, status: 400, error: "Choose an employee to link." };
+  if (!displayName) return { ok: false, status: 400, error: "Employee display name is required." };
+
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = {
+    apikey: config.serviceRoleKey,
+    Authorization: `Bearer ${config.serviceRoleKey}`,
+    "Content-Type": "application/json"
+  };
+  const password = localTemporaryPassword();
+  let user;
+  let reusedExistingLogin = false;
+  try {
+    user = await supabaseJson(`${config.url}/auth/v1/admin/users`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { shift_bay_staff: true, shift_bay_location_id: locationId, shift_bay_legacy_employee_id: legacyEmployeeId }
+      })
+    });
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (!message.includes("already") && !message.includes("registered") && !message.includes("exists")) throw error;
+    user = await authUserByEmail(email);
+    reusedExistingLogin = true;
+    if (!user) return { ok: false, status: 409, error: "That email already has a Supabase login, but it could not be found to link." };
+    await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ password, email_confirm: true, user_metadata: { ...(user.user_metadata || {}), shift_bay_staff: true, shift_bay_location_id: locationId, shift_bay_legacy_employee_id: legacyEmployeeId } })
+    });
+  }
+  const userId = user?.id || user?.user?.id;
+  if (!userId) return { ok: false, status: 502, error: "Supabase did not return a user ID to link." };
+  const existingRows = await supabaseJson(
+    `${config.url}/rest/v1/staff_accounts?location_id=eq.${encodeURIComponent(locationId)}&legacy_employee_id=eq.${encodeURIComponent(legacyEmployeeId)}&select=id`,
+    { headers }
+  );
+  const accountBody = {
+    location_id: locationId,
+    user_id: userId,
+    legacy_employee_id: legacyEmployeeId,
+    display_name: displayName,
+    status: "invited",
+    password_change_required: true,
+    invited_by: validated.user.id,
+    invited_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+  const accountRows = existing?.id
+    ? await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(existing.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(accountBody) })
+    : await supabaseJson(`${config.url}/rest/v1/staff_accounts?on_conflict=location_id,user_id`, { method: "POST", headers: { ...headers, Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify([accountBody]) });
+  const account = Array.isArray(accountRows) ? accountRows[0] : null;
+  return {
+    ok: true,
+    reusedExistingLogin,
+    staff: { id: account?.id || "", userId, email, legacyEmployeeId, displayName, status: "invited", passwordChangeRequired: true },
+    temporaryPassword: password,
+    loginUrl: (process.env.SHIFT_BAY_SITE_URL || "http://localhost:8798").replace(/\/$/, ""),
+    inviteEmailSent: false,
+    inviteEmailError: "Local mode: share this temporary password directly."
+  };
+}
+
+async function issueStaffTemporaryPasswordForManager(request) {
+  const validated = await validateSupabaseSession(request);
+  if (!validated.ok) return validated;
+  if (!["owner", "manager"].includes(String(validated.user?.role || "").toLowerCase())) return { ok: false, status: 403, error: "This account does not have permission to manage staff access." };
+  let body = {};
+  try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
+  const accountId = String(body.accountId || "").trim();
+  const userId = String(body.userId || "").trim();
+  if (!accountId || !userId) return { ok: false, status: 400, error: "Staff account details are required." };
+  const config = supabaseServerConfig();
+  const locationId = validated.user.locationId || config.locationId;
+  const headers = { apikey: config.serviceRoleKey, Authorization: `Bearer ${config.serviceRoleKey}`, "Content-Type": "application/json" };
+  const rows = await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}&select=id,user_id,legacy_employee_id,display_name,password_change_required`, { headers });
+  const account = Array.isArray(rows) ? rows[0] : null;
+  if (!account) return { ok: false, status: 404, error: "That staff login is not linked to this location." };
+  if (String(account.user_id || "") !== userId) return { ok: false, status: 400, error: "The staff login details did not match." };
+  const email = await userEmailById(userId);
+  const password = localTemporaryPassword();
+  await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, { method: "PUT", headers, body: JSON.stringify({ password, email_confirm: true }) });
+  await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(accountId)}&location_id=eq.${encodeURIComponent(locationId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ password_change_required: true, status: "invited", updated_at: new Date().toISOString() }) });
+  return { ok: true, email, displayName: account.display_name || email, temporaryPassword: password, loginUrl: (process.env.SHIFT_BAY_SITE_URL || "http://localhost:8798").replace(/\/$/, ""), inviteEmailSent: false, inviteEmailError: "Local mode: share this temporary password directly." };
 }
 
 async function requireCloudUser(request, response) {
@@ -461,6 +906,43 @@ async function changeSupabasePassword(request) {
     }
   );
   return { ok: true, user: { ...validated.user, passwordChangeRequired: false } };
+}
+
+async function changeStaffSupabasePassword(request) {
+  const profile = await staffAccountForUser(request, true);
+  if (!profile.ok) return profile;
+  if (!profile.linked || !profile.account?.id) {
+    return { ok: false, status: 403, error: "This login is not linked to a staff profile yet." };
+  }
+  const rawBody = await readRequestBody(request);
+  const parsed = JSON.parse(rawBody || "{}");
+  const password = String(parsed.password || "");
+  if (password.length < 8) {
+    return { ok: false, status: 400, error: "Use a password with at least 8 characters." };
+  }
+
+  const config = supabaseServerConfig();
+  const serviceHeaders = {
+    apikey: config.serviceRoleKey,
+    Authorization: `Bearer ${config.serviceRoleKey}`,
+    "Content-Type": "application/json"
+  };
+  await supabaseJson(`${config.url}/auth/v1/admin/users/${encodeURIComponent(profile.user.id)}`, {
+    method: "PUT",
+    headers: serviceHeaders,
+    body: JSON.stringify({ password })
+  });
+  await supabaseJson(`${config.url}/rest/v1/staff_accounts?id=eq.${encodeURIComponent(profile.account.id)}`, {
+    method: "PATCH",
+    headers: { ...serviceHeaders, Prefer: "return=representation" },
+    body: JSON.stringify({
+      password_change_required: false,
+      status: "active",
+      activated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+  });
+  return { ok: true, user: { ...profile.user, passwordChangeRequired: false } };
 }
 
 async function userEmailById(userId) {
@@ -913,10 +1395,15 @@ async function handleApi(request, response) {
       };
       const validated = await validateSupabaseSession(fakeRequest);
       if (!validated.ok) {
+        const staffProfile = await staffAccountForUser(fakeRequest, true);
+        if (staffProfile.ok && staffProfile.linked) {
+          sendJson(response, 200, { ok: true, accountType: "staff", session, profile: staffProfile });
+          return;
+        }
         sendJson(response, validated.status || 401, { ok: false, error: validated.error });
         return;
       }
-      sendJson(response, 200, { ok: true, session, user: validated.user });
+      sendJson(response, 200, { ok: true, accountType: "manager", session, user: validated.user });
     } catch (error) {
       sendJson(response, error.status || 401, { ok: false, error: error.message || "Could not sign in." });
     }
@@ -954,6 +1441,15 @@ async function handleApi(request, response) {
     }
     return;
   }
+  if (url.pathname === "/api/staff/change-password" && request.method === "POST") {
+    try {
+      const result = await changeStaffSupabasePassword(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not change staff password." });
+    }
+    return;
+  }
   if (url.pathname === "/api/auth/session") {
     try {
       const result = await validateSupabaseSession(request);
@@ -980,6 +1476,42 @@ async function handleApi(request, response) {
     }
     return;
   }
+  if (url.pathname === "/api/staff-accounts" && request.method === "GET") {
+    try {
+      const result = await listStaffAccountsForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff access." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-accounts/remove" && request.method === "POST") {
+    try {
+      const result = await removeStaffAccountForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not remove staff login." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-accounts/invite" && request.method === "POST") {
+    try {
+      const result = await inviteStaffAccountForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not create staff login." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-accounts/temporary-password" && request.method === "POST") {
+    try {
+      const result = await issueStaffTemporaryPasswordForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not issue a temporary staff password." });
+    }
+    return;
+  }
   if (url.pathname === "/api/staff/login" && request.method === "POST") {
     try {
       const rawBody = await readRequestBody(request);
@@ -992,7 +1524,7 @@ async function handleApi(request, response) {
           "x-shift-bay-location-id": request.headers["x-shift-bay-location-id"] || ""
         }
       };
-      const profile = await staffAccountForUser(fakeRequest);
+      const profile = await staffAccountForUser(fakeRequest, true);
       if (!profile.ok) {
         sendJson(response, profile.status || 401, { ok: false, error: profile.error });
         return;
@@ -1005,7 +1537,7 @@ async function handleApi(request, response) {
   }
   if (url.pathname === "/api/staff/me" && request.method === "GET") {
     try {
-      const result = await staffAccountForUser(request);
+      const result = await staffAccountForUser(request, true);
       sendJson(response, result.ok ? 200 : result.status || 401, result);
     } catch (error) {
       sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff profile." });
@@ -1021,12 +1553,75 @@ async function handleApi(request, response) {
     }
     return;
   }
+  if (url.pathname === "/api/staff/availability" && ["GET", "PUT", "PATCH"].includes(request.method)) {
+    try {
+      const result = await staffAvailabilityForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff availability." });
+    }
+    return;
+  }
   if (url.pathname === "/api/staff/privacy" && request.method === "PATCH") {
     try {
       const result = await staffPrivacyForUser(request);
       sendJson(response, result.ok ? 200 : result.status || 400, result);
     } catch (error) {
       sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not save phone privacy setting." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/profile" && request.method === "PATCH") {
+    try {
+      const result = await staffProfileUpdateForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not save staff profile." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/request-offs" && ["GET", "POST", "PATCH"].includes(request.method)) {
+    try {
+      const result = await staffRequestOffsForUser(request);
+      sendJson(response, result.ok ? (request.method === "POST" ? 201 : 200) : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not process request-off." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff/directory" && request.method === "GET") {
+    try {
+      const result = await staffDirectoryForUser(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff directory." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-requests" && request.method === "GET") {
+    try {
+      const result = await managerStaffRequestsForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff requests." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-availability" && request.method === "GET") {
+    try {
+      const result = await managerStaffAvailabilityForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not load staff availability submissions." });
+    }
+    return;
+  }
+  if (url.pathname === "/api/staff-requests/review" && request.method === "POST") {
+    try {
+      const result = await reviewStaffRequestForManager(request);
+      sendJson(response, result.ok ? 200 : result.status || 400, result);
+    } catch (error) {
+      sendJson(response, error.status || 400, { ok: false, error: error.message || "Could not review staff request." });
     }
     return;
   }
