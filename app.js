@@ -61,7 +61,9 @@ let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
 const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
   ? "legacy-snapshot"
-  : NORMALIZED_LIVE_CANARY_MODE
+  : NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
+    ? "normalized-sandbox-direct"
+    : NORMALIZED_LIVE_CANARY_MODE
     ? "normalized"
     : "snapshot";
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
@@ -2252,7 +2254,10 @@ async function hydrateStateFromServer() {
       // `legacySnapshot=1` is a diagnostic rollback view, not a competing
       // browser edit. Never turn that deliberate source switch into a stale
       // recovery prompt or an attempted cloud save.
-      if (!LEGACY_SNAPSHOT_OVERRIDE && !readSourceChanged && !skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
+      // The direct Sandbox canary intentionally does not update the legacy
+      // snapshot. Comparing its normalized save timestamp to that older
+      // snapshot makes a successful direct write look like stale browser data.
+      if (!LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged && !skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
         // A browser copy can be newer than the shared document because another
         // device saved first. Never push that copy automatically on startup:
         // doing so creates an immediate 409 and can overwrite another user's
@@ -2297,7 +2302,7 @@ async function hydrateStateFromServer() {
       renderAll({ skipSave: true });
       updateZoomVisibility();
       const pendingRecovery = readCloudRecovery();
-      if (pendingRecovery && !pendingRecovery.presentedAt) {
+      if (pendingRecovery && !pendingRecovery.presentedAt && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE) {
         if (!pendingRecovery.changes?.length) {
           pendingRecovery.changes = stateCollectionChanges(pendingRecovery.data, serverState);
           saveCloudRecovery(pendingRecovery);

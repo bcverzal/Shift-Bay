@@ -87,8 +87,9 @@ function run() {
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
   includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
+  includes(app, "!NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged", "the direct-write canary must not compare normalized saves against the untouched snapshot");
   includes(app, "LEGACY_SNAPSHOT_OVERRIDE", "the normalized default must retain an immediate compatibility rollback override");
-  includes(app, "!LEGACY_SNAPSHOT_OVERRIDE && !readSourceChanged && !skipLocalRecovery", "read-source switches must not create a false stale-state recovery");
+  includes(app, "!LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged && !skipLocalRecovery", "read-source switches and direct Sandbox saves must not create a false stale-state recovery");
   includes(app, "quarantinedByLegacySnapshot", "the compatibility rollback view must not auto-replay a previously captured browser recovery");
   includes(app, "function readSourceKey", "read-source tracking must stay scoped to the selected location");
   includes(app, "readSourceChanged", "switching read sources must not be treated as a schedule edit");
