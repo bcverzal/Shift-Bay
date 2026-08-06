@@ -20,6 +20,18 @@ const LOCAL_TEST_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const IS_LOCAL_TEST_HOST = LOCAL_TEST_HOSTS.has(location.hostname);
 const SERVER_STORAGE_ENABLED = (location.protocol === "http:" || location.protocol === "https:") &&
   (!IS_LOCAL_TEST_HOST || PUBLIC_CONFIG.enableCloudOnLocal === true);
+const NORMALIZED_QUERY = new URLSearchParams(window.location.search);
+const NORMALIZED_EMPLOYEE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedEmployees") === "shadow";
+const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule") === "shadow";
+const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
+// Normalized records are now the default manager read path. Keep one URL-level
+// escape hatch while the legacy document remains available for rollback.
+const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
+const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
+const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
+const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
+let normalizedScheduleReadState = "off";
+let normalizedAvailabilityReadState = "off";
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
@@ -42,6 +54,11 @@ let authSession = loadAuthSession();
 let currentUser = null;
 let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
+const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
+  ? "legacy-snapshot"
+  : NORMALIZED_LIVE_CANARY_MODE
+    ? "normalized"
+    : "snapshot";
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
@@ -57,6 +74,11 @@ let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
 let currentMonth = new Date();
+
+function readSourceKey() {
+  return `${STORE_KEY}.readSource.${selectedLocationId || "unknown"}`;
+}
+
 let selectedCell = null;
 let selectedShiftId = null;
 let selectedTimeOffRequestId = null;
@@ -1165,6 +1187,399 @@ function isDemoLocation() {
   return selectedLocationId === DEMO_LOCATION_ID;
 }
 
+function setNormalizedScheduleReadBadge(readState = "off") {
+  normalizedScheduleReadState = readState;
+  updateNormalizedReadBadge();
+}
+
+function updateNormalizedReadBadge() {
+  const badge = $("normalizedReadBadge");
+  if (!badge) return;
+  const enabled = Boolean(NORMALIZED_LIVE_CANARY_MODE && (
+    (NORMALIZED_SCHEDULE_READ_MODE && normalizedScheduleReadState !== "off") ||
+    (NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off")
+  ));
+  badge.hidden = !enabled;
+  if (!enabled) {
+    badge.dataset.state = "";
+    return;
+  }
+  const labels = {
+    requested: "Read check...",
+    active: "Normalized Read",
+    unavailable: "Read unavailable",
+    availabilityRequested: "Availability check...",
+    availabilityActive: "Normalized Availability Read",
+    availabilityUnavailable: "Availability read unavailable"
+  };
+  const readState = NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off" && !NORMALIZED_SCHEDULE_READ_MODE
+    ? normalizedAvailabilityReadState
+    : normalizedScheduleReadState;
+  badge.textContent = labels[readState] || labels.requested;
+  badge.dataset.state = readState;
+  document.body.dataset.normalizedScheduleRead = normalizedScheduleReadState;
+  document.body.dataset.normalizedAvailabilityRead = normalizedAvailabilityReadState;
+}
+
+function normalizedEmployeeShadowValue(employee = {}) {
+  const roleIds = (value) => Array.from(new Set(Array.isArray(value) ? value.map(String) : [])).sort();
+  const availability = {};
+  for (let dayIndex = 0; dayIndex <= 6; dayIndex++) {
+    const windows = Array.isArray(employee.availability?.[dayIndex]) ? employee.availability[dayIndex] : [];
+    availability[dayIndex] = windows.map((window) => ({
+      start: String(window?.start || ""),
+      end: String(window?.end || "")
+    }));
+  }
+  const roleMealTraining = Object.fromEntries(
+    Object.entries(employee.roleMealTraining || {})
+      .map(([roleId, meals]) => [String(roleId), Array.isArray(meals) ? meals.map(String).sort() : []])
+      // A missing meal-training entry and an empty entry both mean no meal
+      // training. The normalized capability table can return the latter.
+      .filter(([, meals]) => meals.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+  return {
+    id: String(employee.id || ""),
+    // This is intentionally limited to the fields proven by the Sandbox
+    // migration. Profile, pay, rules, and availability-pattern fields remain
+    // snapshot-backed until their own migration work is complete.
+    roleTraining: roleIds(employee.roleTraining),
+    trainerRoles: roleIds(employee.trainerRoles),
+    emergencyRoleIds: roleIds(employee.emergencyRoleIds),
+    roleMealTraining,
+    availability
+  };
+}
+
+function normalizedEmployeeShadowDifferences(snapshotEmployees = [], normalizedEmployees = []) {
+  const snapshotById = new Map((snapshotEmployees || []).map((employee) => [String(employee.id || ""), normalizedEmployeeShadowValue(employee)]));
+  const normalizedById = new Map((normalizedEmployees || []).map((employee) => [String(employee.id || ""), normalizedEmployeeShadowValue(employee)]));
+  const differences = [];
+  snapshotById.forEach((snapshotEmployee, id) => {
+    if (!normalizedById.has(id)) {
+      differences.push(`${displayName(snapshotEmployee) || id}: missing from normalized data`);
+      return;
+    }
+    if (JSON.stringify(snapshotEmployee) !== JSON.stringify(normalizedById.get(id))) {
+      differences.push(`${displayName(snapshotEmployee) || id}: normalized fields differ`);
+    }
+  });
+  normalizedById.forEach((employee, id) => {
+    if (!snapshotById.has(id)) differences.push(`${displayName(employee) || id}: missing from snapshot data`);
+  });
+  return differences;
+}
+
+async function runNormalizedEmployeeShadowCheck() {
+  if (!NORMALIZED_EMPLOYEE_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({
+      title: "Normalized employee check is Sandbox-only",
+      message: "Switch to the Sandbox location before using the normalized employee shadow check.",
+      type: "warning"
+    });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/employees", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized employee records.");
+    const differences = normalizedEmployeeShadowDifferences(state.employees || [], payload.employees || []);
+    document.body.dataset.normalizedEmployeeShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedEmployeeShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({
+        title: "Sandbox normalized employee mismatch",
+        message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized employee difference${differences.length === 1 ? "" : "s"} need review before any read-source switch.`,
+        items: differences.slice(0, 20),
+        type: "warning"
+      });
+      return;
+    }
+    showAppAlert({
+      title: "Sandbox normalized employee check passed",
+      message: `${payload.employees?.length || 0} employee records match the current cloud snapshot for the fields migrated in this phase. The scheduler is still using the snapshot; no read source has been switched.`,
+      type: "info"
+    });
+  } catch (error) {
+    document.body.dataset.normalizedEmployeeShadow = "error";
+    showAppAlert({
+      title: "Normalized employee check could not run",
+      message: error.message || "Could not load normalized employee records.",
+      type: "warning"
+    });
+  }
+}
+
+function normalizedScheduleShadowValue(schedule = {}) {
+  const clean = (value) => String(value || "");
+  const sortById = (items) => (Array.isArray(items) ? items : []).map((item) => ({
+    id: clean(item?.id),
+    employeeId: clean(item?.employeeId),
+    roleId: clean(item?.roleId),
+    date: clean(item?.date),
+    start: clean(item?.start),
+    end: clean(item?.end),
+    notes: clean(item?.notes),
+    reason: clean(item?.reason || item?.note),
+    source: clean(item?.source),
+    daypart: clean(item?.daypart),
+    kind: clean(item?.kind || (item?.blockType ? "block" : "ro")),
+    blockType: clean(item?.blockType),
+    shiftLabel: clean(item?.shiftLabel),
+    // Older snapshot shifts can omit department; their long-standing default
+    // is FOH, which the normalized migration writes explicitly.
+    department: clean(item?.department || "FOH"),
+    allDay: item?.allDay !== false,
+    untilVolume: Boolean(item?.untilVolume),
+    isCloser: Boolean(item?.isCloser),
+    isLunchCloser: Boolean(item?.isLunchCloser),
+    isFlexDouble: Boolean(item?.isFlexDouble),
+    color: item?.color || null,
+    dayIndex: Number(item?.dayIndex || 0),
+    sortOrder: Number(item?.sortOrder || 0),
+    meals: Array.isArray(item?.meals) ? item.meals.map(String).sort() : [],
+    training: item?.training || {}
+  })).sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+  return {
+    shifts: sortById(schedule.shifts),
+    unassignedShifts: sortById(schedule.unassignedShifts),
+    timeOffRequests: sortById(schedule.timeOffRequests),
+    templates: (Array.isArray(schedule.templates) ? schedule.templates : []).map((template) => ({
+      id: clean(template?.id), name: clean(template?.name), active: template?.active !== false,
+      shifts: sortById((template?.shifts || []).map((shift, sortOrder) => ({ ...shift, sortOrder: Number(shift?.sortOrder ?? sortOrder) })))
+    })).sort((left, right) => left.id.localeCompare(right.id))
+  };
+}
+
+function normalizedScheduleShadowDifferences(snapshot = {}, normalized = {}) {
+  const source = normalizedScheduleShadowValue(snapshot);
+  const shadow = normalizedScheduleShadowValue(normalized);
+  const differences = [];
+  ["shifts", "unassignedShifts", "timeOffRequests", "templates"].forEach((key) => {
+    const sourceById = new Map(source[key].map((item) => [item.id, item]));
+    const shadowById = new Map(shadow[key].map((item) => [item.id, item]));
+    sourceById.forEach((sourceItem, id) => {
+      const shadowItem = shadowById.get(id);
+      if (!shadowItem) {
+        differences.push(`${key} ${id}: missing from normalized data`);
+        return;
+      }
+      const fields = [...new Set([...Object.keys(sourceItem), ...Object.keys(shadowItem)])]
+        .filter((field) => JSON.stringify(sourceItem[field]) !== JSON.stringify(shadowItem[field]));
+      if (fields.length) differences.push(`${key} ${id}: ${fields.join(", ")} differ`);
+    });
+    shadowById.forEach((_shadowItem, id) => {
+      if (!sourceById.has(id)) differences.push(`${key} ${id}: missing from snapshot data`);
+    });
+  });
+  return differences;
+}
+
+async function runNormalizedScheduleShadowCheck() {
+  if (!NORMALIZED_SCHEDULE_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({ title: "Normalized schedule check is Sandbox-only", message: "Switch to the Sandbox location before using the normalized schedule shadow check.", type: "warning" });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/schedule", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized schedule records.");
+    const differences = normalizedScheduleShadowDifferences(state, payload);
+    document.body.dataset.normalizedScheduleShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedScheduleShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({ title: "Sandbox normalized schedule mismatch", message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized schedule area${differences.length === 1 ? "" : "s"} need review before any read-source switch.`, items: differences, type: "warning" });
+      return;
+    }
+    showAppAlert({ title: "Sandbox normalized schedule check passed", message: "Assigned shifts, Shift Bay shifts, ROs, blocks, and templates match the current snapshot. The scheduler is still using the snapshot; no read source has been switched.", type: "info" });
+  } catch (error) {
+    document.body.dataset.normalizedScheduleShadow = "error";
+    showAppAlert({ title: "Normalized schedule check could not run", message: error.message || "Could not load normalized schedule records.", type: "warning" });
+  }
+}
+
+function normalizedAvailabilityShadowValue(employee = {}) {
+  const patterns = availabilityPatternsForEmployee(employee).map((pattern, index) => {
+    const id = `availability-profile:${employee.id}:${pattern.id || index + 1}`;
+    const windows = DAYS.flatMap((_day, dayIndex) => {
+      const ranges = Array.isArray(pattern.availability?.[dayIndex]) ? pattern.availability[dayIndex] : [];
+      return ranges
+        .filter((range) => range && (range.start || range.end))
+        .map((range, sortOrder) => ({
+          dayIndex,
+          start: String(range.start || ""),
+          end: String(range.end || ""),
+          available: true,
+          sortOrder
+        }));
+    }).sort((left, right) => left.dayIndex - right.dayIndex || left.sortOrder - right.sortOrder);
+    const status = pattern.active !== false
+      ? "active"
+      : pattern.approvalStatus === "approved" || pattern.approved === true
+        ? "approved"
+        : ["submitted", "pending"].includes(pattern.approvalStatus)
+          ? "submitted"
+          : "draft";
+    return {
+      id,
+      name: String(pattern.name || ""),
+      windows,
+      assignment: status === "draft" ? null : {
+        id: `availability-assignment:${employee.id}:${pattern.id || index + 1}`,
+        effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || ""),
+        repeatWeeks: Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
+        status
+      }
+    };
+  });
+  return patterns.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function normalizedAvailabilityShadowDifferences(snapshotEmployees = [], normalizedEmployees = []) {
+  const snapshotById = new Map((snapshotEmployees || []).map((employee) => [String(employee.id || ""), employee]));
+  const normalizedById = new Map((normalizedEmployees || []).map((employee) => [String(employee.id || ""), employee]));
+  const differences = [];
+  snapshotById.forEach((snapshotEmployee, employeeId) => {
+    const expected = normalizedAvailabilityShadowValue(snapshotEmployee);
+    const actual = (normalizedById.get(employeeId)?.availabilityProfiles || []).map((profile) => ({
+      id: String(profile.id || ""),
+      name: String(profile.name || ""),
+      windows: (Array.isArray(profile.windows) ? profile.windows : []).map((window) => ({
+        dayIndex: Number(window.dayIndex),
+        start: String(window.start || ""),
+        end: String(window.end || ""),
+        available: window.available !== false,
+        sortOrder: Number(window.sortOrder || 0)
+      })).sort((left, right) => left.dayIndex - right.dayIndex || left.sortOrder - right.sortOrder),
+      assignment: (Array.isArray(profile.assignments) ? profile.assignments : [profile.assignment])
+        .filter(Boolean)
+        .map((assignment) => ({
+          id: String(assignment.id || ""),
+          effectiveDate: normalizeAvailabilityEffectiveDate(assignment.effectiveDate || ""),
+          repeatWeeks: Math.max(1, Math.min(4, Number(assignment.repeatWeeks) || 1)),
+          status: String(assignment.status || "")
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))[0] || null
+    })).sort((left, right) => left.id.localeCompare(right.id));
+    if (!normalizedById.has(employeeId)) {
+      differences.push(`${displayName(snapshotEmployee) || employeeId}: missing from normalized availability data`);
+      return;
+    }
+    const actualById = new Map(actual.map((profile) => [profile.id, profile]));
+    expected.forEach((expectedProfile) => {
+      const actualProfile = actualById.get(expectedProfile.id);
+      if (!actualProfile) {
+        differences.push(`${displayName(snapshotEmployee) || employeeId}: ${expectedProfile.name} missing from normalized availability data`);
+        return;
+      }
+      const fields = ["name", "windows", "assignment"]
+        .filter((field) => JSON.stringify(expectedProfile[field]) !== JSON.stringify(actualProfile[field]));
+      if (fields.length) differences.push(`${displayName(snapshotEmployee) || employeeId} / ${expectedProfile.name}: ${fields.join(", ")} differ`);
+      actualById.delete(expectedProfile.id);
+    });
+    actualById.forEach((profile) => differences.push(`${displayName(snapshotEmployee) || employeeId}: unexpected ${profile.name || profile.id} in normalized availability data`));
+  });
+  normalizedById.forEach((employee, employeeId) => {
+    if (!snapshotById.has(employeeId)) differences.push(`${employeeId}: normalized availability employee is missing from snapshot data`);
+  });
+  return differences;
+}
+
+async function runNormalizedAvailabilityShadowCheck() {
+  if (!NORMALIZED_AVAILABILITY_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({ title: "Normalized availability check is Sandbox-only", message: "Switch to the Sandbox location before using the normalized availability shadow check.", type: "warning" });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    const differences = normalizedAvailabilityShadowDifferences(state.employees || [], payload.employees || []);
+    document.body.dataset.normalizedAvailabilityShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedAvailabilityShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({
+        title: "Sandbox normalized availability mismatch",
+        message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized availability difference${differences.length === 1 ? "" : "s"} need review before any read-source switch.`,
+        items: differences,
+        type: "warning"
+      });
+      return;
+    }
+    const profileCount = (payload.employees || []).reduce((count, employee) => count + (employee.availabilityProfiles || []).length, 0);
+    showAppAlert({
+      title: "Sandbox normalized availability check passed",
+      message: `${profileCount} availability profile${profileCount === 1 ? "" : "s"} match the current cloud snapshot. The scheduler is still using the snapshot; no read source has been switched.`,
+      type: "info"
+    });
+  } catch (error) {
+    document.body.dataset.normalizedAvailabilityShadow = "error";
+    showAppAlert({ title: "Normalized availability check could not run", message: error.message || "Could not load normalized availability records.", type: "warning" });
+  }
+}
+
+function normalizedAvailabilityReadPatterns(employee, normalizedEmployee) {
+  const prefix = `availability-profile:${employee.id}:`;
+  return (normalizedEmployee?.availabilityProfiles || []).map((profile) => {
+    const id = String(profile.id || "").startsWith(prefix)
+      ? String(profile.id).slice(prefix.length)
+      : String(profile.id || "");
+    const availability = emptyAvailability();
+    (Array.isArray(profile.windows) ? profile.windows : []).forEach((window) => {
+      const dayIndex = Number(window.dayIndex);
+      if (dayIndex < 0 || dayIndex > 6) return;
+      if (!Array.isArray(availability[dayIndex])) availability[dayIndex] = [];
+      if (window.available !== false) availability[dayIndex].push({ start: String(window.start || ""), end: String(window.end || "") });
+    });
+    const assignment = (Array.isArray(profile.assignments) ? profile.assignments : [profile.assignment]).filter(Boolean)[0] || null;
+    const status = String(assignment?.status || "").toLowerCase();
+    return {
+      id,
+      name: String(profile.name || "Availability"),
+      availability,
+      repeatWeeks: assignment ? Math.max(1, Math.min(4, Number(assignment.repeatWeeks) || 1)) : null,
+      effectiveDate: assignment?.effectiveDate ? normalizeAvailabilityEffectiveDate(assignment.effectiveDate) : "",
+      active: status === "active",
+      approved: status === "approved",
+      approvalStatus: status
+    };
+  });
+}
+
+async function applyNormalizedAvailabilityRead(serverState) {
+  if (!NORMALIZED_AVAILABILITY_READ_MODE) return;
+  normalizedAvailabilityReadState = "availabilityRequested";
+  updateNormalizedReadBadge();
+  try {
+    const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    const normalizedByEmployee = new Map((payload.employees || []).map((employee) => [String(employee.id || ""), employee]));
+    const missing = [];
+    const employees = (serverState.employees || []).map((employee) => {
+      const normalizedEmployee = normalizedByEmployee.get(String(employee.id || ""));
+      if (!normalizedEmployee) {
+        missing.push(displayName(employee) || employee.id || "Employee");
+        return employee;
+      }
+      return { ...employee, availabilityPatterns: normalizedAvailabilityReadPatterns(employee, normalizedEmployee) };
+    });
+    if (missing.length) throw new Error(`Normalized availability is missing ${missing.length} employee${missing.length === 1 ? "" : "s"}: ${missing.slice(0, 5).join(", ")}.`);
+    normalizedAvailabilityReadState = "availabilityActive";
+    updateNormalizedReadBadge();
+    return { ...serverState, employees };
+  } catch (error) {
+    console.warn("Normalized availability fallback:", error?.message || error);
+    normalizedAvailabilityReadState = "availabilityUnavailable";
+    updateNormalizedReadBadge();
+    return serverState;
+  }
+}
+
 function demoRoleId(name) {
   return state.roles.find((role) => role.name.toLowerCase() === String(name).toLowerCase())?.id || "";
 }
@@ -1532,6 +1947,8 @@ function updateAccountUi() {
   const sandboxBadge = $("sandboxBadge");
   renderLocationSwitcher();
   if (sandboxBadge) sandboxBadge.hidden = !isDemoLocation();
+  if (!NORMALIZED_LIVE_CANARY_MODE) setNormalizedScheduleReadBadge("off");
+  else if (NORMALIZED_SCHEDULE_READ_MODE && normalizedScheduleReadState === "off") setNormalizedScheduleReadBadge("requested");
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
@@ -1734,15 +2151,51 @@ async function hydrateStateFromServer() {
   if (!SERVER_STORAGE_ENABLED) return;
   setStorageStatus("connecting", "Connecting to the shared scheduler data file...");
   try {
-    const response = await authFetch("/api/state", { cache: "no-store" });
+    const statePath = NORMALIZED_SCHEDULE_READ_MODE ? "/api/state?normalizedSchedule=read" : "/api/state";
+    let response = await authFetch(statePath, { cache: "no-store" });
+    let normalizedSnapshotFallback = false;
+    if (!response.ok && NORMALIZED_SCHEDULE_READ_MODE && !LEGACY_SNAPSHOT_OVERRIDE) {
+      // The compatibility document is deliberately retained during cutover.
+      // A transient normalized-read failure must not leave a manager staring at
+      // an empty scheduler when the proven snapshot is still available.
+      response = await authFetch("/api/state", { cache: "no-store" });
+      normalizedSnapshotFallback = response.ok;
+    }
     if (response.ok) {
       const envelope = await response.json();
-      const serverState = normalizeLoadedState(envelope.data || envelope);
+      setNormalizedScheduleReadBadge(envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary" ? "active" : "unavailable");
+      let serverState = normalizeLoadedState(envelope.data || envelope);
+      // The primary schedule document is connected at this point. Availability
+      // normalization is a separate read and should not make the cloud status
+      // look like an unsaved change while that secondary request finishes.
+      setStorageStatus(
+        "saved",
+        normalizedSnapshotFallback
+          ? "Normalized data was temporarily unavailable. Loaded the protected compatibility snapshot."
+          : envelope.readSource === "normalized-sandbox"
+            ? "Loaded normalized Sandbox schedule data."
+            : envelope.readSource === "normalized-live-canary"
+              ? "Loaded normalized schedule data."
+              : "Loaded the shared scheduler data file."
+      );
+      serverState = await applyNormalizedAvailabilityRead(serverState) || serverState;
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
+      const previousReadSource = localStorage.getItem(readSourceKey()) || "";
+      const readSourceChanged = Boolean(previousReadSource && previousReadSource !== CURRENT_READ_SOURCE);
+      localStorage.setItem(readSourceKey(), CURRENT_READ_SOURCE);
       const skipLocalRecovery = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
       const recovery = readCloudRecovery();
+      if (LEGACY_SNAPSHOT_OVERRIDE && recovery?.autoReapplyPending) {
+        // The explicit compatibility URL is used to inspect or roll back the
+        // read source. Preserve any prior browser recovery for diagnostics,
+        // but never auto-replay it after a deliberate source-switch test.
+        recovery.autoReapplyPending = false;
+        recovery.presentedAt = nowIso();
+        recovery.quarantinedByLegacySnapshot = true;
+        saveCloudRecovery(recovery);
+      }
       if (recovery?.autoReapplyPending && recovery.baseData) {
         state = serverState;
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -1753,12 +2206,15 @@ async function hydrateStateFromServer() {
         const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
-        renderAll();
+        renderAll({ skipSave: true });
         updateZoomVisibility();
         if (!restored?.saved) showStaleRecoveryAlert(readCloudRecovery() || recovery);
         return;
       }
-      if (!skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
+      // `legacySnapshot=1` is a diagnostic rollback view, not a competing
+      // browser edit. Never turn that deliberate source switch into a stale
+      // recovery prompt or an attempted cloud save.
+      if (!LEGACY_SNAPSHOT_OVERRIDE && !readSourceChanged && !skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
         // A browser copy can be newer than the shared document because another
         // device saved first. Never push that copy automatically on startup:
         // doing so creates an immediate 409 and can overwrite another user's
@@ -1776,7 +2232,7 @@ async function hydrateStateFromServer() {
         showStaleRecoveryAlert(newerBrowserRecovery);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
-        renderAll();
+        renderAll({ skipSave: true });
         updateZoomVisibility();
         return;
       }
@@ -1786,13 +2242,21 @@ async function hydrateStateFromServer() {
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
-      setStorageStatus("saved", "Loaded the shared scheduler data file.");
-      if (JSON.stringify(envelope.data || envelope) !== JSON.stringify(state)) {
+      const loadedFromReadOverride = LEGACY_SNAPSHOT_OVERRIDE
+        || NORMALIZED_SCHEDULE_READ_MODE
+        || NORMALIZED_AVAILABILITY_READ_MODE
+        || envelope.readSource === "normalized-sandbox"
+        || envelope.readSource === "normalized-live-canary"
+        || normalizedAvailabilityReadState === "availabilityActive";
+      // Alternate read sources intentionally reshape or bypass the compatibility
+      // document. Loading either path must remain read-only and never queue a
+      // surprise snapshot write because representations differ.
+      if (!loadedFromReadOverride && JSON.stringify(envelope.data || envelope) !== JSON.stringify(state)) {
         queueServerSave();
       }
       currentDate = loadLocalActiveWeek(state.settings.weekStart);
       saveLocalActiveWeek({ shared: false });
-      renderAll();
+      renderAll({ skipSave: true });
       updateZoomVisibility();
       const pendingRecovery = readCloudRecovery();
       if (pendingRecovery && !pendingRecovery.presentedAt) {
@@ -1804,13 +2268,18 @@ async function hydrateStateFromServer() {
       }
       return;
     }
+    setNormalizedScheduleReadBadge("unavailable");
+    if (NORMALIZED_AVAILABILITY_READ_MODE) {
+      normalizedAvailabilityReadState = "availabilityUnavailable";
+      updateNormalizedReadBadge();
+    }
     if (response.status === 404) {
       const createCleanLocation = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
       if (createCleanLocation) {
         state = defaultState();
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
-        renderAll();
+        renderAll({ skipSave: true });
         updateZoomVisibility();
       }
       serverStorageReady = true;
@@ -1822,6 +2291,11 @@ async function hydrateStateFromServer() {
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
     throw new Error(`Load failed: ${response.status}`);
   } catch {
+    if (NORMALIZED_SCHEDULE_READ_MODE && NORMALIZED_LIVE_CANARY_MODE) setNormalizedScheduleReadBadge("unavailable");
+    if (NORMALIZED_AVAILABILITY_READ_MODE && NORMALIZED_LIVE_CANARY_MODE) {
+      normalizedAvailabilityReadState = "availabilityUnavailable";
+      updateNormalizedReadBadge();
+    }
     skipLocalRecoveryOnce = false;
     serverStorageReady = false;
     setStorageStatus("error", "Could not reach the shared scheduler file. Browser backup is still saved locally.");
@@ -8383,6 +8857,22 @@ function setEmployeeSaveDebugStatus(message, status = "saving") {
     return;
   }
   const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  const entry = {
+    at: new Date().toISOString(),
+    status,
+    message: String(message || "")
+  };
+  try {
+    const key = "shiftBay.ownerDiagnostics.v1";
+    const previous = JSON.parse(localStorage.getItem(key) || "[]");
+    const history = Array.isArray(previous) ? previous.slice(-29) : [];
+    history.push(entry);
+    localStorage.setItem(key, JSON.stringify(history));
+    indicator.title = `Recent owner diagnostics (${history.length})`;
+    indicator.dataset.diagnostics = JSON.stringify(history);
+  } catch {
+    // Diagnostics must never interfere with an employee save.
+  }
   indicator.textContent = `${message} (${timestamp})`;
   indicator.dataset.state = status;
   indicator.hidden = false;
@@ -14561,8 +15051,13 @@ updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
   showConflict("This window is in local file mode. Use https://shift-bay.netlify.app or the Shift Bay Cloud launcher so employees save to the cloud schedule.");
 }
-initializeAuth().then((canLoad) => {
-  if (canLoad) hydrateStateFromServer();
+initializeAuth().then(async (canLoad) => {
+  if (canLoad) {
+    await hydrateStateFromServer();
+    await runNormalizedEmployeeShadowCheck();
+    await runNormalizedScheduleShadowCheck();
+    await runNormalizedAvailabilityShadowCheck();
+  }
 });
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedEmployeeChanges);

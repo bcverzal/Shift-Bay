@@ -1,0 +1,37 @@
+name: Shift Bay Tests
+
+on:
+  push:
+    branches: ["main", "supabase-migration"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check JavaScript syntax
+        run: node --check app.js
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Run baseline test suite
+        run: npm test
+

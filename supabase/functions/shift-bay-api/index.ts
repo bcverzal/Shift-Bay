@@ -12,6 +12,7 @@
 // - RESEND_FROM_EMAIL optional, defaults to invites@send.shift-bay.com
 
 type JsonRecord = Record<string, unknown>;
+const SANDBOX_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -364,6 +365,741 @@ function applyEmployeeProfileOverrides(state: JsonRecord = {}, overrides: Map<st
     ...state,
     employees: state.employees.map((employee: any) => overrides.get(String(employee?.id || "")) || employee)
   };
+}
+
+function normalizedReadAllowed(locationId: string) {
+  const cfg = config();
+  return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
+}
+
+function normalizedTimeValue(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const match = text.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return text;
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const period = match[3].toUpperCase();
+  if (period === "AM" && hour === 12) hour = 0;
+  if (period === "PM" && hour !== 12) hour += 12;
+  return `${String(hour).padStart(2, "0")}:${minute}:00`;
+}
+
+function displayNormalizedTime(value: unknown) {
+  const match = String(value || "").match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return String(value || "");
+  const hour24 = Number(match[1]);
+  const minute = match[2];
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${minute} ${period}`;
+}
+
+function normalizedAvailabilityDate(value: unknown, fallback: string) {
+  const text = String(value || "").trim();
+  if (validDateKey(text)) return text;
+  const match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return fallback;
+  const month = String(Number(match[1])).padStart(2, "0");
+  const day = String(Number(match[2])).padStart(2, "0");
+  const parsed = `${match[3]}-${month}-${day}`;
+  return validDateKey(parsed) ? parsed : fallback;
+}
+
+function snapshotAvailabilityProfiles(employee: JsonRecord) {
+  const fallbackDate = new Date().toISOString().slice(0, 10);
+  const source = Array.isArray(employee?.availabilityPatterns) && employee.availabilityPatterns.length
+    ? employee.availabilityPatterns
+    : [{
+      id: "regular",
+      name: employee?.availabilityPatternName || "Regular availability",
+      availability: employee?.availability || {},
+      repeatWeeks: employee?.availabilityRepeatWeeks || 1,
+      effectiveDate: employee?.availabilityEffectiveDate || fallbackDate,
+      active: true
+    }];
+  return source.map((item: any, index: number) => {
+    const legacySuffix = String(item?.id || index + 1);
+    const rawStatus = String(item?.approvalStatus || item?.status || (item?.approved ? "approved" : "")).toLowerCase();
+    const active = item?.active !== false;
+    const status = active ? "active" : (rawStatus === "approved" ? "approved" : (["submitted", "pending"].includes(rawStatus) ? "submitted" : "draft"));
+    return {
+      legacyId: `availability-profile:${employee.id}:${legacySuffix}`,
+      assignmentLegacyId: `availability-assignment:${employee.id}:${legacySuffix}`,
+      name: String(item?.name || `Availability ${index + 1}`).trim() || `Availability ${index + 1}`,
+      availability: item?.availability && typeof item.availability === "object" ? item.availability : {},
+      effectiveDate: normalizedAvailabilityDate(item?.effectiveDate || employee?.availabilityEffectiveDate, fallbackDate),
+      repeatWeeks: Math.max(1, Math.min(4, Number(item?.repeatWeeks) || 1)),
+      status
+    };
+  });
+}
+
+async function removeSnapshotAvailabilityBridgeRowsNotIn(table: string, locationId: string, employeeId: string, legacyIds: Set<string>) {
+  const rows = await supabaseJson(
+    `/${table}?location_id=eq.${encodeURIComponent(locationId)}&employee_id=eq.${encodeURIComponent(employeeId)}&source=eq.snapshot_bridge&select=id,legacy_id`,
+    { headers: serviceHeaders() }
+  );
+  const staleRows = (Array.isArray(rows) ? rows : []).filter((row: any) => row?.legacy_id && !legacyIds.has(String(row.legacy_id)));
+  for (const row of staleRows) {
+    await supabaseJson(`/${table}?id=eq.${encodeURIComponent(row.id)}`, {
+      method: "DELETE",
+      headers: serviceHeaders({ Prefer: "return=minimal" })
+    });
+  }
+  return staleRows.length;
+}
+
+// Saved availability is distinct from when it applies. Profiles contain only
+// named time windows; assignments own effective date, repeat, and approval.
+// The snapshot remains readable throughout this dual-write transition.
+async function syncNormalizedAvailabilityProfiles(locationId: string, employee: JsonRecord, employeeId: string) {
+  const profiles = snapshotAvailabilityProfiles(employee);
+  const profileLegacyIds = new Set<string>();
+  const assignmentLegacyIds = new Set<string>();
+  let windowsWritten = 0;
+  let assignmentsWritten = 0;
+  for (const profile of profiles) {
+    const saved = await upsertNormalizedLegacyRow("staff_availability_patterns", locationId, profile.legacyId, {
+      location_id: locationId,
+      employee_id: employeeId,
+      legacy_id: profile.legacyId,
+      name: profile.name,
+      mode: "saved",
+      active: false,
+      source: "snapshot_bridge",
+      archived: false,
+      updated_at: new Date().toISOString()
+    });
+    if (!saved?.id) throw new Error(`Availability profile did not save: ${profile.name}`);
+    await supabaseJson(`/staff_availability_pattern_windows?pattern_id=eq.${encodeURIComponent(saved.id)}`, {
+      method: "DELETE",
+      headers: serviceHeaders({ Prefer: "return=minimal" })
+    });
+    const windows = Object.entries(profile.availability).flatMap(([dayIndex, ranges]) =>
+      (Array.isArray(ranges) ? ranges : []).filter((range: any) => range && (range.start || range.end)).map((range: any, sortOrder: number) => ({
+        pattern_id: saved.id,
+        day_index: Number(dayIndex),
+        start_time: normalizedTimeValue(range.start),
+        end_time: normalizedTimeValue(range.end),
+        available: true,
+        note: "",
+        sort_order: sortOrder
+      }))
+    );
+    if (windows.length) {
+      await supabaseJson("/staff_availability_pattern_windows", {
+        method: "POST",
+        headers: serviceHeaders({ Prefer: "return=minimal" }),
+        body: JSON.stringify(windows)
+      });
+    }
+    windowsWritten += windows.length;
+    profileLegacyIds.add(profile.legacyId);
+    if (profile.status === "draft") continue;
+    const assignment = await upsertNormalizedLegacyRow("staff_availability_week_assignments", locationId, profile.assignmentLegacyId, {
+      location_id: locationId,
+      employee_id: employeeId,
+      legacy_id: profile.assignmentLegacyId,
+      pattern_id: saved.id,
+      week_start: profile.effectiveDate,
+      effective_date: profile.effectiveDate,
+      repeat_interval_weeks: profile.repeatWeeks,
+      submission_mode: "manager_entered",
+      status: profile.status,
+      source: "snapshot_bridge",
+      updated_at: new Date().toISOString()
+    });
+    if (!assignment?.id) throw new Error(`Availability assignment did not save: ${profile.name}`);
+    assignmentsWritten += 1;
+    assignmentLegacyIds.add(profile.assignmentLegacyId);
+  }
+  await removeSnapshotAvailabilityBridgeRowsNotIn("staff_availability_week_assignments", locationId, employeeId, assignmentLegacyIds);
+  await removeSnapshotAvailabilityBridgeRowsNotIn("staff_availability_patterns", locationId, employeeId, profileLegacyIds);
+  return { profiles: profiles.length, windowsWritten, assignmentsWritten };
+}
+
+// Transition bridge: keep the current profile override as the compatibility
+// source while opportunistically mirroring the employee into normalized rows.
+// This is intentionally best-effort so a location that has not run the
+// normalized schema migration can continue using the current scheduler.
+async function syncNormalizedEmployeeProfile(locationId: string, employee: JsonRecord) {
+  const legacyId = String(employee?.id || "").trim();
+  if (!locationId || !legacyId) return { synced: false, reason: "missing employee identity" };
+  try {
+    const employeeRows = await supabaseJson("/employees?on_conflict=location_id,legacy_id", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+      body: JSON.stringify([{
+        location_id: locationId,
+        legacy_id: legacyId,
+        first_name: String(employee.firstName || ""),
+        last_name: String(employee.lastName || ""),
+        nickname: String(employee.nickname || ""),
+        phone: String(employee.phone || ""),
+        birthday: employee.birthday || null,
+        departments: Array.isArray(employee.departments) ? employee.departments : ["FOH"],
+        active: employee.active !== false,
+        archived: Boolean(employee.archived),
+        call_weekly_availability: Boolean(employee.callWeekly),
+        trained_closer: Boolean(employee.canClose || employee.trainedCloser),
+        lunch_closer: Boolean(employee.canLunchClose || employee.lunchCloser),
+        scheduling_note: String(employee.managerNotes || ""),
+        updated_at: new Date().toISOString()
+      }])
+    });
+    const normalizedEmployee = Array.isArray(employeeRows) ? employeeRows[0] : null;
+    if (!normalizedEmployee?.id) return { synced: false, reason: "employee row was not returned" };
+
+    const employeeUuid = encodeURIComponent(normalizedEmployee.id);
+    await supabaseJson(`/availability_rules?employee_id=eq.${employeeUuid}`, {
+      method: "DELETE",
+      headers: serviceHeaders({ Prefer: "return=minimal" })
+    });
+    const availability = employee.availability && typeof employee.availability === "object" ? employee.availability : {};
+    const windows = Object.entries(availability).flatMap(([dayIndex, ranges]) =>
+      (Array.isArray(ranges) ? ranges : []).map((range: any, sortOrder: number) => ({
+        employee_id: normalizedEmployee.id,
+        day_index: Number(dayIndex),
+        start_time: normalizedTimeValue(range?.start),
+        end_time: normalizedTimeValue(range?.end),
+        available: true,
+        note: "",
+        sort_order: sortOrder
+      }))
+    );
+    if (windows.length) {
+      await supabaseJson("/availability_rules", {
+        method: "POST",
+        headers: serviceHeaders({ Prefer: "return=minimal" }),
+        body: JSON.stringify(windows)
+      });
+    }
+    const availabilityProfiles = await syncNormalizedAvailabilityProfiles(locationId, employee, normalizedEmployee.id);
+    return { synced: true, employeeId: normalizedEmployee.id, availabilityWindows: windows.length, availabilityProfiles };
+  } catch (error) {
+    console.warn("Normalized employee sync deferred:", error?.message || error);
+    return { synced: false, reason: "normalized tables unavailable" };
+  }
+}
+
+function snapshotItems(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function snapshotItemMap(items: unknown) {
+  return new Map(
+    snapshotItems(items)
+      .filter((item: any) => String(item?.id || "").trim())
+      .map((item: any) => [String(item.id), item])
+  );
+}
+
+function changedSnapshotItems(previous: unknown, current: unknown) {
+  const before = snapshotItemMap(previous);
+  return snapshotItems(current).filter((item: any) => {
+    const legacyId = String(item?.id || "").trim();
+    return legacyId && JSON.stringify(before.get(legacyId) || null) !== JSON.stringify(item);
+  });
+}
+
+function removedSnapshotItems(previous: unknown, current: unknown) {
+  const after = snapshotItemMap(current);
+  return snapshotItems(previous).filter((item: any) => {
+    const legacyId = String(item?.id || "").trim();
+    return legacyId && !after.has(legacyId);
+  });
+}
+
+async function deleteNormalizedLegacyRow(table: string, locationId: string, legacyId: string) {
+  if (!legacyId) return;
+  await supabaseJson(`/${table}?location_id=eq.${encodeURIComponent(locationId)}&legacy_id=eq.${encodeURIComponent(legacyId)}`, {
+    method: "DELETE",
+    headers: serviceHeaders({ Prefer: "return=minimal" })
+  });
+}
+
+function scheduleWeekStart(dateKey: string, weekStartDay = 0) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid schedule date: ${dateKey}`);
+  const offset = (date.getUTCDay() - Number(weekStartDay || 0) + 7) % 7;
+  date.setUTCDate(date.getUTCDate() - offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function isSnapshotScheduleBlock(item: any) {
+  return String(item?.kind || "").toLowerCase() === "block" || Boolean(item?.blockType);
+}
+
+async function upsertNormalizedLegacyRow(table: string, locationId: string, legacyId: string, payload: JsonRecord) {
+  const rows = await supabaseJson(
+    `/${table}?location_id=eq.${encodeURIComponent(locationId)}&legacy_id=eq.${encodeURIComponent(legacyId)}&select=id`,
+    { headers: serviceHeaders() }
+  );
+  const existing = Array.isArray(rows) ? rows[0] : null;
+  if (existing?.id) {
+    const updated = await supabaseJson(`/${table}?id=eq.${encodeURIComponent(existing.id)}`, {
+      method: "PATCH",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(payload)
+    });
+    return Array.isArray(updated) ? updated[0] : null;
+  }
+  const created = await supabaseJson(`/${table}`, {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify([payload])
+  });
+  return Array.isArray(created) ? created[0] : null;
+}
+
+async function upsertNormalizedTemplateShift(templateId: string, legacyId: string, payload: JsonRecord) {
+  const rows = await supabaseJson(
+    `/template_shifts?template_id=eq.${encodeURIComponent(templateId)}&legacy_id=eq.${encodeURIComponent(legacyId)}&select=id`,
+    { headers: serviceHeaders() }
+  );
+  const existing = Array.isArray(rows) ? rows[0] : null;
+  if (existing?.id) {
+    const updated = await supabaseJson(`/template_shifts?id=eq.${encodeURIComponent(existing.id)}`, {
+      method: "PATCH",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(payload)
+    });
+    return Array.isArray(updated) ? updated[0] : null;
+  }
+  const created = await supabaseJson("/template_shifts", {
+    method: "POST",
+    headers: serviceHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify([payload])
+  });
+  return Array.isArray(created) ? created[0] : null;
+}
+
+async function removeNormalizedLegacyRowsNotIn(table: string, locationId: string, legacyIds: Set<string>) {
+  const rows = await supabaseJson(
+    `/${table}?location_id=eq.${encodeURIComponent(locationId)}&legacy_id=not.is.null&select=id,legacy_id`,
+    { headers: serviceHeaders() }
+  );
+  const staleRows = (Array.isArray(rows) ? rows : []).filter((row: any) => row?.legacy_id && !legacyIds.has(String(row.legacy_id)));
+  for (const row of staleRows) {
+    await supabaseJson(`/${table}?id=eq.${encodeURIComponent(row.id)}`, {
+      method: "DELETE",
+      headers: serviceHeaders({ Prefer: "return=minimal" })
+    });
+  }
+  return staleRows.length;
+}
+
+// The JSON document remains the compatibility source during this bridge.
+// Only changed legacy records are mirrored after the first baseline write, so
+// a normal schedule edit never rewrites an entire location's history.
+async function syncNormalizedSchedule(locationId: string, state: JsonRecord, previousState: JsonRecord | null = null) {
+  if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" };
+  try {
+    const [employeeRows, roleRows, weekRows] = await Promise.all([
+      supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
+      supabaseJson(`/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
+      supabaseJson(`/schedule_weeks?location_id=eq.${encodeURIComponent(locationId)}&select=id,week_start`, { headers: serviceHeaders() })
+    ]);
+    const employeeIds = new Map((Array.isArray(employeeRows) ? employeeRows : []).filter((row: any) => row?.legacy_id).map((row: any) => [String(row.legacy_id), String(row.id)]));
+    const roleIds = new Map((Array.isArray(roleRows) ? roleRows : []).filter((row: any) => row?.legacy_id).map((row: any) => [String(row.legacy_id), String(row.id)]));
+    const weekIds = new Map((Array.isArray(weekRows) ? weekRows : []).map((row: any) => [String(row.week_start), String(row.id)]));
+    const assigned = snapshotItems(state.shifts);
+    const open = snapshotItems(state.unassignedShifts);
+    const timeOff = snapshotItems(state.timeOffRequests);
+    const requestOffs = timeOff.filter((item: any) => !isSnapshotScheduleBlock(item));
+    const blocks = timeOff.filter((item: any) => isSnapshotScheduleBlock(item));
+    const templates = snapshotItems(state.templates);
+    const weekStartDay = Number((state.settings as any)?.weekStart || 0);
+    const fullSync = !previousState || !Object.keys(previousState).length
+      || Number((previousState.settings as any)?.weekStart || 0) !== weekStartDay;
+    const previousAssigned = snapshotItems(previousState?.shifts);
+    const previousOpen = snapshotItems(previousState?.unassignedShifts);
+    const previousTimeOff = snapshotItems(previousState?.timeOffRequests);
+    const previousTemplates = snapshotItems(previousState?.templates);
+    const previousShiftEntries = [
+      ...previousAssigned.map((item: any) => ({ item, isOpenBay: false })),
+      ...previousOpen.map((item: any) => ({ item, isOpenBay: true }))
+    ];
+    const currentShiftEntries = [
+      ...assigned.map((item: any) => ({ item, isOpenBay: false })),
+      ...open.map((item: any) => ({ item, isOpenBay: true }))
+    ];
+    const previousShiftMap = new Map(previousShiftEntries.map((entry: any) => [String(entry.item?.id || ""), entry]));
+    const shiftEntriesToSync = fullSync ? currentShiftEntries : currentShiftEntries.filter((entry: any) => {
+      const legacyId = String(entry.item?.id || "");
+      return legacyId && JSON.stringify(previousShiftMap.get(legacyId) || null) !== JSON.stringify(entry);
+    });
+    const removedShiftEntries = fullSync ? [] : previousShiftEntries.filter((entry: any) => {
+      const legacyId = String(entry.item?.id || "");
+      return legacyId && !currentShiftEntries.some((current: any) => String(current.item?.id || "") === legacyId);
+    });
+    const requestOffsToSync = fullSync ? requestOffs : changedSnapshotItems(previousTimeOff.filter((item: any) => !isSnapshotScheduleBlock(item)), requestOffs);
+    const blocksToSync = fullSync ? blocks : changedSnapshotItems(previousTimeOff.filter((item: any) => isSnapshotScheduleBlock(item)), blocks);
+    const templatesToSync = fullSync ? templates : changedSnapshotItems(previousTemplates, templates);
+    const removedRequestOffs = fullSync ? [] : removedSnapshotItems(previousTimeOff.filter((item: any) => !isSnapshotScheduleBlock(item)), requestOffs);
+    const removedBlocks = fullSync ? [] : removedSnapshotItems(previousTimeOff.filter((item: any) => isSnapshotScheduleBlock(item)), blocks);
+    const removedTemplates = fullSync ? [] : removedSnapshotItems(previousTemplates, templates);
+
+    for (const entry of shiftEntriesToSync) {
+      const shift = entry.item;
+      const weekStart = scheduleWeekStart(String((shift as any)?.date || ""), weekStartDay);
+      if (weekIds.has(weekStart)) continue;
+      const created = await supabaseJson("/schedule_weeks", {
+        method: "POST",
+        headers: serviceHeaders({ Prefer: "return=representation" }),
+        body: JSON.stringify([{ location_id: locationId, week_start: weekStart, status: "draft" }])
+      });
+      const row = Array.isArray(created) ? created[0] : null;
+      if (!row?.id) throw new Error(`Could not create normalized schedule week ${weekStart}.`);
+      weekIds.set(weekStart, String(row.id));
+    }
+
+    const syncShift = async (shift: any, isOpenBay: boolean) => {
+      const legacyId = String(shift?.id || "");
+      const roleId = roleIds.get(String(shift?.roleId || ""));
+      const employeeId = isOpenBay ? null : employeeIds.get(String(shift?.employeeId || ""));
+      const weekId = weekIds.get(scheduleWeekStart(String(shift?.date || ""), weekStartDay));
+      if (!legacyId || !roleId || !weekId || (!isOpenBay && shift?.employeeId && !employeeId)) {
+        throw new Error(`Shift ${legacyId || "(unknown)"} is missing a normalized employee, role, or schedule week.`);
+      }
+      await upsertNormalizedLegacyRow("shifts", locationId, legacyId, {
+        location_id: locationId, schedule_week_id: weekId, legacy_id: legacyId, employee_id: employeeId || null, role_id: roleId,
+        department: String(shift?.department || "FOH"), shift_date: String(shift?.date || ""), shift_name: String(shift?.shiftLabel || ""),
+        start_time: normalizedTimeValue(shift?.start), end_time: normalizedTimeValue(shift?.end), until_volume: Boolean(shift?.untilVolume),
+        is_closer: Boolean(shift?.isCloser), is_lunch_closer: Boolean(shift?.isLunchCloser), is_flex_double: Boolean(shift?.isFlexDouble),
+        is_open_bay: isOpenBay, color: shift?.color || null, notes: String(shift?.notes || ""), source: "snapshot-bridge",
+        legacy_created_at: shift?.createdAt || null, legacy_updated_at: shift?.updatedAt || null,
+        metadata: { meals: snapshotItems(shift?.meals), training: shift?.training || {}, legacy: { shiftLabel: shift?.shiftLabel || "", createdAt: shift?.createdAt || "", updatedAt: shift?.updatedAt || "" } }
+      });
+    };
+    for (const entry of shiftEntriesToSync) await syncShift(entry.item, entry.isOpenBay);
+
+    for (const item of requestOffsToSync) {
+      const legacyId = String((item as any)?.id || "");
+      const employeeId = employeeIds.get(String((item as any)?.employeeId || ""));
+      if (!legacyId || !employeeId) throw new Error(`Request off ${legacyId || "(unknown)"} is missing a normalized employee.`);
+      await upsertNormalizedLegacyRow("request_offs", locationId, legacyId, {
+        location_id: locationId, legacy_id: legacyId, employee_id: employeeId, request_date: String((item as any)?.date || ""),
+        start_time: normalizedTimeValue((item as any)?.start), end_time: normalizedTimeValue((item as any)?.end), all_day: (item as any)?.allDay !== false,
+        reason: String((item as any)?.reason || (item as any)?.note || ""), source: String((item as any)?.source || "snapshot-bridge"),
+        source_fingerprint: `legacy:${legacyId}`, kind: "ro", daypart: String((item as any)?.daypart || ""),
+        metadata: { note: (item as any)?.note || "", createdAt: (item as any)?.createdAt || "", updatedAt: (item as any)?.updatedAt || "" }, updated_at: (item as any)?.updatedAt || new Date().toISOString()
+      });
+    }
+    for (const item of blocksToSync) {
+      const legacyId = String((item as any)?.id || "");
+      const employeeId = employeeIds.get(String((item as any)?.employeeId || ""));
+      if (!legacyId || !employeeId) throw new Error(`Schedule block ${legacyId || "(unknown)"} is missing a normalized employee.`);
+      await upsertNormalizedLegacyRow("schedule_blocks", locationId, legacyId, {
+        location_id: locationId, legacy_id: legacyId, employee_id: employeeId, block_date: String((item as any)?.date || ""),
+        block_type: String((item as any)?.blockType || "event"), start_time: normalizedTimeValue((item as any)?.start), end_time: normalizedTimeValue((item as any)?.end),
+        all_day: (item as any)?.allDay !== false, note: String((item as any)?.note || (item as any)?.reason || ""), source: String((item as any)?.source || "snapshot-bridge"),
+        metadata: { daypart: (item as any)?.daypart || "", kind: (item as any)?.kind || "", createdAt: (item as any)?.createdAt || "", updatedAt: (item as any)?.updatedAt || "" }, updated_at: (item as any)?.updatedAt || new Date().toISOString()
+      });
+    }
+
+    const templateLegacyIds = new Set<string>(templates.map((item: any) => String(item?.id || "")).filter(Boolean));
+    for (const template of templatesToSync) {
+      const legacyId = String((template as any)?.id || "");
+      if (!legacyId) throw new Error("A template is missing its legacy identity.");
+      const savedTemplate = await upsertNormalizedLegacyRow("templates", locationId, legacyId, {
+        location_id: locationId, legacy_id: legacyId, name: String((template as any)?.name || "Untitled template"), active: (template as any)?.active !== false,
+        legacy_created_at: (template as any)?.createdAt || null, legacy_updated_at: (template as any)?.updatedAt || null, metadata: {}
+      });
+      if (!savedTemplate?.id) throw new Error(`Could not mirror template ${legacyId}.`);
+      const savedShiftIds = new Set<string>();
+      for (const [sortOrder, shift] of snapshotItems((template as any)?.shifts).entries()) {
+        const shiftLegacyId = String((shift as any)?.id || "");
+        const roleId = roleIds.get(String((shift as any)?.roleId || ""));
+        if (!shiftLegacyId || !roleId) throw new Error(`Template shift ${shiftLegacyId || "(unknown)"} is missing a normalized role.`);
+        savedShiftIds.add(shiftLegacyId);
+        await upsertNormalizedTemplateShift(String(savedTemplate.id), shiftLegacyId, {
+          template_id: savedTemplate.id, legacy_id: shiftLegacyId, day_index: Number((shift as any)?.dayIndex), role_id: roleId,
+          department: String((shift as any)?.department || "FOH"), shift_name: String((shift as any)?.shiftLabel || ""),
+          start_time: normalizedTimeValue((shift as any)?.start), end_time: normalizedTimeValue((shift as any)?.end), until_volume: Boolean((shift as any)?.untilVolume),
+          is_closer: Boolean((shift as any)?.isCloser), is_lunch_closer: Boolean((shift as any)?.isLunchCloser), is_flex_double: Boolean((shift as any)?.isFlexDouble),
+          color: (shift as any)?.color || null, notes: String((shift as any)?.notes || ""), sort_order: sortOrder,
+          legacy_created_at: (shift as any)?.createdAt || null, legacy_updated_at: (shift as any)?.updatedAt || null,
+          metadata: { meals: snapshotItems((shift as any)?.meals), training: (shift as any)?.training || {} }
+        });
+      }
+      const existingTemplateShifts = await supabaseJson(`/template_shifts?template_id=eq.${encodeURIComponent(savedTemplate.id)}&legacy_id=not.is.null&select=id,legacy_id`, { headers: serviceHeaders() });
+      for (const existing of Array.isArray(existingTemplateShifts) ? existingTemplateShifts : []) {
+        if (existing?.legacy_id && !savedShiftIds.has(String(existing.legacy_id))) {
+          await supabaseJson(`/template_shifts?id=eq.${encodeURIComponent(existing.id)}`, { method: "DELETE", headers: serviceHeaders({ Prefer: "return=minimal" }) });
+        }
+      }
+    }
+
+    if (fullSync) {
+      const [removedShiftCount, removedRequestCount, removedBlockCount, removedTemplateCount] = await Promise.all([
+        removeNormalizedLegacyRowsNotIn("shifts", locationId, new Set([...assigned, ...open].map((item: any) => String(item?.id || "")).filter(Boolean))),
+        removeNormalizedLegacyRowsNotIn("request_offs", locationId, new Set(requestOffs.map((item: any) => String(item?.id || "")).filter(Boolean))),
+        removeNormalizedLegacyRowsNotIn("schedule_blocks", locationId, new Set(blocks.map((item: any) => String(item?.id || "")).filter(Boolean))),
+        removeNormalizedLegacyRowsNotIn("templates", locationId, templateLegacyIds)
+      ]);
+      return { synced: true, mode: "full", assigned: assigned.length, open: open.length, requestOffs: requestOffs.length, blocks: blocks.length, templates: templates.length, removedShifts: removedShiftCount, removedRequests: removedRequestCount, removedBlocks: removedBlockCount, removedTemplates: removedTemplateCount };
+    }
+    await Promise.all([
+      ...removedShiftEntries.map((entry: any) => deleteNormalizedLegacyRow("shifts", locationId, String(entry.item?.id || ""))),
+      ...removedRequestOffs.map((item: any) => deleteNormalizedLegacyRow("request_offs", locationId, String(item?.id || ""))),
+      ...removedBlocks.map((item: any) => deleteNormalizedLegacyRow("schedule_blocks", locationId, String(item?.id || ""))),
+      ...removedTemplates.map((item: any) => deleteNormalizedLegacyRow("templates", locationId, String(item?.id || "")))
+    ]);
+    return {
+      synced: true,
+      mode: "delta",
+      changed: {
+        shifts: shiftEntriesToSync.length,
+        requestOffs: requestOffsToSync.length,
+        blocks: blocksToSync.length,
+        templates: templatesToSync.length
+      },
+      removed: {
+        shifts: removedShiftEntries.length,
+        requestOffs: removedRequestOffs.length,
+        blocks: removedBlocks.length,
+        templates: removedTemplates.length
+      }
+    };
+  } catch (error) {
+    console.warn("Normalized schedule sync deferred:", error?.message || error);
+    return { synced: false, reason: String(error?.message || "normalized schedule tables unavailable") };
+  }
+}
+
+// Read-only migration probe. It reconstructs employee data from normalized
+// rows in the existing snapshot shape, so Sandbox can compare it without
+// changing the manager UI's compatibility read source.
+async function handleNormalizedEmployees(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  const employees = await supabaseJson(
+    `/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,first_name,last_name,nickname,phone,birthday,departments,active,archived,call_weekly_availability,trained_closer,lunch_closer,scheduling_note`
+    , { headers: serviceHeaders() }
+  );
+  const employeeRows = Array.isArray(employees) ? employees.filter((employee: any) => employee?.id && employee?.legacy_id) : [];
+  const employeeIds = employeeRows.map((employee: any) => employee.id);
+  const roles = await supabaseJson(
+    `/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,department,color,default_rate,sort_order,active`,
+    { headers: serviceHeaders() }
+  );
+  const roleRows = Array.isArray(roles) ? roles.filter((role: any) => role?.id && role?.legacy_id) : [];
+  const [availability, capabilities] = employeeIds.length
+    ? await Promise.all([
+      supabaseJson(`/availability_rules?employee_id=in.(${employeeIds.map(encodeURIComponent).join(",")})&select=employee_id,day_index,start_time,end_time,available,sort_order`, { headers: serviceHeaders() }),
+      supabaseJson(`/employee_roles?employee_id=in.(${employeeIds.map(encodeURIComponent).join(",")})&select=employee_id,role_id,trained,can_train,emergency_only,meal_names`, { headers: serviceHeaders() })
+    ])
+    : [[], []];
+  const availabilityByEmployee = new Map<string, any[]>();
+  (Array.isArray(availability) ? availability : []).forEach((window: any) => {
+    const rows = availabilityByEmployee.get(String(window.employee_id)) || [];
+    rows.push(window);
+    availabilityByEmployee.set(String(window.employee_id), rows);
+  });
+  const capabilitiesByEmployee = new Map<string, any[]>();
+  (Array.isArray(capabilities) ? capabilities : []).forEach((capability: any) => {
+    const rows = capabilitiesByEmployee.get(String(capability.employee_id)) || [];
+    rows.push(capability);
+    capabilitiesByEmployee.set(String(capability.employee_id), rows);
+  });
+  const rolesById = new Map(roleRows.map((role: any) => [String(role.id), role]));
+  const projectedEmployees = employeeRows.map((employee: any) => {
+    const employeeCapabilities = capabilitiesByEmployee.get(String(employee.id)) || [];
+    const legacyRolesMatching = (field: string) => employeeCapabilities.flatMap((capability: any) => {
+      const role = rolesById.get(String(capability.role_id));
+      return role?.legacy_id && capability[field] ? [String(role.legacy_id)] : [];
+    });
+    const roleMealTraining: JsonRecord = {};
+    employeeCapabilities.forEach((capability: any) => {
+      const role = rolesById.get(String(capability.role_id));
+      if (!role?.legacy_id) return;
+      roleMealTraining[String(role.legacy_id)] = Array.isArray(capability.meal_names) ? capability.meal_names : [];
+    });
+    const availabilityByDay: JsonRecord = {};
+    (availabilityByEmployee.get(String(employee.id)) || [])
+      .filter((window: any) => window.available !== false)
+      .sort((a: any, b: any) => Number(a.day_index) - Number(b.day_index) || Number(a.sort_order || 0) - Number(b.sort_order || 0))
+      .forEach((window: any) => {
+        const dayIndex = String(window.day_index);
+        const rows = Array.isArray(availabilityByDay[dayIndex]) ? availabilityByDay[dayIndex] as any[] : [];
+        rows.push({ start: displayNormalizedTime(window.start_time), end: displayNormalizedTime(window.end_time) });
+        availabilityByDay[dayIndex] = rows;
+      });
+    return {
+      id: String(employee.legacy_id),
+      firstName: String(employee.first_name || ""),
+      lastName: String(employee.last_name || ""),
+      nickname: String(employee.nickname || ""),
+      phone: String(employee.phone || ""),
+      birthday: employee.birthday || "",
+      departments: Array.isArray(employee.departments) ? employee.departments : [],
+      active: employee.active !== false,
+      archived: Boolean(employee.archived),
+      callWeekly: Boolean(employee.call_weekly_availability),
+      canClose: Boolean(employee.trained_closer),
+      canLunchClose: Boolean(employee.lunch_closer),
+      managerNotes: String(employee.scheduling_note || ""),
+      roleTraining: legacyRolesMatching("trained"),
+      trainerRoles: legacyRolesMatching("can_train"),
+      emergencyRoleIds: legacyRolesMatching("emergency_only"),
+      roleMealTraining,
+      availability: availabilityByDay
+    };
+  });
+  return json(200, {
+    ok: true,
+    mode: "normalized-shadow",
+    locationId,
+    generatedAt: new Date().toISOString(),
+    employees: projectedEmployees,
+    roles: roleRows.map((role: any) => ({
+      id: String(role.legacy_id), name: role.name, department: role.department, color: role.color,
+      defaultRate: role.default_rate, active: role.active !== false
+    }))
+  });
+}
+
+// Read-only availability migration probe. Profiles contain reusable windows;
+// assignments contain effective dates, repeat intervals, and approval state.
+// It is limited to Sandbox and the explicitly configured live location. The
+// app still uses the compatibility snapshot unless a normalized read flag is
+// requested, so this remains a reversible canary.
+async function handleNormalizedAvailability(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  if (!normalizedReadAllowed(locationId)) return json(403, { ok: false, error: "Normalized availability reads are not enabled for this location." });
+  const [employees, profiles, assignments] = await Promise.all([
+    supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,first_name,last_name,nickname,active,archived`, { headers: serviceHeaders() }),
+    supabaseJson(`/staff_availability_patterns?location_id=eq.${encodeURIComponent(locationId)}&select=id,employee_id,legacy_id,name,source,archived`, { headers: serviceHeaders() }),
+    supabaseJson(`/staff_availability_week_assignments?location_id=eq.${encodeURIComponent(locationId)}&select=id,employee_id,pattern_id,legacy_id,effective_date,week_start,repeat_interval_weeks,status,source,legacy_submission_id`, { headers: serviceHeaders() })
+  ]);
+  const profileRows = Array.isArray(profiles) ? profiles.filter((profile: any) => profile?.id) : [];
+  const profileIds = profileRows.map((profile: any) => profile.id);
+  const windows = profileIds.length
+    ? await supabaseJson(`/staff_availability_pattern_windows?pattern_id=in.(${profileIds.map(encodeURIComponent).join(",")})&select=pattern_id,day_index,start_time,end_time,available,sort_order`, { headers: serviceHeaders() })
+    : [];
+  const windowsByProfile = new Map<string, any[]>();
+  (Array.isArray(windows) ? windows : []).forEach((window: any) => {
+    const rows = windowsByProfile.get(String(window.pattern_id)) || [];
+    rows.push(window);
+    windowsByProfile.set(String(window.pattern_id), rows);
+  });
+  const assignmentsByProfile = new Map<string, any[]>();
+  (Array.isArray(assignments) ? assignments : []).forEach((assignment: any) => {
+    const rows = assignmentsByProfile.get(String(assignment.pattern_id)) || [];
+    rows.push(assignment);
+    assignmentsByProfile.set(String(assignment.pattern_id), rows);
+  });
+  const patternsByEmployee = new Map<string, any[]>();
+  profileRows.forEach((profile: any) => {
+    const rows = patternsByEmployee.get(String(profile.employee_id)) || [];
+    rows.push({
+      id: String(profile.legacy_id || profile.id),
+      name: String(profile.name || ""),
+      source: String(profile.source || ""),
+      archived: Boolean(profile.archived),
+      windows: (windowsByProfile.get(String(profile.id)) || [])
+        .sort((left: any, right: any) => Number(left.day_index) - Number(right.day_index) || Number(left.sort_order || 0) - Number(right.sort_order || 0))
+        .map((window: any) => ({ dayIndex: Number(window.day_index), start: displayNormalizedTime(window.start_time), end: displayNormalizedTime(window.end_time), available: window.available !== false, sortOrder: Number(window.sort_order || 0) })),
+      assignments: (assignmentsByProfile.get(String(profile.id)) || []).map((assignment: any) => ({
+        id: String(assignment.legacy_id || assignment.id),
+        effectiveDate: String(assignment.effective_date || assignment.week_start || ""),
+        repeatWeeks: Number(assignment.repeat_interval_weeks || 1),
+        status: String(assignment.status || ""),
+        source: String(assignment.source || ""),
+        submissionId: assignment.legacy_submission_id || null
+      }))
+    });
+    patternsByEmployee.set(String(profile.employee_id), rows);
+  });
+  return json(200, {
+    ok: true,
+    mode: "normalized-shadow",
+    locationId,
+    generatedAt: new Date().toISOString(),
+    employees: (Array.isArray(employees) ? employees : []).map((employee: any) => ({
+      id: String(employee.legacy_id || employee.id),
+      firstName: String(employee.first_name || ""),
+      lastName: String(employee.last_name || ""),
+      nickname: String(employee.nickname || ""),
+      active: employee.active !== false,
+      archived: Boolean(employee.archived),
+      availabilityProfiles: patternsByEmployee.get(String(employee.id)) || []
+    }))
+  });
+}
+
+// Read-only schedule migration probe. The scheduler continues to load the
+// compatibility snapshot unless an explicit normalized read flag is used.
+async function handleNormalizedSchedule(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  if (!normalizedReadAllowed(locationId)) return json(403, { ok: false, error: "Normalized schedule reads are not enabled for this location." });
+
+  const [employees, roles, scheduleWeeks, shifts, requestOffs, blocks, templates] = await Promise.all([
+    supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
+    supabaseJson(`/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
+    supabaseJson(`/schedule_weeks?location_id=eq.${encodeURIComponent(locationId)}&select=id,week_start,status`, { headers: serviceHeaders() }),
+    supabaseJson(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata`, { headers: serviceHeaders() }),
+    supabaseJson(`/request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,request_date,start_time,end_time,all_day,reason,source,kind,daypart,metadata`, { headers: serviceHeaders() }),
+    supabaseJson(`/schedule_blocks?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,block_date,start_time,end_time,all_day,block_type,note,source,metadata`, { headers: serviceHeaders() }),
+    supabaseJson(`/templates?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,active,metadata`, { headers: serviceHeaders() })
+  ]);
+  const employeeLegacyIds = new Map((Array.isArray(employees) ? employees : []).map((employee: any) => [String(employee.id), String(employee.legacy_id || "")]));
+  const roleLegacyIds = new Map((Array.isArray(roles) ? roles : []).map((role: any) => [String(role.id), String(role.legacy_id || "")]));
+  const templateRows = Array.isArray(templates) ? templates.filter((template: any) => template?.id && template?.legacy_id) : [];
+  const templateIds = templateRows.map((template: any) => template.id);
+  const templateShifts = templateIds.length
+    ? await supabaseJson(`/template_shifts?template_id=in.(${templateIds.map(encodeURIComponent).join(",")})&select=template_id,legacy_id,day_index,role_id,department,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,color,notes,sort_order,metadata`, { headers: serviceHeaders() })
+    : [];
+  const timeOffRequests = [
+    ...(Array.isArray(requestOffs) ? requestOffs : []).filter((item: any) => item?.legacy_id).map((item: any) => ({
+      id: String(item.legacy_id), date: item.request_date, start: displayNormalizedTime(item.start_time), end: displayNormalizedTime(item.end_time),
+      allDay: item.all_day !== false, reason: item.reason || "", note: item.metadata?.note || "", source: item.source || "", daypart: item.daypart || "", kind: item.kind || "ro",
+      employeeId: employeeLegacyIds.get(String(item.employee_id)) || ""
+    })),
+    ...(Array.isArray(blocks) ? blocks : []).filter((item: any) => item?.legacy_id).map((item: any) => ({
+      id: String(item.legacy_id), date: item.block_date, start: displayNormalizedTime(item.start_time), end: displayNormalizedTime(item.end_time),
+      allDay: item.all_day !== false, note: item.note || "", source: item.source || "", daypart: item.metadata?.daypart || "", kind: "block", blockType: item.block_type || "event",
+      employeeId: employeeLegacyIds.get(String(item.employee_id)) || ""
+    }))
+  ];
+  const mapShift = (shift: any) => ({
+    id: String(shift.legacy_id), employeeId: employeeLegacyIds.get(String(shift.employee_id)) || "", roleId: roleLegacyIds.get(String(shift.role_id)) || "", department: shift.department || "FOH",
+    date: shift.shift_date, shiftLabel: shift.shift_name || "", start: displayNormalizedTime(shift.start_time), end: displayNormalizedTime(shift.end_time),
+    untilVolume: Boolean(shift.until_volume), isCloser: Boolean(shift.is_closer), isLunchCloser: Boolean(shift.is_lunch_closer), isFlexDouble: Boolean(shift.is_flex_double),
+    color: shift.color || null, notes: shift.notes || "", meals: Array.isArray(shift.metadata?.meals) ? shift.metadata.meals : [], training: shift.metadata?.training || {}
+  });
+  const templateShiftRowsByTemplate = new Map<string, any[]>();
+  (Array.isArray(templateShifts) ? templateShifts : []).forEach((shift: any) => {
+    const rows = templateShiftRowsByTemplate.get(String(shift.template_id)) || [];
+    rows.push(shift);
+    templateShiftRowsByTemplate.set(String(shift.template_id), rows);
+  });
+  return json(200, {
+    ok: true,
+    mode: "normalized-shadow",
+    locationId,
+    generatedAt: new Date().toISOString(),
+    scheduleWeeks: (Array.isArray(scheduleWeeks) ? scheduleWeeks : []).map((week: any) => ({ weekStart: week.week_start, status: week.status })),
+    shifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && !shift.is_open_bay).map(mapShift),
+    unassignedShifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && shift.is_open_bay).map(mapShift),
+    timeOffRequests,
+    templates: templateRows.map((template: any) => ({
+      id: String(template.legacy_id), name: template.name || "", active: template.active !== false,
+      shifts: (templateShiftRowsByTemplate.get(String(template.id)) || []).sort((left: any, right: any) => Number(left.sort_order || 0) - Number(right.sort_order || 0)).map((shift: any) => ({
+        id: String(shift.legacy_id), dayIndex: Number(shift.day_index), roleId: roleLegacyIds.get(String(shift.role_id)) || "", department: shift.department || "FOH",
+        shiftLabel: shift.shift_name || "", start: displayNormalizedTime(shift.start_time), end: displayNormalizedTime(shift.end_time), untilVolume: Boolean(shift.until_volume),
+        isCloser: Boolean(shift.is_closer), isLunchCloser: Boolean(shift.is_lunch_closer), isFlexDouble: Boolean(shift.is_flex_double), color: shift.color || null,
+        notes: shift.notes || "", sortOrder: Number(shift.sort_order || 0), meals: Array.isArray(shift.metadata?.meals) ? shift.metadata.meals : [], training: shift.metadata?.training || {}
+      }))
+    }))
+  });
 }
 
 function scheduleChangeSummary(previous: JsonRecord = {}, next: JsonRecord = {}) {
@@ -930,13 +1666,38 @@ async function handleLoadState(request: Request) {
   const row = await loadDocumentRow("*", locationId);
   if (!row) return json(404, { error: "No scheduler data file has been created yet." });
   const overrides = await loadEmployeeProfileOverrides(locationId);
+  const snapshotState = applyEmployeeProfileOverrides(row.state as JsonRecord || {}, overrides);
+  const normalizedScheduleRead = new URL(request.url).searchParams.get("normalizedSchedule") === "read";
+  if (normalizedScheduleRead) {
+    if (!normalizedReadAllowed(locationId)) {
+      return json(403, { ok: false, error: "Normalized schedule reads are not enabled for this location." });
+    }
+    const normalizedResponse = await handleNormalizedSchedule(request);
+    if (!normalizedResponse.ok) return normalizedResponse;
+    const normalized = await normalizedResponse.json();
+    return json(200, {
+      app: "restaurant-scheduler",
+      schemaVersion: row.schema_version,
+      savedAt: row.saved_at,
+      savedBy: row.saved_by || null,
+      savedByDeviceId: row.saved_by_device_id,
+      readSource: locationId === SANDBOX_LOCATION_ID ? "normalized-sandbox" : "normalized-live-canary",
+      data: {
+        ...snapshotState,
+        shifts: normalized.shifts || [],
+        unassignedShifts: normalized.unassignedShifts || [],
+        timeOffRequests: normalized.timeOffRequests || [],
+        templates: normalized.templates || []
+      }
+    });
+  }
   return json(200, {
     app: "restaurant-scheduler",
     schemaVersion: row.schema_version,
     savedAt: row.saved_at,
     savedBy: row.saved_by || null,
     savedByDeviceId: row.saved_by_device_id,
-    data: applyEmployeeProfileOverrides(row.state as JsonRecord || {}, overrides)
+    data: snapshotState
   });
 }
 
@@ -975,6 +1736,7 @@ async function handleSaveState(request: Request) {
         updated_at: savedAt
       }])
     });
+    const normalizedSync = await syncNormalizedEmployeeProfile(locationId, employeeProfile);
     await logAuditEvent("employee_profile_saved", (validated.user as any).id, {
       documentKey: cfg.documentKey,
       savedAt,
@@ -984,6 +1746,7 @@ async function handleSaveState(request: Request) {
       saveScope,
       saveAttemptId: saveAttemptId || null,
       employeeId,
+      normalizedSync,
       changeSummary: { employeesChanged: 1 }
     }, locationId);
     return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null });
@@ -1021,6 +1784,7 @@ async function handleSaveState(request: Request) {
     headers: serviceHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
     body: JSON.stringify(body)
   });
+  const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);
   await logAuditEvent("scheduler_state_saved", (validated.user as any).id, {
     documentKey: cfg.documentKey,
     savedAt,
@@ -1030,7 +1794,8 @@ async function handleSaveState(request: Request) {
     saveScope,
     employeeId: profileOnlySave ? employeeId : null,
     schemaVersion: body[0].schema_version,
-    changeSummary
+    changeSummary,
+    normalizedScheduleSync
   }, locationId);
   return json(200, { ok: true, savedAt });
 }
@@ -1446,6 +2211,9 @@ Deno.serve(async (request) => {
     if (path === "/staff-requests/review" && request.method === "POST") return await handleReviewStaffRequest(request);
     if (path === "/staff/profile" && request.method === "PATCH") return await handleStaffProfileUpdate(request);
     if (path === "/status" && request.method === "GET") return await handleStatus(request);
+    if (path === "/normalized/employees" && request.method === "GET") return await handleNormalizedEmployees(request);
+    if (path === "/normalized/availability" && request.method === "GET") return await handleNormalizedAvailability(request);
+    if (path === "/normalized/schedule" && request.method === "GET") return await handleNormalizedSchedule(request);
     if (path === "/state" && request.method === "GET") return await handleLoadState(request);
     if (path === "/state" && (request.method === "PUT" || request.method === "POST")) return await handleSaveState(request);
     if (path === "/audit/recent" && request.method === "GET") return await handleRecentAudit(request);

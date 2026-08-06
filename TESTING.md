@@ -22,7 +22,21 @@ npm run test:contracts
 npm run test:print
 npm run test:security
 npm run test:server
+node tools/test_access_matrix.js
+node tools/test_employee_profile_persistence.js
+node tools/test_migration_audit.js
 ```
+
+## Migration audit
+
+Run the read-only audit against a scheduler backup before moving data into normalized tables:
+
+```text
+node tools/audit_normalized_migration.js path\to\backup.json
+node tools/audit_normalized_migration.js path\to\backup.json --normalized path\to\normalized-export.json --json
+```
+
+It reports missing or duplicate ids, broken employee/role references, availability-window counts, and normalized counts that are lower than the source. It does not modify either file.
 
 ## Manual Hosted Smoke Pass
 
@@ -37,3 +51,11 @@ The automated suite cannot use the signed-in browser session or safely mutate a 
 7. Test a manager invite and a staff invite in sandbox only; confirm first-login password setup and removal.
 
 Do not use the live restaurant location for destructive tests. Keep the recommendation work and staff-feedback work out of production until their behavior has been reviewed separately.
+## Automatic checks
+
+The repository includes a GitHub Actions workflow at `.github/workflows/tests.yml`.
+It runs the safe baseline suite on pushes to `main` and `supabase-migration`, on pull requests, and when manually started from GitHub Actions.
+
+The workflow checks JavaScript syntax, whitespace, storage behavior, UI contracts, print contracts, source security, server contracts, and the access-matrix permission contract. It does not use production credentials or mutate Supabase data.
+
+The live owner/manager/viewer/staff HTTP checks are opt-in through the environment variables documented in `supabase/access-matrix.md`; those should only be used with sandbox accounts and a sandbox location.

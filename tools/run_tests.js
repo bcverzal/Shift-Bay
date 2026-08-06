@@ -7,7 +7,15 @@ const tests = [
   "test_app_contracts.js",
   "test_print_contracts.js",
   "test_source_security.js",
-  "test_server_smoke.js"
+  "test_server_smoke.js",
+  "test_access_matrix.js",
+  "test_employee_profile_persistence.js",
+  "test_migration_audit.js",
+  "test_normalized_people_migration.js",
+  "test_normalized_availability_migration.js",
+  "test_normalized_schedule_migration.js",
+  "test_normalized_field_coverage.js",
+  "test_migration_manifest.js"
 ];
 
 for (const test of tests) {

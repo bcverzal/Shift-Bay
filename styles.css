@@ -759,6 +759,32 @@ summary:focus-visible {
   text-transform: uppercase;
 }
 
+.normalized-read-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid #7c3aed;
+  border-radius: 999px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.normalized-read-badge[data-state="requested"] {
+  border-color: #c4b5fd;
+  color: #6d28d9;
+}
+
+.normalized-read-badge[data-state="unavailable"] {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .login-card label {
   display: grid;
   gap: 5px;

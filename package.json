@@ -9,7 +9,10 @@
     "test:contracts": "node tools/test_app_contracts.js",
     "test:print": "node tools/test_print_contracts.js",
     "test:security": "node tools/test_source_security.js",
-    "test:server": "node tools/test_server_smoke.js"
+    "test:server": "node tools/test_server_smoke.js",
+    "test:access": "node tools/test_access_matrix.js",
+    "test:profile": "node tools/test_employee_profile_persistence.js",
+    "test:migration": "node tools/test_migration_audit.js"
   },
   "dependencies": {
     "pdfjs-dist": "5.6.205"
