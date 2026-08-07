@@ -34,6 +34,53 @@ async function supabaseFetch(config, path, options = {}) {
   return body;
 }
 
+function scheduleChangeSummary(previous = {}, next = {}) {
+  const compare = (key) => {
+    const before = new Map((Array.isArray(previous[key]) ? previous[key] : []).map((item) => [item.id, item]));
+    const after = new Map((Array.isArray(next[key]) ? next[key] : []).map((item) => [item.id, item]));
+    let created = 0;
+    let edited = 0;
+    let deleted = 0;
+    after.forEach((item, id) => {
+      if (!before.has(id)) created += 1;
+      else if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) edited += 1;
+    });
+    before.forEach((_item, id) => { if (!after.has(id)) deleted += 1; });
+    return { created, edited, deleted };
+  };
+  const shifts = compare("shifts");
+  const openShifts = compare("unassignedShifts");
+  const requestOffs = compare("timeOffRequests");
+  const employees = compare("employees");
+  const templates = compare("templates");
+  return {
+    shiftsCreated: shifts.created,
+    shiftsEdited: shifts.edited,
+    shiftsDeleted: shifts.deleted,
+    openShiftsCreated: openShifts.created,
+    openShiftsEdited: openShifts.edited,
+    openShiftsDeleted: openShifts.deleted,
+    requestOffsCreated: requestOffs.created,
+    requestOffsEdited: requestOffs.edited,
+    requestOffsDeleted: requestOffs.deleted,
+    employeesChanged: employees.created + employees.edited + employees.deleted,
+    templatesChanged: templates.created + templates.edited + templates.deleted
+  };
+}
+
+function mergeEmployeeProfileState(existingState = {}, incomingState = {}, employeeId = "") {
+  const merged = { ...existingState };
+  const incomingEmployees = Array.isArray(incomingState.employees) ? incomingState.employees : [];
+  const incomingEmployee = incomingEmployees.find((employee) => String(employee?.id || "") === String(employeeId));
+  if (!incomingEmployee) return null;
+  const existingEmployees = Array.isArray(existingState.employees) ? existingState.employees : [];
+  const found = existingEmployees.some((employee) => String(employee?.id || "") === String(employeeId));
+  merged.employees = found
+    ? existingEmployees.map((employee) => String(employee?.id || "") === String(employeeId) ? incomingEmployee : employee)
+    : [...existingEmployees, incomingEmployee];
+  return merged;
+}
+
 function createSupabaseStore() {
   const config = requireSupabaseConfig();
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
@@ -103,14 +150,21 @@ function createSupabaseStore() {
 
     async saveState(payload, user = null) {
       const locationId = locationFor(user);
-      const state = payload?.data || payload?.state || payload;
+      let state = payload?.data || payload?.state || payload;
+      const saveScope = payload?.saveScope || "schedule";
+      const employeeId = payload?.employeeId || "";
       const savedBy = user?.id || payload?.savedBy?.id || null;
       const savedByDeviceId = payload?.savedByDeviceId || state?.meta?.deviceId || null;
       const baseServerSavedAt = payload?.baseServerSavedAt || state?.meta?.serverSavedAt || "";
       const incomingTime = dataUpdatedAt(payload);
       const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
       const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
-      if (baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
+      const profileMerge = saveScope === "employee-profile" && employeeId && existingRow?.state
+        ? mergeEmployeeProfileState(existingRow.state, state, employeeId)
+        : null;
+      if (profileMerge) state = profileMerge;
+      const profileOnlySave = Boolean(profileMerge);
+      if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
         return {
           ok: false,
           stale: true,
@@ -119,7 +173,7 @@ function createSupabaseStore() {
         };
       }
       const existingTime = dataUpdatedAt(existingRow?.state || { savedAt: existingRow?.saved_at || existingRow?.updated_at });
-      if (incomingTime && existingTime && incomingTime < existingTime - 1000) {
+      if (!profileOnlySave && incomingTime && existingTime && incomingTime < existingTime - 1000) {
         return {
           ok: false,
           stale: true,
@@ -137,6 +191,7 @@ function createSupabaseStore() {
         saved_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }];
+      const changeSummary = scheduleChangeSummary(existingRow?.state || {}, state);
       await supabaseFetch(config, "/scheduler_state_documents?on_conflict=location_id,document_key", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=representation" },
@@ -149,7 +204,8 @@ function createSupabaseStore() {
         savedByEmail: user?.email || payload?.savedBy?.email || "",
         savedByRole: user?.role || payload?.savedBy?.role || "",
         savedByDeviceId,
-        schemaVersion: body[0].schema_version
+        schemaVersion: body[0].schema_version,
+        changeSummary
       });
       return { ok: true, savedAt: body[0].saved_at, savedBy };
     },

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay Staff Portal</title>
-  <link rel="stylesheet" href="staff.css">
+  <link rel="stylesheet" href="staff.css?v=shiftbay-20260727-availability-e">
 </head>
 <body>
   <main class="staff-shell">
@@ -14,18 +14,8 @@
         <strong>SHIFT BAY</strong>
       </div>
       <h1>Staff Portal</h1>
-      <p class="staff-muted">Sign in to view shifts, request time off, and manage availability.</p>
-      <form id="staffLoginForm" class="staff-form">
-        <label>
-          Email
-          <input id="staffEmail" type="email" autocomplete="email" required>
-        </label>
-        <label>
-          Password
-          <input id="staffPassword" type="password" autocomplete="current-password" required>
-        </label>
-        <button type="submit" class="staff-primary">Sign In</button>
-      </form>
+      <p class="staff-muted">Managers and staff use the same Shift Bay sign-in. Your account type opens the right view automatically.</p>
+      <a href="index.html" class="staff-primary staff-shared-login">Use Shift Bay sign in</a>
       <div id="staffLoginMessage" class="staff-message" hidden></div>
       <div id="demoPreviewCard" class="staff-demo-preview" hidden>
         <h2>Demo Staff Preview</h2>
@@ -47,16 +37,42 @@
           </div>
           <p id="staffIdentity" class="staff-muted">Signed in</p>
         </div>
-        <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
+        <div class="staff-header-actions">
+          <div id="demoPortalSwitcher" class="staff-demo-switcher" hidden>
+            <label>
+              Preview employee
+              <select id="demoPortalEmployeeSelect"></select>
+            </label>
+            <button type="button" id="demoPortalPreviewButton" class="staff-secondary">View</button>
+          </div>
+          <button type="button" id="staffReturnManager" class="staff-secondary" hidden>Manager view</button>
+          <button type="button" id="staffSignOut" class="staff-secondary">Sign Out</button>
+        </div>
       </header>
 
       <div id="staffStatus" class="staff-status"></div>
+
+      <nav class="staff-tabs" aria-label="Staff portal sections">
+        <button type="button" class="staff-tab is-active" data-staff-tab="schedule">My Schedule</button>
+        <button type="button" class="staff-tab" data-staff-tab="directory">Staff Directory</button>
+        <button type="button" class="staff-tab" data-staff-tab="information">My Information</button>
+        <button type="button" class="staff-tab" data-staff-tab="requests">Requests &amp; Availability</button>
+      </nav>
+      <div class="staff-subtabs" data-staff-subtabs="information" hidden>
+        <button type="button" class="staff-subtab is-active" data-staff-subtab="profile">My Profile</button>
+        <button type="button" class="staff-subtab" data-staff-subtab="privacy">Phone Privacy</button>
+      </div>
+      <div class="staff-subtabs" data-staff-subtabs="requests" hidden>
+        <button type="button" class="staff-subtab is-active" data-staff-subtab="request-off">Request Off</button>
+        <button type="button" class="staff-subtab" data-staff-subtab="availability">Availability</button>
+      </div>
 
       <section class="staff-grid">
         <article class="staff-panel">
           <div class="staff-panel-heading">
             <div>
               <h2>My Schedule</h2>
+              <p id="staffScheduleEmployee" class="staff-panel-subtitle"></p>
               <p id="staffWeekTitle" class="staff-panel-subtitle">This week</p>
             </div>
             <div class="staff-week-actions">
@@ -71,22 +87,84 @@
         </article>
         <article class="staff-panel">
           <h2>Request Off</h2>
-          <p>This will become the staff-facing request-off form with manager approval.</p>
-          <button type="button" class="staff-secondary" disabled>Create Request</button>
+          <p>Submit time off for manager review. Leave times blank for a full-day request.</p>
+          <form id="staffRequestOffForm" class="staff-workflow-form">
+            <div class="staff-form-row">
+              <label>Start date<input id="staffRequestStartDate" type="date" required></label>
+              <label>End date<input id="staffRequestEndDate" type="date" required></label>
+            </div>
+            <div class="staff-form-row">
+              <label>Start time<input id="staffRequestStartTime" type="text" data-time-picker autocomplete="off" placeholder="5:00 PM"></label>
+              <label>End time<input id="staffRequestEndTime" type="text" data-time-picker autocomplete="off" placeholder="10:00 PM"></label>
+            </div>
+            <label>Note<textarea id="staffRequestNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
+            <button type="submit" class="staff-primary">Submit Request Off</button>
+            <div id="staffRequestMessage" class="staff-inline-message" role="status" hidden></div>
+          </form>
+          <div id="staffRequestList" class="staff-workflow-list"></div>
         </article>
        <article class="staff-panel">
          <h2>Availability</h2>
-         <p>Saved weekly availability patterns and week-to-week submissions will live here.</p>
-         <button type="button" class="staff-secondary" disabled>Manage Availability</button>
+         <div id="staffLiveAvailabilitySummary" class="staff-manager-availability" hidden></div>
+         <div id="staffAvailabilityApprovalSummary" class="staff-availability-approval" hidden></div>
+         <form id="staffAvailabilityForm" class="staff-workflow-form">
+           <input id="staffAvailabilityWeekStart" type="hidden">
+           <div class="staff-availability-workspace">
+             <div class="staff-availability-editor-column">
+               <div id="staffAvailabilityDays" class="staff-availability-days"></div>
+               <label>Note<textarea id="staffAvailabilityNote" maxlength="240" rows="2" placeholder="Optional note for the manager"></textarea></label>
+             </div>
+             <aside class="staff-availability-pattern-workspace" aria-label="Saved availability profiles">
+               <div class="staff-availability-pattern-details">
+                 <div class="staff-availability-pattern-heading">
+                   <div><strong>Selected Availability Profile</strong><small>Edit the profile, then save it or submit it for review.</small></div>
+                   <button type="button" id="newStaffAvailabilityPattern" class="staff-small-action">New</button>
+                 </div>
+                 <label>Availability Profile
+                   <select id="staffAvailabilityPatternSelect" aria-label="Choose an availability profile">
+                     <option value="">Unsaved current entries</option>
+                   </select>
+                 </label>
+                 <label>Profile name
+                   <input id="staffAvailabilityPatternName" type="text" maxlength="60" placeholder="School week">
+                 </label>
+                 <label>Repeat Pattern
+                   <select id="staffAvailabilityRepeatWeeks" title="Choose how this availability profile repeats.">
+                     <option value="1">Every week</option>
+                     <option value="2">Every 2 weeks</option>
+                     <option value="3">Every 3 weeks</option>
+                     <option value="4">Every 4 weeks</option>
+                   </select>
+                 </label>
+                 <label>Profile starts
+                   <input id="staffAvailabilityEffectiveDate" type="date" title="Choose when this availability profile begins.">
+                 </label>
+                 <button type="button" id="deleteStaffAvailabilityPattern" class="staff-small-action" hidden>Delete Availability Profile</button>
+                 <div class="staff-availability-actions">
+                   <button type="button" id="saveStaffAvailabilityPattern" class="staff-secondary">Save Availability</button>
+                   <button type="submit" id="submitStaffAvailability" class="staff-primary" disabled>Submit selected availability</button>
+                 </div>
+               </div>
+               <div class="staff-availability-saved-heading">
+                 <strong>Saved Availability Profiles</strong>
+                 <small>Profiles stay private until you submit a week for manager review.</small>
+               </div>
+               <div id="staffAvailabilityPatternList" class="staff-availability-pattern-list"></div>
+             </aside>
+           </div>
+           <p class="staff-muted staff-availability-help">Submitting sends the selected week to the manager approval queue. Saving a profile privately does not change your approved availability.</p>
+           <div id="staffAvailabilityMessage" class="staff-inline-message" role="status" hidden></div>
+         </form>
        </article>
        <article class="staff-panel staff-directory-panel">
          <h2>Staff Directory</h2>
-          <p class="staff-panel-subtitle">Phone numbers follow each person’s privacy setting.</p>
+          <p class="staff-panel-subtitle">Phone numbers follow each person's privacy setting.</p>
          <div id="staffDirectoryList" class="staff-directory-list"></div>
        </article>
         <article class="staff-panel staff-profile-panel">
           <h2>My Profile</h2>
           <p class="staff-panel-subtitle">Update your contact details. Scheduling roles and training remain manager-controlled.</p>
+          <div id="staffVisibleProfile" class="staff-visible-profile"></div>
           <label>Preferred name<input id="staffPreferredName" type="text" maxlength="80"></label>
           <label>Phone number<input id="staffPhoneNumber" type="tel" maxlength="40"></label>
           <label>Contact preference<select id="staffContactPreference"><option value="in_app">In-app</option><option value="sms">SMS</option><option value="email">Email</option></select></label>
@@ -115,11 +193,17 @@
       <p class="staff-muted">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
       <label>
         New password
-        <input id="newStaffPassword" type="password" autocomplete="new-password" required>
+        <span class="password-input-wrap">
+          <input id="newStaffPassword" type="password" autocomplete="new-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="newStaffPassword" aria-pressed="false">Show</button>
+        </span>
       </label>
       <label>
         Confirm password
-        <input id="confirmStaffPassword" type="password" autocomplete="new-password" required>
+        <span class="password-input-wrap">
+          <input id="confirmStaffPassword" type="password" autocomplete="new-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="confirmStaffPassword" aria-pressed="false">Show</button>
+        </span>
       </label>
       <div id="staffPasswordMessage" class="staff-message" hidden></div>
       <div class="staff-password-actions">
@@ -129,6 +213,6 @@
   </dialog>
 
   <script src="shift-bay-config.js"></script>
-  <script src="staff.js?v=shiftbay-20260716-staff-access"></script>
+  <script src="staff.js?v=shiftbay-20260727-availability-e"></script>
 </body>
 </html>

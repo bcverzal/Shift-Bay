@@ -11,11 +11,13 @@
 - [ ] Confirm single-day view should keep Start Time as the default sort, with A-Z available as an alternate mode.
 - [ ] Refine single-day Shift Bay date switching: when a selected bay shift is for another day, jump to that day first without expanding the bay or selecting/highlighting the shift until the user clicks it again.
 - [ ] Confirm drag/drop, copy/paste, shift-drag copy, and bay-to-grid assignment all behave predictably.
+- [ ] Add a responsive access mode for phones and narrow windows: keep schedule creation desktop-focused, but provide a coherent read-only schedule/shift/floor-plan experience and usable staff-portal actions on smaller screens. Add an explicit larger-screen message for manager scheduling rather than forcing the full grid onto a phone. Priority: after scheduling and Staff Portal essentials, before deeper automation and analytics.
 - [ ] After multi-location is stable, begin Staff Portal MVP: staff login, my schedule, request-offs, availability changes, shift release/pickup, and manager approval queue.
 
 ## Core Workflow Polish
 
 - [ ] Run a dedicated UI/UX simplification pass using Design Parser/Mobbin/Emil-style principles: reduce competing colors, reduce simultaneous information density, respect Miller's Law, make one primary action obvious per surface, and treat animation as functional feedback rather than decoration.
+- [ ] Revisit top-level navigation: evaluate whether Templates and Roles should remain permanent tabs or move into an onboarding/setup area or Settings after initial configuration, while keeping occasional maintenance easy to find.
 - [ ] Make warning notifications fully reliable: next/previous arrows, Show, dismiss, restore dismissed warnings, and shortcut-to-fix.
 - [ ] Continue redesigning Shift Detail so it is shorter, wider, easier to scan, and less error-prone.
 - [ ] Add a Metadata tab to Shift Detail showing when the shift/open shift was created, last edited, how it was created (manual, template, coverage, copied, imported), and who created/edited it once shift-level audit fields are consistently stored.
@@ -88,22 +90,42 @@
 - [ ] Plan baseline/update version folders so experimental work does not disrupt the usable scheduler.
 - [ ] Eventually prepare for packaged desktop app or more formal server setup.
 
+## Long-Term Collaboration And Concurrency
+
+- [ ] **Priority 1: Add conflict-aware state merging.** Allow simultaneous users to save non-overlapping changes safely, while stopping and explaining conflicts when both users changed the same shift or record. Preserve the rejected browser version for recovery and require an intentional choice before replacing either version.
+- [ ] **Priority 2: Move toward shift-level versioning.** Replace whole-schedule optimistic locking with per-shift revisions/history so independent edits do not conflict unnecessarily and same-shift conflicts can show who changed what. This should support future audit history, undo/review, and multi-manager collaboration.
+- [ ] **Priority 3: Add owner-only reversible audit snapshots.** Let an owner review a lower-level user's change and undo that change without rolling back unrelated work.
+- [ ] Treat shift-level versioning as the longer-term foundation; implement conflict-aware merging first because it fits the current schedule document architecture and provides immediate multi-user value.
+
 ## Staff Portal MVP
 
+- [ ] Fix the false `Invalid URL` banner in the Staff Portal: authenticated staff data can load correctly while the portal still shows this error.
 - [ ] Create staff account invitation/linking flow from employee profiles.
 - [ ] Add staff-only portal route/UI separate from the manager scheduler.
 - [ ] Build "My Schedule" for staff with upcoming shifts and location context.
 - [ ] Build staff request-off submission and manager approval queue.
 - [ ] Build staff availability-change submission and manager approval queue.
+- [ ] Keep manager employee-profile availability and staff-portal availability feature-parity: effective dates, split windows, saved patterns, rotations, week assignments, and week-to-week mode must use the same underlying model.
+- [ ] Add effective-dated availability versions to the staff portal so a future change can be submitted without changing the current scheduling week.
 - [ ] Add saved staff availability patterns that can be assigned to specific schedule weeks.
 - [ ] Add rotating availability patterns that repeat every X weeks, such as Week A/Week B rotations.
 - [ ] Add week-to-week availability mode for staff who do not have stable recurring availability; treat them as unavailable until the target week is submitted.
 - [ ] Add automated availability reminders with employee-selected channels, up to three reminders per target week, stopping once availability is submitted.
 - [ ] Add manager early-schedule trigger so managers can request availability earlier than normal for a specific week.
 - [ ] Build shift release and pickup workflow with manager approval before schedule changes are applied.
+- [ ] Add staff shift release requests: one active request per shift, manager approval before the shift enters pickup.
+- [ ] Add eligible pickup requests with hard-rule checks for training, availability, overlaps, clopens, overtime, and no-doubles.
+- [ ] Add manager approval that applies an approved pickup through a server-side schedule mutation and preserves the full request history.
 - [ ] Add staff request audit trail and request history.
 - [ ] Add basic in-app notifications before email/SMS/push.
+- [ ] Add a staff notification/inbox surface for request decisions and pickup status.
+- [ ] Add location-scoped direct and manager-created group messaging shared by desktop and mobile portal clients.
+- [ ] Add messaging permissions: membership checks, manager moderation, archive behavior, unread counts, and retention policy.
+- [ ] Defer staff-created groups, attachments, reactions, typing indicators, presence, and push notifications until the basic messaging workflow is reliable.
 - [ ] Design cross-location staff pickup rules after the single-location staff portal works.
+- [ ] Replace raw availability text fields with compact start/end time controls, one visible window per day plus an add-window action. Keep day grouping obvious and allow added windows to be removed.
+- [ ] Finish named availability patterns and week assignment controls using the planned pattern/assignment tables: save up to four named patterns, assign a pattern to a specific week, and configure non-overlapping weekly/biweekly/rotation schedules.
+- [ ] Add schedule posting workflow: distinguish manager draft shifts from published staff-visible shifts, add a deliberate Publish Week action, preserve the published snapshot, and show staff only the latest published schedule.
 
 ## Longer-Term Product Direction
 

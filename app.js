@@ -1,4 +1,5 @@
 const STORE_KEY = "restaurantScheduler.v1";
+const CLOUD_RECOVERY_KEY = `${STORE_KEY}.cloudRecovery`;
 const STAFF_RESET_KEY = "restaurantScheduler.staffReset.20260611";
 const FOH_TEMPLATE_SEED_KEY = "restaurantScheduler.fohTemplateSeed.20260611";
 const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
@@ -19,6 +20,26 @@ const LOCAL_TEST_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const IS_LOCAL_TEST_HOST = LOCAL_TEST_HOSTS.has(location.hostname);
 const SERVER_STORAGE_ENABLED = (location.protocol === "http:" || location.protocol === "https:") &&
   (!IS_LOCAL_TEST_HOST || PUBLIC_CONFIG.enableCloudOnLocal === true);
+const NORMALIZED_QUERY = new URLSearchParams(window.location.search);
+const NORMALIZED_EMPLOYEE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedEmployees") === "shadow";
+const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule") === "shadow";
+const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
+// Normalized records are now the default manager read path. Keep one URL-level
+// escape hatch while the legacy document remains available for rollback.
+const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
+const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
+const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
+const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
+  NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
+const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
+  NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-sandbox-revision";
+// Direct writes are a controlled Sandbox-only canary. The normal application
+// continues to write the compatibility snapshot while this path is proven.
+const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
+  ["direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule"));
+const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
+let normalizedScheduleReadState = "off";
+let normalizedAvailabilityReadState = "off";
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
@@ -39,19 +60,48 @@ let authConfig = null;
 let authRequired = false;
 let authSession = loadAuthSession();
 let currentUser = null;
+let currentLoginEmail = authSession?.email || "";
 let availableLocations = [];
 let selectedLocationId = loadSelectedLocationId();
+const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
+  ? "legacy-snapshot"
+  : NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE
+    ? "normalized-sandbox-atomic-revision"
+  : NORMALIZED_SCHEDULE_REVISION_CANARY_MODE
+    ? "normalized-sandbox-direct-revision"
+    : NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
+    ? "normalized-sandbox-direct"
+    : NORMALIZED_LIVE_CANARY_MODE
+    ? "normalized"
+    : "snapshot";
+// A compatibility snapshot or a direct-write canary can intentionally read a
+// different source from the browser's last cached schedule. Do not paint that
+// cached schedule first, otherwise a shift can briefly appear in the wrong
+// place before hydration replaces it with the selected source.
+const DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE = SERVER_STORAGE_ENABLED &&
+  (LEGACY_SNAPSHOT_OVERRIDE || NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE);
+let initialReadSourceHydrationPending = DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE;
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let employeeProfileSavePriority = false;
+let cloudSaveBlockedByStale = false;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
+let lastKnownServerState = null;
+let cloudFreshnessCheckInFlight = false;
 let skipLocalRecoveryOnce = false;
+let lastKnownNormalizedScheduleRevision = null;
 let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
 let currentMonth = new Date();
+
+function readSourceKey() {
+  return `${STORE_KEY}.readSource.${selectedLocationId || "unknown"}`;
+}
+
 let selectedCell = null;
 let selectedShiftId = null;
 let selectedTimeOffRequestId = null;
@@ -87,14 +137,23 @@ let issuePopoverOpen = false;
 let scheduleReturnContext = null;
 let gridFiltersStayOpen = false;
 let gridFiltersChangedWhileOpen = false;
+let recentActivityDetailsVisible = false;
+let recentActivityEvents = [];
 let focusedDateKey = "";
 let dayFocusTimelineDrag = null;
 let dayFocusShowOpenShifts = loadDayFocusShowOpenShifts();
 let dayFocusSortMode = loadDayFocusSortMode();
 let dayFocusExpandedEligibleShiftIds = new Set();
 let employeeWeeklyAvailabilityWeekKey = "";
+let selectedAvailabilityPatternId = "";
+let selectedAvailabilityDayIndex = 0;
+let availabilityEditingPatternId = "";
+let availabilitySaveRequested = false;
+let submitAvailabilityPatternRequested = false;
+let deactivateAvailabilityPatternRequested = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
+let employeeFormHydrating = false;
 let employeeNewProfileDraft = false;
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
@@ -302,6 +361,7 @@ function defaultState() {
       showShiftNameFields: false,
       autoSetCloserEndTime: true,
       closerEndBufferMinutes: 60,
+      floorPlanCleanupMinutes: 90,
       flexDoubleEndTime: "7:00 PM",
       lunchCloserEndTime: "5:00 PM",
       closerTrainingRule: "onePerDay",
@@ -701,9 +761,16 @@ function saveState(options = {}) {
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (SERVER_STORAGE_ENABLED && serverStorageReady) {
+    // Profile-only saves merge one employee record on the server, so they can
+    // safely proceed while this browser's broader schedule snapshot is stale.
+    if (cloudSaveBlockedByStale && options.scope !== "employee-profile") {
+      refreshBlockedCloudRecovery(state);
+      setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+      return Promise.resolve(false);
+    }
     if (options.immediate) {
       clearTimeout(serverSaveTimer);
-      return persistStateToServer();
+      return persistStateToServer(options);
     }
     queueServerSave();
   }
@@ -723,6 +790,7 @@ function storageStatusLabel(status) {
     saving: "Cloud saving",
     saved: "Cloud saved",
     error: "Cloud save issue",
+    stale: "CLOUD SAVE REJECTED",
     local: "LOCAL MODE"
   };
   const label = labels[status] || "Storage";
@@ -742,6 +810,7 @@ function storageStatusTitle() {
   if (storageStatus === "saved") return [localCloudPrefix, "Cloud connected. Schedule data is saving to Supabase."].filter(Boolean).join(" ");
   if (storageStatus === "saving") return [localCloudPrefix, "Saving schedule changes to Supabase."].filter(Boolean).join(" ");
   if (storageStatus === "local") return IS_LOCAL_TEST_HOST ? "LOCAL TEST MODE: changes are only in this browser and will not sync to the cloud." : "LOCAL MODE: changes are only on this computer and will not sync.";
+  if (storageStatus === "stale") return "CLOUD SAVE REJECTED: this window is behind a newer shared schedule. Refresh before making more edits. Your rejected edits are preserved for review.";
   if (storageStatus === "error") return "Cloud storage is not available. Browser backup is still saved locally.";
   return "Storage status";
 }
@@ -756,7 +825,11 @@ function updateStorageStatus() {
   button.setAttribute("aria-label", `Storage status: ${label.textContent}`);
 }
 
-function serverEnvelope() {
+function serverEnvelope(options = {}) {
+  const employeeId = options.employeeId || "";
+  const employeeProfile = options.scope === "employee-profile" && employeeId
+    ? state.employees.find((employee) => String(employee?.id || "") === String(employeeId)) || null
+    : null;
   return {
     app: "restaurant-scheduler",
     schemaVersion: DATA_SCHEMA_VERSION,
@@ -764,24 +837,129 @@ function serverEnvelope() {
     savedByDeviceId: getDeviceId(),
     savedBy: currentSaveActor(),
     baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
+    saveScope: options.scope || "schedule",
+    saveMode: NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && options.scope !== "employee-profile"
+      ? (NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE
+        ? "normalized-sandbox-atomic-revision"
+        : (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE ? "normalized-sandbox-direct-revision" : "normalized-sandbox-direct"))
+      : "snapshot-bridge",
+    normalizedScheduleRevision: (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE || NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE)
+      ? lastKnownNormalizedScheduleRevision
+      : null,
+    employeeId,
+    // Send the exact profile being saved. The server deliberately ignores the
+    // rest of the browser's schedule snapshot for this scoped operation.
+    employeeProfile,
     data: state
   };
 }
 
+async function persistEmployeeProfileToServer(employee) {
+  if (!canEditScheduler()) {
+    setStorageStatus("saved", readOnlyMessage());
+    showReadOnlyNotice();
+    return false;
+  }
+  if (!SERVER_STORAGE_ENABLED || !serverStorageReady) {
+    setEmployeeSaveDebugStatus("Cloud request did not start: cloud storage is not ready", "failed");
+    return false;
+  }
+
+  const saveAttemptId = `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  setEmployeeSaveDebugStatus(`Cloud request started [${saveAttemptId}]`);
+
+  // A profile write must never be folded into the debounced whole-schedule
+  // save. Claim priority before waiting so another large schedule request
+  // cannot repeatedly jump ahead of this smaller, targeted profile update.
+  employeeProfileSavePriority = true;
+  clearTimeout(serverSaveTimer);
+  const startedAt = Date.now();
+  while (serverSaveInFlight && Date.now() - startedAt < 15000) {
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  if (serverSaveInFlight) {
+    employeeProfileSavePriority = false;
+    setStorageStatus("error", "Employee profile save is waiting on another cloud request. Try again in a moment.");
+    return false;
+  }
+
+  serverSaveInFlight = true;
+  setStorageStatus("saving", "Saving employee profile...");
+  try {
+    const response = await authFetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app: "restaurant-scheduler",
+        schemaVersion: DATA_SCHEMA_VERSION,
+        savedAt: nowIso(),
+        savedByDeviceId: getDeviceId(),
+        savedBy: currentSaveActor(),
+        baseServerSavedAt: lastKnownServerSavedAt || state.meta?.serverSavedAt || "",
+        saveScope: "employee-profile",
+        saveAttemptId,
+        employeeId: employee.id,
+        employeeProfile: employee
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Employee profile save failed: ${response.status}`);
+    if (result.savedAt) {
+      lastKnownServerSavedAt = result.savedAt;
+      state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (lastKnownServerState?.employees) {
+        lastKnownServerState.employees = lastKnownServerState.employees.map((item) => String(item?.id || "") === String(employee?.id || "") ? cloneSchedulerState(employee) : item);
+      }
+    }
+    setStorageStatus("saved", "Employee profile saved to the shared scheduler data file.");
+    setEmployeeSaveDebugStatus(`Cloud save confirmed [${saveAttemptId}]`, "confirmed");
+    return true;
+  } catch (error) {
+    const message = error?.message || "Could not save the employee profile to the shared scheduler data file.";
+    setStorageStatus("error", message);
+    setEmployeeSaveDebugStatus(`Cloud save failed [${saveAttemptId}]: ${message}`, "failed");
+    showConflict(message);
+    return false;
+  } finally {
+    serverSaveInFlight = false;
+    employeeProfileSavePriority = false;
+    if (serverSavePending) {
+      serverSavePending = false;
+      queueServerSave();
+    }
+  }
+}
+
 function queueServerSave() {
+  if (cloudSaveBlockedByStale) {
+    setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+    return;
+  }
   clearTimeout(serverSaveTimer);
   setStorageStatus("saving", "Saving to the shared scheduler data file...");
   serverSaveTimer = setTimeout(() => persistStateToServer(), 500);
 }
 
-async function persistStateToServer() {
+async function persistStateToServer(options = {}) {
   if (!canEditScheduler()) {
     setStorageStatus("saved", readOnlyMessage());
     showReadOnlyNotice();
     return false;
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
+  if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
   if (serverSaveInFlight) {
+    // A profile save must not be reported as failed just because a queued
+    // scheduler save is already using the connection. Wait for that request,
+    // then send the profile merge as the last write.
+    if (options.immediate && options.scope === "employee-profile") {
+      const startedAt = Date.now();
+      while (serverSaveInFlight && Date.now() - startedAt < 15000) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      if (!serverSaveInFlight) return persistStateToServer(options);
+    }
     serverSavePending = true;
     return false;
   }
@@ -791,7 +969,7 @@ async function persistStateToServer() {
     const response = await authFetch("/api/state", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(serverEnvelope())
+      body: JSON.stringify(serverEnvelope(options))
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
     if (response.status === 403) {
@@ -800,23 +978,57 @@ async function persistStateToServer() {
     }
     if (response.status === 409) {
       const conflict = await response.json().catch(() => ({}));
-      throw new Error(conflict.error || "This window is behind the latest cloud version. Refresh before saving.");
+      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, conflict.existingUpdatedAt || "");
+      try {
+        const latestResponse = await authFetch("/api/state", { cache: "no-store" });
+        if (latestResponse.ok) {
+          const latestEnvelope = await latestResponse.json();
+          recovery.changes = stateCollectionChanges(state, normalizeLoadedState(latestEnvelope.data || latestEnvelope));
+        }
+      } catch {
+        // The full change list can still be computed after the user refreshes.
+      }
+      saveCloudRecovery(recovery);
+      cloudSaveBlockedByStale = true;
+      setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+      showStaleRecoveryAlert(recovery, true);
+      return false;
     }
-    if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      const serverError = String(errorBody?.error || errorBody?.message || "").trim();
+      if (response.status === 546) {
+        throw new Error("Cloud save was stopped by Supabase resource limits. The normalized Sandbox save was not completed; refresh and retry once.");
+      }
+      throw new Error(serverError ? `Save failed: ${response.status} - ${serverError}` : `Save failed: ${response.status}`);
+    }
     const result = await response.json().catch(() => ({}));
     if (result.savedAt) {
       lastKnownServerSavedAt = result.savedAt;
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      lastKnownServerState = cloneSchedulerState(state);
     }
-    setStorageStatus("saved", "Connected to the shared scheduler data file.");
+    if (Number.isInteger(Number(result.normalizedScheduleRevision))) {
+      lastKnownNormalizedScheduleRevision = Number(result.normalizedScheduleRevision);
+    }
+    if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
+      setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
+    } else if (result.normalizedDirect) {
+      setStorageStatus("saved", "Saved directly to normalized Sandbox schedule records.");
+    } else {
+      setStorageStatus("saved", "Connected to the shared scheduler data file.");
+    }
     saved = true;
   } catch (error) {
     setStorageStatus("error", error?.message || "Could not save to the shared scheduler file. Browser backup is still saved locally.");
     showConflict(error?.message || "Could not save to the shared scheduler file. Your browser copy is still saved locally.");
   } finally {
     serverSaveInFlight = false;
-    if (serverSavePending) {
+    // A targeted employee save may be waiting behind this whole-schedule
+    // request. Let it run next; it will resume any pending schedule save once
+    // the profile is safely confirmed.
+    if (!employeeProfileSavePriority && serverSavePending) {
       serverSavePending = false;
       queueServerSave();
     }
@@ -906,6 +1118,7 @@ function saveAuthSession(session) {
 function clearAuthSession() {
   authSession = null;
   currentUser = null;
+  currentLoginEmail = "";
   try {
     localStorage.removeItem(AUTH_SESSION_KEY);
   } catch {
@@ -998,6 +1211,7 @@ function showPasswordChangeDialog() {
   setPasswordChangeMessage("");
   const dialog = $("passwordChangeDialog");
   if (!dialog) return;
+  dialog.dataset.loginEmail = currentLoginEmail || currentUser?.email || authSession?.email || authSession?.user?.email || "";
   if (!dialog.open) dialog.showModal();
   window.setTimeout(() => $("newManagerPassword")?.focus(), 50);
 }
@@ -1016,6 +1230,414 @@ function closeAccountMenu() {
 }
 function isDemoLocation() {
   return selectedLocationId === DEMO_LOCATION_ID;
+}
+
+function setNormalizedScheduleReadBadge(readState = "off") {
+  normalizedScheduleReadState = readState;
+  updateNormalizedReadBadge();
+}
+
+function updateNormalizedReadBadge() {
+  const badge = $("normalizedReadBadge");
+  if (!badge) return;
+  const enabled = Boolean(NORMALIZED_LIVE_CANARY_MODE && (
+    (NORMALIZED_SCHEDULE_READ_MODE && normalizedScheduleReadState !== "off") ||
+    (NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off")
+  ));
+  badge.hidden = !enabled;
+  if (!enabled) {
+    badge.dataset.state = "";
+    return;
+  }
+  const labels = {
+    requested: "Read check...",
+    active: "Normalized Read",
+    unavailable: "Read unavailable",
+    availabilityRequested: "Availability check...",
+    availabilityActive: "Normalized Availability Read",
+    availabilityUnavailable: "Availability read unavailable"
+  };
+  const readState = NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off" && !NORMALIZED_SCHEDULE_READ_MODE
+    ? normalizedAvailabilityReadState
+    : normalizedScheduleReadState;
+  badge.textContent = labels[readState] || labels.requested;
+  badge.dataset.state = readState;
+  document.body.dataset.normalizedScheduleRead = normalizedScheduleReadState;
+  document.body.dataset.normalizedAvailabilityRead = normalizedAvailabilityReadState;
+}
+
+function normalizedEmployeeShadowValue(employee = {}) {
+  const roleIds = (value) => Array.from(new Set(Array.isArray(value) ? value.map(String) : [])).sort();
+  const availability = {};
+  for (let dayIndex = 0; dayIndex <= 6; dayIndex++) {
+    const windows = Array.isArray(employee.availability?.[dayIndex]) ? employee.availability[dayIndex] : [];
+    availability[dayIndex] = windows.map((window) => ({
+      start: String(window?.start || ""),
+      end: String(window?.end || "")
+    }));
+  }
+  const roleMealTraining = Object.fromEntries(
+    Object.entries(employee.roleMealTraining || {})
+      .map(([roleId, meals]) => [String(roleId), Array.isArray(meals) ? meals.map(String).sort() : []])
+      // A missing meal-training entry and an empty entry both mean no meal
+      // training. The normalized capability table can return the latter.
+      .filter(([, meals]) => meals.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+  return {
+    id: String(employee.id || ""),
+    // This is intentionally limited to the fields proven by the Sandbox
+    // migration. Profile, pay, rules, and availability-pattern fields remain
+    // snapshot-backed until their own migration work is complete.
+    roleTraining: roleIds(employee.roleTraining),
+    trainerRoles: roleIds(employee.trainerRoles),
+    emergencyRoleIds: roleIds(employee.emergencyRoleIds),
+    roleMealTraining,
+    availability
+  };
+}
+
+function normalizedEmployeeShadowDifferences(snapshotEmployees = [], normalizedEmployees = []) {
+  const snapshotById = new Map((snapshotEmployees || []).map((employee) => [String(employee.id || ""), normalizedEmployeeShadowValue(employee)]));
+  const normalizedById = new Map((normalizedEmployees || []).map((employee) => [String(employee.id || ""), normalizedEmployeeShadowValue(employee)]));
+  const differences = [];
+  snapshotById.forEach((snapshotEmployee, id) => {
+    if (!normalizedById.has(id)) {
+      differences.push(`${displayName(snapshotEmployee) || id}: missing from normalized data`);
+      return;
+    }
+    if (JSON.stringify(snapshotEmployee) !== JSON.stringify(normalizedById.get(id))) {
+      differences.push(`${displayName(snapshotEmployee) || id}: normalized fields differ`);
+    }
+  });
+  normalizedById.forEach((employee, id) => {
+    if (!snapshotById.has(id)) differences.push(`${displayName(employee) || id}: missing from snapshot data`);
+  });
+  return differences;
+}
+
+async function runNormalizedEmployeeShadowCheck() {
+  if (!NORMALIZED_EMPLOYEE_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({
+      title: "Normalized employee check is Sandbox-only",
+      message: "Switch to the Sandbox location before using the normalized employee shadow check.",
+      type: "warning"
+    });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/employees", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized employee records.");
+    const differences = normalizedEmployeeShadowDifferences(state.employees || [], payload.employees || []);
+    document.body.dataset.normalizedEmployeeShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedEmployeeShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({
+        title: "Sandbox normalized employee mismatch",
+        message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized employee difference${differences.length === 1 ? "" : "s"} need review before any read-source switch.`,
+        items: differences.slice(0, 20),
+        type: "warning"
+      });
+      return;
+    }
+    showAppAlert({
+      title: "Sandbox normalized employee check passed",
+      message: `${payload.employees?.length || 0} employee records match the current cloud snapshot for the fields migrated in this phase. The scheduler is still using the snapshot; no read source has been switched.`,
+      type: "info"
+    });
+  } catch (error) {
+    document.body.dataset.normalizedEmployeeShadow = "error";
+    showAppAlert({
+      title: "Normalized employee check could not run",
+      message: error.message || "Could not load normalized employee records.",
+      type: "warning"
+    });
+  }
+}
+
+function saveStaffSession(session, email = "") {
+  const normalized = {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600),
+    email: session.user?.email || email,
+    locationId: session.locationId || ""
+  };
+  try {
+    localStorage.setItem("shiftBay.staffSession.v1", JSON.stringify(normalized));
+  } catch {
+    // The staff page can still use the redirect if storage is unavailable.
+  }
+}
+
+function normalizedScheduleShadowValue(schedule = {}) {
+  const clean = (value) => String(value || "");
+  const sortById = (items) => (Array.isArray(items) ? items : []).map((item) => ({
+    id: clean(item?.id),
+    employeeId: clean(item?.employeeId),
+    roleId: clean(item?.roleId),
+    date: clean(item?.date),
+    start: clean(item?.start),
+    end: clean(item?.end),
+    notes: clean(item?.notes),
+    reason: clean(item?.reason || item?.note),
+    source: clean(item?.source),
+    daypart: clean(item?.daypart),
+    kind: clean(item?.kind || (item?.blockType ? "block" : "ro")),
+    blockType: clean(item?.blockType),
+    shiftLabel: clean(item?.shiftLabel),
+    // Older snapshot shifts can omit department; their long-standing default
+    // is FOH, which the normalized migration writes explicitly.
+    department: clean(item?.department || "FOH"),
+    allDay: item?.allDay !== false,
+    untilVolume: Boolean(item?.untilVolume),
+    isCloser: Boolean(item?.isCloser),
+    isLunchCloser: Boolean(item?.isLunchCloser),
+    isFlexDouble: Boolean(item?.isFlexDouble),
+    color: item?.color || null,
+    dayIndex: Number(item?.dayIndex || 0),
+    sortOrder: Number(item?.sortOrder || 0),
+    meals: Array.isArray(item?.meals) ? item.meals.map(String).sort() : [],
+    training: item?.training || {}
+  })).sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+  return {
+    shifts: sortById(schedule.shifts),
+    unassignedShifts: sortById(schedule.unassignedShifts),
+    timeOffRequests: sortById(schedule.timeOffRequests),
+    templates: (Array.isArray(schedule.templates) ? schedule.templates : []).map((template) => ({
+      id: clean(template?.id), name: clean(template?.name), active: template?.active !== false,
+      shifts: sortById((template?.shifts || []).map((shift, sortOrder) => ({ ...shift, sortOrder: Number(shift?.sortOrder ?? sortOrder) })))
+    })).sort((left, right) => left.id.localeCompare(right.id))
+  };
+}
+
+function normalizedScheduleShadowDifferences(snapshot = {}, normalized = {}) {
+  const source = normalizedScheduleShadowValue(snapshot);
+  const shadow = normalizedScheduleShadowValue(normalized);
+  const differences = [];
+  ["shifts", "unassignedShifts", "timeOffRequests", "templates"].forEach((key) => {
+    const sourceById = new Map(source[key].map((item) => [item.id, item]));
+    const shadowById = new Map(shadow[key].map((item) => [item.id, item]));
+    sourceById.forEach((sourceItem, id) => {
+      const shadowItem = shadowById.get(id);
+      if (!shadowItem) {
+        differences.push(`${key} ${id}: missing from normalized data`);
+        return;
+      }
+      const fields = [...new Set([...Object.keys(sourceItem), ...Object.keys(shadowItem)])]
+        .filter((field) => JSON.stringify(sourceItem[field]) !== JSON.stringify(shadowItem[field]));
+      if (fields.length) differences.push(`${key} ${id}: ${fields.join(", ")} differ`);
+    });
+    shadowById.forEach((_shadowItem, id) => {
+      if (!sourceById.has(id)) differences.push(`${key} ${id}: missing from snapshot data`);
+    });
+  });
+  return differences;
+}
+
+async function runNormalizedScheduleShadowCheck() {
+  if (!NORMALIZED_SCHEDULE_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({ title: "Normalized schedule check is Sandbox-only", message: "Switch to the Sandbox location before using the normalized schedule shadow check.", type: "warning" });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/schedule", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized schedule records.");
+    const differences = normalizedScheduleShadowDifferences(state, payload);
+    document.body.dataset.normalizedScheduleShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedScheduleShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({ title: "Sandbox normalized schedule mismatch", message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized schedule area${differences.length === 1 ? "" : "s"} need review before any read-source switch.`, items: differences, type: "warning" });
+      return;
+    }
+    showAppAlert({ title: "Sandbox normalized schedule check passed", message: "Assigned shifts, Shift Bay shifts, ROs, blocks, and templates match the current snapshot. The scheduler is still using the snapshot; no read source has been switched.", type: "info" });
+  } catch (error) {
+    document.body.dataset.normalizedScheduleShadow = "error";
+    showAppAlert({ title: "Normalized schedule check could not run", message: error.message || "Could not load normalized schedule records.", type: "warning" });
+  }
+}
+
+function normalizedAvailabilityShadowValue(employee = {}) {
+  const patterns = availabilityPatternsForEmployee(employee).map((pattern, index) => {
+    const id = `availability-profile:${employee.id}:${pattern.id || index + 1}`;
+    const windows = DAYS.flatMap((_day, dayIndex) => {
+      const ranges = Array.isArray(pattern.availability?.[dayIndex]) ? pattern.availability[dayIndex] : [];
+      return ranges
+        .filter((range) => range && (range.start || range.end))
+        .map((range, sortOrder) => ({
+          dayIndex,
+          start: String(range.start || ""),
+          end: String(range.end || ""),
+          available: true,
+          sortOrder
+        }));
+    }).sort((left, right) => left.dayIndex - right.dayIndex || left.sortOrder - right.sortOrder);
+    const status = pattern.active !== false
+      ? "active"
+      : pattern.approvalStatus === "approved" || pattern.approved === true
+        ? "approved"
+        : ["submitted", "pending"].includes(pattern.approvalStatus)
+          ? "submitted"
+          : "draft";
+    return {
+      id,
+      name: String(pattern.name || ""),
+      windows,
+      assignment: status === "draft" ? null : {
+        id: `availability-assignment:${employee.id}:${pattern.id || index + 1}`,
+        effectiveDate: normalizeAvailabilityEffectiveDate(pattern.effectiveDate || ""),
+        repeatWeeks: Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
+        status
+      }
+    };
+  });
+  return patterns.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function normalizedAvailabilityShadowDifferences(snapshotEmployees = [], normalizedEmployees = []) {
+  const snapshotById = new Map((snapshotEmployees || []).map((employee) => [String(employee.id || ""), employee]));
+  const normalizedById = new Map((normalizedEmployees || []).map((employee) => [String(employee.id || ""), employee]));
+  const differences = [];
+  snapshotById.forEach((snapshotEmployee, employeeId) => {
+    const expected = normalizedAvailabilityShadowValue(snapshotEmployee);
+    const actual = (normalizedById.get(employeeId)?.availabilityProfiles || []).map((profile) => ({
+      id: String(profile.id || ""),
+      name: String(profile.name || ""),
+      windows: (Array.isArray(profile.windows) ? profile.windows : []).map((window) => ({
+        dayIndex: Number(window.dayIndex),
+        start: String(window.start || ""),
+        end: String(window.end || ""),
+        available: window.available !== false,
+        sortOrder: Number(window.sortOrder || 0)
+      })).sort((left, right) => left.dayIndex - right.dayIndex || left.sortOrder - right.sortOrder),
+      assignment: (Array.isArray(profile.assignments) ? profile.assignments : [profile.assignment])
+        .filter(Boolean)
+        .map((assignment) => ({
+          id: String(assignment.id || ""),
+          effectiveDate: normalizeAvailabilityEffectiveDate(assignment.effectiveDate || ""),
+          repeatWeeks: Math.max(1, Math.min(4, Number(assignment.repeatWeeks) || 1)),
+          status: String(assignment.status || "")
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))[0] || null
+    })).sort((left, right) => left.id.localeCompare(right.id));
+    if (!normalizedById.has(employeeId)) {
+      differences.push(`${displayName(snapshotEmployee) || employeeId}: missing from normalized availability data`);
+      return;
+    }
+    const actualById = new Map(actual.map((profile) => [profile.id, profile]));
+    expected.forEach((expectedProfile) => {
+      const actualProfile = actualById.get(expectedProfile.id);
+      if (!actualProfile) {
+        differences.push(`${displayName(snapshotEmployee) || employeeId}: ${expectedProfile.name} missing from normalized availability data`);
+        return;
+      }
+      const fields = ["name", "windows", "assignment"]
+        .filter((field) => JSON.stringify(expectedProfile[field]) !== JSON.stringify(actualProfile[field]));
+      if (fields.length) differences.push(`${displayName(snapshotEmployee) || employeeId} / ${expectedProfile.name}: ${fields.join(", ")} differ`);
+      actualById.delete(expectedProfile.id);
+    });
+    actualById.forEach((profile) => differences.push(`${displayName(snapshotEmployee) || employeeId}: unexpected ${profile.name || profile.id} in normalized availability data`));
+  });
+  normalizedById.forEach((employee, employeeId) => {
+    if (!snapshotById.has(employeeId)) differences.push(`${employeeId}: normalized availability employee is missing from snapshot data`);
+  });
+  return differences;
+}
+
+async function runNormalizedAvailabilityShadowCheck() {
+  if (!NORMALIZED_AVAILABILITY_SHADOW_MODE) return;
+  if (!isDemoLocation()) {
+    showAppAlert({ title: "Normalized availability check is Sandbox-only", message: "Switch to the Sandbox location before using the normalized availability shadow check.", type: "warning" });
+    return;
+  }
+  try {
+    const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    const differences = normalizedAvailabilityShadowDifferences(state.employees || [], payload.employees || []);
+    document.body.dataset.normalizedAvailabilityShadow = differences.length ? "mismatch" : "clean";
+    window.__shiftBayNormalizedAvailabilityShadow = { checkedAt: payload.generatedAt || nowIso(), differences };
+    if (differences.length) {
+      showAppAlert({
+        title: "Sandbox normalized availability mismatch",
+        message: `The scheduler is still reading the cloud snapshot. ${differences.length} normalized availability difference${differences.length === 1 ? "" : "s"} need review before any read-source switch.`,
+        items: differences,
+        type: "warning"
+      });
+      return;
+    }
+    const profileCount = (payload.employees || []).reduce((count, employee) => count + (employee.availabilityProfiles || []).length, 0);
+    showAppAlert({
+      title: "Sandbox normalized availability check passed",
+      message: `${profileCount} availability profile${profileCount === 1 ? "" : "s"} match the current cloud snapshot. The scheduler is still using the snapshot; no read source has been switched.`,
+      type: "info"
+    });
+  } catch (error) {
+    document.body.dataset.normalizedAvailabilityShadow = "error";
+    showAppAlert({ title: "Normalized availability check could not run", message: error.message || "Could not load normalized availability records.", type: "warning" });
+  }
+}
+
+function normalizedAvailabilityReadPatterns(employee, normalizedEmployee) {
+  const prefix = `availability-profile:${employee.id}:`;
+  return (normalizedEmployee?.availabilityProfiles || []).map((profile) => {
+    const id = String(profile.id || "").startsWith(prefix)
+      ? String(profile.id).slice(prefix.length)
+      : String(profile.id || "");
+    const availability = emptyAvailability();
+    (Array.isArray(profile.windows) ? profile.windows : []).forEach((window) => {
+      const dayIndex = Number(window.dayIndex);
+      if (dayIndex < 0 || dayIndex > 6) return;
+      if (!Array.isArray(availability[dayIndex])) availability[dayIndex] = [];
+      if (window.available !== false) availability[dayIndex].push({ start: String(window.start || ""), end: String(window.end || "") });
+    });
+    const assignment = (Array.isArray(profile.assignments) ? profile.assignments : [profile.assignment]).filter(Boolean)[0] || null;
+    const status = String(assignment?.status || "").toLowerCase();
+    return {
+      id,
+      name: String(profile.name || "Availability"),
+      availability,
+      repeatWeeks: assignment ? Math.max(1, Math.min(4, Number(assignment.repeatWeeks) || 1)) : null,
+      effectiveDate: assignment?.effectiveDate ? normalizeAvailabilityEffectiveDate(assignment.effectiveDate) : "",
+      active: status === "active",
+      approved: status === "approved",
+      approvalStatus: status
+    };
+  });
+}
+
+async function applyNormalizedAvailabilityRead(serverState) {
+  if (!NORMALIZED_AVAILABILITY_READ_MODE) return;
+  normalizedAvailabilityReadState = "availabilityRequested";
+  updateNormalizedReadBadge();
+  try {
+    const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    const normalizedByEmployee = new Map((payload.employees || []).map((employee) => [String(employee.id || ""), employee]));
+    const missing = [];
+    const employees = (serverState.employees || []).map((employee) => {
+      const normalizedEmployee = normalizedByEmployee.get(String(employee.id || ""));
+      if (!normalizedEmployee) {
+        missing.push(displayName(employee) || employee.id || "Employee");
+        return employee;
+      }
+      return { ...employee, availabilityPatterns: normalizedAvailabilityReadPatterns(employee, normalizedEmployee) };
+    });
+    if (missing.length) throw new Error(`Normalized availability is missing ${missing.length} employee${missing.length === 1 ? "" : "s"}: ${missing.slice(0, 5).join(", ")}.`);
+    normalizedAvailabilityReadState = "availabilityActive";
+    updateNormalizedReadBadge();
+    return { ...serverState, employees };
+  } catch (error) {
+    console.warn("Normalized availability fallback:", error?.message || error);
+    normalizedAvailabilityReadState = "availabilityUnavailable";
+    updateNormalizedReadBadge();
+    return serverState;
+  }
 }
 
 function demoRoleId(name) {
@@ -1057,6 +1679,8 @@ function buildDemoEmployee(firstName, lastName, roleNames, options = {}) {
     mealTraining: options.mealTraining || ["Breakfast", "Lunch", "Dinner", "Brunch"],
     roleMealTraining: options.roleMealTraining || {},
     availability: options.availability || makeDemoAvailability(),
+    availabilityPatterns: options.availabilityPatterns || [],
+    availabilitySubmissions: options.availabilitySubmissions || [],
     weeklyAvailability: {},
     weeklyRules: [],
     payRates: {},
@@ -1115,11 +1739,88 @@ function buildDemoSchedulerState() {
   const demo = defaultState();
   state = demo;
   const employees = [
-    buildDemoEmployee("Alex", "Rivera", ["Server", "Bartender"], { canClose: true, canLunchClose: true, trainerRoles: ["Server"] }),
-    buildDemoEmployee("Morgan", "Lane", ["Server"], { canClose: true, managerNotes: "Strong dinner seller; use for prime shifts in demos." }),
-    buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], { canLunchClose: true }),
+    buildDemoEmployee("Alex", "Rivera", ["Server", "Bartender"], {
+      canClose: true,
+      canLunchClose: true,
+      trainerRoles: ["Server"],
+      managerNotes: "Demo: alternating availability weeks. Compare the two live tabs above.",
+      availabilityPatterns: [
+        {
+          id: "demo-alex-alternating-a",
+          name: "Alternating - Open Week",
+          availability: makeDemoAvailability(),
+          repeatWeeks: 2,
+          active: true,
+          effectiveDate: "2026-07-27"
+        },
+        {
+          id: "demo-alex-alternating-b",
+          name: "Alternating - School Week",
+          availability: makeDemoAvailability({ 1: [{ start: "4:00 PM", end: "10:00 PM" }], 2: [{ start: "4:00 PM", end: "10:00 PM" }], 4: [{ start: "4:00 PM", end: "10:00 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }] }),
+          repeatWeeks: 2,
+          active: true,
+          effectiveDate: "2026-08-03"
+        }
+      ]
+    }),
+    buildDemoEmployee("Morgan", "Lane", ["Server"], {
+      canClose: true,
+      managerNotes: "Demo: live availability plus an approved change that starts two weeks from now.",
+      availabilityPatterns: [
+        {
+          id: "demo-morgan-live",
+          name: "Live - Regular Week",
+          availability: makeDemoAvailability(),
+          repeatWeeks: 1,
+          active: true,
+          effectiveDate: "2026-07-27"
+        },
+        {
+          id: "demo-morgan-future-approved",
+          name: "Approved - Starts in 2 Weeks",
+          availability: makeDemoAvailability({ 1: [{ start: "4:00 PM", end: "10:00 PM" }], 2: [{ start: "4:00 PM", end: "10:00 PM" }], 3: [{ start: "4:00 PM", end: "10:00 PM" }], 4: [{ start: "4:00 PM", end: "10:00 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }] }),
+          repeatWeeks: 1,
+          active: true,
+          effectiveDate: "2026-08-13",
+          active: false,
+          approvalStatus: "approved",
+          approved: true
+        }
+      ]
+    }),
+    buildDemoEmployee("Taylor", "Brooks", ["Host", "Expo"], {
+      canLunchClose: true,
+      managerNotes: "Demo: live availability plus a submitted availability waiting for approval.",
+      availabilityPatterns: [{
+        id: "demo-taylor-live",
+        name: "Live - Host Week",
+        availability: makeDemoAvailability({ 0: [{ start: "9:00 AM", end: "2:00 PM" }], 1: [{ start: "9:00 AM", end: "2:00 PM" }], 2: [{ start: "9:00 AM", end: "2:00 PM" }], 3: [{ start: "9:00 AM", end: "2:00 PM" }], 4: [{ start: "9:00 AM", end: "2:00 PM" }], 5: [{ start: "9:00 AM", end: "2:00 PM" }], 6: [{ start: "9:00 AM", end: "2:00 PM" }] }),
+        repeatWeeks: 1,
+        active: true,
+        effectiveDate: "2026-07-27"
+      }],
+      availabilitySubmissions: [{
+        id: "demo-taylor-pending",
+        weekStart: "2026-08-10",
+        status: "submitted",
+        note: "Demo pending manager approval",
+        availability: makeDemoAvailability({ 0: [{ start: "11:00 AM", end: "6:00 PM" }], 1: [{ start: "11:00 AM", end: "6:00 PM" }], 2: [{ start: "11:00 AM", end: "6:00 PM" }], 3: [{ start: "11:00 AM", end: "6:00 PM" }], 4: [{ start: "11:00 AM", end: "6:00 PM" }], 5: [{ start: "11:00 AM", end: "6:00 PM" }], 6: [] })
+      }]
+    }),
     buildDemoEmployee("Jordan", "Kim", ["Busser"], { availability: makeDemoAvailability({ 2: [{ start: "4:00 PM", end: "11:59 PM" }], 5: [{ start: "4:00 PM", end: "11:59 PM" }], 6: [{ start: "9:00 AM", end: "11:59 PM" }] }) }),
-    buildDemoEmployee("Casey", "Stone", ["Bartender", "Server"], { canClose: true, noDoubles: true }),
+    buildDemoEmployee("Casey", "Stone", ["Bartender", "Server"], {
+      canClose: true,
+      noDoubles: true,
+      managerNotes: "Demo: saved availability draft that is inactive and available to activate later.",
+      availabilityPatterns: [{
+        id: "demo-casey-inactive-draft",
+        name: "College Break Draft",
+        availability: makeDemoAvailability({ 0: [{ start: "10:00 AM", end: "6:00 PM" }], 1: [{ start: "10:00 AM", end: "6:00 PM" }], 2: [{ start: "10:00 AM", end: "6:00 PM" }], 3: [{ start: "10:00 AM", end: "6:00 PM" }], 4: [{ start: "10:00 AM", end: "6:00 PM" }], 5: [{ start: "10:00 AM", end: "6:00 PM" }], 6: [{ start: "10:00 AM", end: "6:00 PM" }] }),
+        repeatWeeks: null,
+        active: false,
+        effectiveDate: ""
+      }]
+    }),
     buildDemoEmployee("Riley", "Chen", ["Server", "Banquet Server"], { canClose: true }),
     buildDemoEmployee("Sam", "Patel", ["Host", "Expo"], { canLunchClose: true }),
     buildDemoEmployee("Jamie", "Ortiz", ["Server"], { managerNotes: "Demo trainee candidate." }),
@@ -1292,6 +1993,8 @@ async function handleLocationSwitcherChange(event) {
 }
 function updateAccountUi() {
   document.body.classList.toggle("viewer-read-only", currentAccessRole() === "viewer");
+  const employeeSaveDebugStatus = $("employeeSaveDebugStatus");
+  if (employeeSaveDebugStatus && currentAccessRole() !== "owner") employeeSaveDebugStatus.hidden = true;
   const avatar = $("accountAvatar");
   const title = $("accountMenuTitle");
   const status = $("accountMenuStatus");
@@ -1300,9 +2003,12 @@ function updateAccountUi() {
   const recent = $("recentActivityBtn");
   const managers = $("manageManagersBtn");
   const resetDemo = $("resetDemoDataBtn");
+  const sandboxStaffPortal = $("sandboxStaffPortalBtn");
   const sandboxBadge = $("sandboxBadge");
   renderLocationSwitcher();
   if (sandboxBadge) sandboxBadge.hidden = !isDemoLocation();
+  if (!NORMALIZED_LIVE_CANARY_MODE) setNormalizedScheduleReadBadge("off");
+  else if (NORMALIZED_SCHEDULE_READ_MODE && normalizedScheduleReadState === "off") setNormalizedScheduleReadBadge("requested");
   if (currentUser) {
     if (avatar) avatar.textContent = accountInitial(currentUser.email);
     if (title) title.textContent = shortAccountName(currentUser.email);
@@ -1314,6 +2020,7 @@ function updateAccountUi() {
     if (recent) recent.hidden = false;
     if (managers) managers.hidden = currentUser.role !== "owner";
     if (resetDemo) resetDemo.hidden = !(role === "owner" && isDemoLocation());
+    if (sandboxStaffPortal) sandboxStaffPortal.hidden = !isDemoLocation();
     return;
   }
   document.body.classList.remove("viewer-read-only");
@@ -1325,6 +2032,7 @@ function updateAccountUi() {
   if (recent) recent.hidden = authRequired;
   if (managers) managers.hidden = true;
   if (resetDemo) resetDemo.hidden = true;
+  if (sandboxStaffPortal) sandboxStaffPortal.hidden = true;
   if (sandboxBadge) sandboxBadge.hidden = true;
 }
 
@@ -1409,6 +2117,7 @@ async function validateAuthSession(session = authSession) {
   const result = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(result?.error || "Could not verify login.");
   currentUser = result.user;
+  currentLoginEmail = result.user?.email || currentLoginEmail || authSession?.email || "";
   await loadUserLocations().catch(() => []);
   updateAccountUi();
   return result.user;
@@ -1416,16 +2125,26 @@ async function validateAuthSession(session = authSession) {
 
 async function signInWithPassword(email, password) {
   if (!authConfig?.enabled) throw new Error("Cloud login is missing the Supabase anon key setup.");
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPassword = String(password || "");
+  if (!normalizedEmail || !normalizedPassword) throw new Error("Email and password are required.");
   const result = await fetchJson("/api/auth/login", {
     method: "POST",
     headers: {
-      ...selectedLocationHeaders(),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email: normalizedEmail, password: normalizedPassword })
   });
   const session = result.session;
   if (!session?.access_token) throw new Error("Supabase did not return a login session.");
+  if (result.accountType === "staff") {
+    currentLoginEmail = result.profile?.user?.email || normalizedEmail;
+    clearAuthSession();
+    saveStaffSession({ ...session, locationId: result.profile?.locationId || "" }, email);
+    window.location.href = "staff.html";
+    return { redirectingToStaffPortal: true };
+  }
+  currentLoginEmail = normalizedEmail;
   saveAuthSession({
     access_token: session.access_token,
     refresh_token: session.refresh_token,
@@ -1503,37 +2222,130 @@ async function hydrateStateFromServer() {
   if (!SERVER_STORAGE_ENABLED) return;
   setStorageStatus("connecting", "Connecting to the shared scheduler data file...");
   try {
-    const response = await authFetch("/api/state", { cache: "no-store" });
+    const statePath = NORMALIZED_SCHEDULE_READ_MODE ? "/api/state?normalizedSchedule=read" : "/api/state";
+    let response = await authFetch(statePath, { cache: "no-store" });
+    let normalizedSnapshotFallback = false;
+    if (!response.ok && NORMALIZED_SCHEDULE_READ_MODE && !LEGACY_SNAPSHOT_OVERRIDE) {
+      // The compatibility document is deliberately retained during cutover.
+      // A transient normalized-read failure must not leave a manager staring at
+      // an empty scheduler when the proven snapshot is still available.
+      response = await authFetch("/api/state", { cache: "no-store" });
+      normalizedSnapshotFallback = response.ok;
+    }
     if (response.ok) {
       const envelope = await response.json();
-      const serverState = normalizeLoadedState(envelope.data || envelope);
+      setNormalizedScheduleReadBadge(envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary" ? "active" : "unavailable");
+      let serverState = normalizeLoadedState(envelope.data || envelope);
+      // The primary schedule document is connected at this point. Availability
+      // normalization is a separate read and should not make the cloud status
+      // look like an unsaved change while that secondary request finishes.
+      setStorageStatus(
+        "saved",
+        normalizedSnapshotFallback
+          ? "Normalized data was temporarily unavailable. Loaded the protected compatibility snapshot."
+          : envelope.readSource === "normalized-sandbox"
+            ? "Loaded normalized Sandbox schedule data."
+            : envelope.readSource === "normalized-live-canary"
+              ? "Loaded normalized schedule data."
+              : "Loaded the shared scheduler data file."
+      );
+      serverState = await applyNormalizedAvailabilityRead(serverState) || serverState;
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
+      if (Number.isInteger(Number(envelope.normalizedScheduleRevision))) {
+        lastKnownNormalizedScheduleRevision = Number(envelope.normalizedScheduleRevision);
+      }
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
+      const previousReadSource = localStorage.getItem(readSourceKey()) || "";
+      const readSourceChanged = Boolean(previousReadSource && previousReadSource !== CURRENT_READ_SOURCE);
+      localStorage.setItem(readSourceKey(), CURRENT_READ_SOURCE);
       const skipLocalRecovery = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
-      if (!skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
+      const recovery = readCloudRecovery();
+      if (LEGACY_SNAPSHOT_OVERRIDE && recovery?.autoReapplyPending) {
+        // The explicit compatibility URL is used to inspect or roll back the
+        // read source. Preserve any prior browser recovery for diagnostics,
+        // but never auto-replay it after a deliberate source-switch test.
+        recovery.autoReapplyPending = false;
+        recovery.presentedAt = nowIso();
+        recovery.quarantinedByLegacySnapshot = true;
+        saveCloudRecovery(recovery);
+      }
+      if (recovery?.autoReapplyPending && recovery.baseData) {
+        state = serverState;
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
         serverStorageReady = true;
-        lastKnownServerSavedAt = state.meta?.serverSavedAt || serverSavedAt || "";
-        setStorageStatus("saving", "Recovering newer browser changes to the cloud schedule...");
-        showConflict("This browser had newer unsaved changes than the cloud copy. Shift Bay kept the browser copy and is saving it back to the cloud.");
-        await persistStateToServer();
-        renderAll();
-        updateZoomVisibility();
+        cloudSaveBlockedByStale = false;
+        lastKnownServerSavedAt = serverSavedAt;
+        lastKnownServerState = cloneSchedulerState(serverState);
+        const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
+        finishInitialReadSourceHydrationRender();
+        if (!restored?.saved) showStaleRecoveryAlert(readCloudRecovery() || recovery);
+        return;
+      }
+      // `legacySnapshot=1` is a diagnostic rollback view, not a competing
+      // browser edit. Never turn that deliberate source switch into a stale
+      // recovery prompt or an attempted cloud save.
+      // The direct Sandbox canary intentionally does not update the legacy
+      // snapshot. Comparing its normalized save timestamp to that older
+      // snapshot makes a successful direct write look like stale browser data.
+      if (!LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE && !readSourceChanged && !skipLocalRecovery && localStateIsNewerThanServer(state, serverState)) {
+        // A browser copy can be newer than the shared document because another
+        // device saved first. Never push that copy automatically on startup:
+        // doing so creates an immediate 409 and can overwrite another user's
+        // work if the server's guard is ever bypassed. Preserve it for review.
+        const newerBrowserRecovery = createCloudRecovery(state, state.meta?.serverSavedAt || "", serverSavedAt);
+        newerBrowserRecovery.changes = stateCollectionChanges(state, serverState);
+        saveCloudRecovery(newerBrowserRecovery);
+        state = serverState;
+        state.meta = { ...(state.meta || {}), serverSavedAt };
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        serverStorageReady = true;
+        cloudSaveBlockedByStale = false;
+        lastKnownServerSavedAt = serverSavedAt;
+        setStorageStatus("saved", "Loaded the latest shared schedule. An older browser copy was preserved for recovery.");
+        showStaleRecoveryAlert(newerBrowserRecovery);
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
+        finishInitialReadSourceHydrationRender();
         return;
       }
       lastKnownServerSavedAt = serverSavedAt;
+      lastKnownServerState = cloneSchedulerState(serverState);
+      cloudSaveBlockedByStale = false;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
-      setStorageStatus("saved", "Loaded the shared scheduler data file.");
-      if (JSON.stringify(envelope.data || envelope) !== JSON.stringify(state)) {
+      const loadedFromReadOverride = LEGACY_SNAPSHOT_OVERRIDE
+        || NORMALIZED_SCHEDULE_READ_MODE
+        || NORMALIZED_AVAILABILITY_READ_MODE
+        || envelope.readSource === "normalized-sandbox"
+        || envelope.readSource === "normalized-live-canary"
+        || normalizedAvailabilityReadState === "availabilityActive";
+      // Alternate read sources intentionally reshape or bypass the compatibility
+      // document. Loading either path must remain read-only and never queue a
+      // surprise snapshot write because representations differ.
+      if (!loadedFromReadOverride && JSON.stringify(envelope.data || envelope) !== JSON.stringify(state)) {
         queueServerSave();
       }
       currentDate = loadLocalActiveWeek(state.settings.weekStart);
       saveLocalActiveWeek({ shared: false });
-      renderAll();
-      updateZoomVisibility();
+      finishInitialReadSourceHydrationRender();
+      const pendingRecovery = readCloudRecovery();
+      if (pendingRecovery && !pendingRecovery.presentedAt && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE) {
+        if (!pendingRecovery.changes?.length) {
+          pendingRecovery.changes = stateCollectionChanges(pendingRecovery.data, serverState);
+          saveCloudRecovery(pendingRecovery);
+        }
+        showStaleRecoveryAlert(pendingRecovery);
+      }
       return;
+    }
+    setNormalizedScheduleReadBadge("unavailable");
+    if (NORMALIZED_AVAILABILITY_READ_MODE) {
+      normalizedAvailabilityReadState = "availabilityUnavailable";
+      updateNormalizedReadBadge();
     }
     if (response.status === 404) {
       const createCleanLocation = skipLocalRecoveryOnce;
@@ -1541,8 +2353,7 @@ async function hydrateStateFromServer() {
       if (createCleanLocation) {
         state = defaultState();
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
-        renderAll();
-        updateZoomVisibility();
+        finishInitialReadSourceHydrationRender();
       }
       serverStorageReady = true;
       lastKnownServerSavedAt = "";
@@ -1553,11 +2364,23 @@ async function hydrateStateFromServer() {
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
     throw new Error(`Load failed: ${response.status}`);
   } catch {
+    if (NORMALIZED_SCHEDULE_READ_MODE && NORMALIZED_LIVE_CANARY_MODE) setNormalizedScheduleReadBadge("unavailable");
+    if (NORMALIZED_AVAILABILITY_READ_MODE && NORMALIZED_LIVE_CANARY_MODE) {
+      normalizedAvailabilityReadState = "availabilityUnavailable";
+      updateNormalizedReadBadge();
+    }
     skipLocalRecoveryOnce = false;
     serverStorageReady = false;
     setStorageStatus("error", "Could not reach the shared scheduler file. Browser backup is still saved locally.");
     showConflict("Could not reach the shared scheduler file. This window is using its browser backup for now.");
+    finishInitialReadSourceHydrationRender();
   }
+}
+
+function finishInitialReadSourceHydrationRender() {
+  initialReadSourceHydrationPending = false;
+  renderAll({ skipSave: true });
+  updateZoomVisibility();
 }
 
 function localStateIsNewerThanServer(localState, serverState) {
@@ -1575,6 +2398,40 @@ function localStateIsNewerThanServer(localState, serverState) {
   const localCounts = stateRecordCount(localState);
   const serverCounts = stateRecordCount(serverState);
   return localCounts > serverCounts || localTime > serverTime + 5000;
+}
+
+function hasUnsavedSchedulerChanges() {
+  if (!lastKnownServerState) return false;
+  return REBASABLE_STATE_COLLECTIONS.some((key) => !sameSchedulerValue(state[key] || [], lastKnownServerState[key] || []))
+    || REBASABLE_STATE_OBJECTS.some((key) => !sameSchedulerValue(state[key] || {}, lastKnownServerState[key] || {}));
+}
+
+async function checkForNewerSharedSchedule() {
+  if (!SERVER_STORAGE_ENABLED || !serverStorageReady || cloudFreshnessCheckInFlight || serverSaveInFlight || serverSavePending || cloudSaveBlockedByStale) return;
+  if (document.visibilityState === "hidden") return;
+  cloudFreshnessCheckInFlight = true;
+  try {
+    const response = await authFetch("/api/status", { cache: "no-store" });
+    if (!response.ok) return;
+    const status = await response.json().catch(() => ({}));
+    const remoteSavedAt = String(status.updatedAt || "");
+    if (!remoteSavedAt || !lastKnownServerSavedAt || Date.parse(remoteSavedAt) <= Date.parse(lastKnownServerSavedAt) + 1000) return;
+    if (employeeFormHasUnsavedChanges()) {
+      setStorageStatus("saving", "A newer shared schedule is available. Save or discard this employee profile before refreshing.");
+      return;
+    }
+    if (hasUnsavedSchedulerChanges()) {
+      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, remoteSavedAt, lastKnownServerState);
+      recovery.changes = stateCollectionChanges(state, lastKnownServerState);
+      saveCloudRecovery(recovery);
+    }
+    await hydrateStateFromServer();
+  } catch {
+    // A transient network failure should not interrupt schedule work. The next
+    // focus, reconnect, or interval check will try again.
+  } finally {
+    cloudFreshnessCheckInFlight = false;
+  }
 }
 
 function stateRecordCount(candidate) {
@@ -1822,6 +2679,12 @@ function employeeAvailability(employee, dayIndex, dateKey = "") {
     if (override && Object.prototype.hasOwnProperty.call(employee.weeklyAvailability || {}, weekKey)) return override[dayIndex] || [];
   }
   if (employee.callWeekly) return [];
+  if (dateKey && Array.isArray(employee.availabilitySchedule)) {
+    const version = employee.availabilitySchedule
+      .filter((item) => item && item.effectiveDate && item.effectiveDate <= dateKey)
+      .sort((a, b) => String(b.effectiveDate).localeCompare(String(a.effectiveDate)))[0];
+    if (version) return version.availability?.[dayIndex] || [];
+  }
   return employee.availability?.[dayIndex] || [];
 }
 
@@ -2321,12 +3184,32 @@ function employeeFormSnapshot() {
 }
 
 function markEmployeeFormDirty() {
+  if (employeeFormHydrating) return;
   employeeFormDirty = true;
 }
 
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
   employeeFormDirty = false;
+}
+
+async function submitEmployeeFormDirectly() {
+  const form = $("employeeForm");
+  if (!form || typeof form.onsubmit !== "function") {
+    showConflict("The employee save action is not available. Refresh Shift Bay and try again.");
+    return false;
+  }
+  try {
+    return await form.onsubmit.call(form, {
+      preventDefault() {},
+      target: form,
+      currentTarget: form
+    });
+  } catch (error) {
+    console.error("Employee profile save failed", error);
+    showConflict(`Employee profile could not be saved: ${error?.message || "unknown save error"}`);
+    return false;
+  }
 }
 
 function employeeFormHasUnsavedChanges() {
@@ -2560,7 +3443,8 @@ function employeeProfileTabForTarget(targetId = "") {
   if (["availabilityEditor", "weeklyAvailabilityEditor", "employeeCallWeekly", "weeklyAvailabilityFieldset", "regularAvailabilityFieldset"].includes(targetId)) return "availability";
   if (["employeeTrainingSection", "employeeRoleChecks", "employeeMealTrainingSection"].includes(targetId)) return "roles";
   if (["trainerRoles", "employeeTrainerChecks"].includes(targetId)) return "training";
-  if (["employeePayRates", "weeklyRuleEditor"].includes(targetId)) return "pay";
+  if (["employeePayRates"].includes(targetId)) return "pay";
+  if (["weeklyRuleEditor"].includes(targetId)) return "rules";
   if (["employeeManagerNotes"].includes(targetId)) return "notes";
   return "profile";
 }
@@ -2640,7 +3524,7 @@ function focusScheduleIssue(issue, number, total, options = {}) {
   if (options.announce !== false) showConflict(`Issue ${number} of ${total}: ${issue.message}`);
 }
 
-function renderAll() {
+function renderAll(options = {}) {
   renderTabs();
   renderSettings();
   renderRoles();
@@ -2652,7 +3536,7 @@ function renderAll() {
   renderScheduleHistory();
   renderStaffingAnalysis();
   renderFloorPlan();
-  saveState();
+  if (!options.skipSave) saveState();
 }
 
 function renderAllPreservingScheduleScroll() {
@@ -2682,7 +3566,12 @@ function renderTabs() {
     tab.onclick = async () => {
       if (!(await requestActivateTab(tab.dataset.tab))) return;
       if (tab.dataset.tab === "monthly") renderMonthly();
-      if (tab.dataset.tab === "floorplans") { syncFloorPlanDateToActiveWeek({ force: true }); renderFloorPlan(); }
+      if (tab.dataset.tab === "floorplans") {
+        // Carry the focused single-day date across once, but let Floor Plans
+        // keep its own date after the user starts browsing there.
+        if (focusedDateKey) syncFloorPlanDateToActiveWeek({ handoffDateKey: focusedDateKey });
+        renderFloorPlan();
+      }
     };
   });
 }
@@ -2718,6 +3607,9 @@ function updateCompactPreviewButton() {
 }
 
 function enterDayFocus(dateKey = selectedCell?.date || formatDateKey(currentDate)) {
+  // A day view request always leaves compact preview first so the grid cannot
+  // remain hidden behind the print-style layer.
+  if (document.body.classList.contains("compact-preview")) clearPrintView();
   focusedDateKey = dateKey;
   selectedCell = null;
   selectedShiftId = null;
@@ -2746,32 +3638,13 @@ function scheduleRailWidgetElements() {
 
 function layoutScheduleRail() {
   const schedulePanel = $("schedule");
-  if (!schedulePanel?.classList.contains("active") || document.body.classList.contains("compact-preview")) return;
-  window.requestAnimationFrame(() => {
-    const panelRect = schedulePanel.getBoundingClientRect();
-    if (!panelRect.width || !panelRect.height) return;
-    const anchorElements = [
-      schedulePanel.querySelector(":scope > .toolbar"),
-      $("stagedShiftInfo"),
-      $("conflictBanner"),
-      $("appNotice")
-    ].filter((element) => element && !element.hidden);
-    const anchorBottom = anchorElements.reduce((bottom, element) => {
-      const rect = element.getBoundingClientRect();
-      return Math.max(bottom, rect.bottom - panelRect.top);
-    }, 0);
-    const widgets = scheduleRailWidgetElements();
-    const gap = 8;
-    const railInset = 2;
-    const totalHeight = widgets.reduce((sum, element, index) => sum + element.offsetHeight + (index ? gap : 0), 0);
-    const maxStart = Math.max(railInset, schedulePanel.clientHeight - totalHeight - railInset);
-    let cursor = Math.min(Math.max(Math.round(anchorBottom + gap), railInset), maxStart);
-    widgets.forEach((element) => {
-      element.style.left = "0px";
-      element.style.top = `${cursor}px`;
-      cursor += element.offsetHeight + gap;
-    });
-  });
+  const rail = $("scheduleRail");
+  if (!schedulePanel?.classList.contains("active") || !rail || document.body.classList.contains("compact-preview")) return;
+  // Keep the rail intentionally stationary until its layout is redesigned.
+  // This prevents bay expansion, selection panels, and view switches from
+  // moving the widgets or leaving them stranded below the viewport.
+  rail.style.left = "3px";
+  rail.style.top = "300px";
 }
 function renderScheduleControls() {
   $("weekPicker").value = formatDateKey(currentDate);
@@ -3802,7 +4675,9 @@ function clearOpenShiftSelectionWithoutFullRender() {
   document.querySelectorAll(".unassigned-shift-card").forEach((card) => {
     card.classList.remove("selected", "pending-delete");
   });
-  renderSelectedStagedShiftInfo();
+  // The selected bay role is rendered into the schedule headers too. Refresh
+  // those headers when focus is cleared, while preserving the user's position.
+  renderSchedulePreservingGridScroll();
 }
 function renderSelectedStagedShiftInfo() {
   const panel = $("stagedShiftInfo");
@@ -3819,7 +4694,7 @@ function renderSelectedStagedShiftInfo() {
   }
   const role = roleById(shift.roleId);
   const candidates = stagedShiftCandidates(shift);
-  const recent = recentEmployeesForStagedShift(shift);
+  const historicalRecommendation = historicalRecommendationForOpenShift(shift, candidates);
   panel.hidden = false;
   panel.classList.remove("empty");
   panel.innerHTML = `
@@ -3831,12 +4706,102 @@ function renderSelectedStagedShiftInfo() {
       <button class="skip-open-shift-button" type="button" data-skip-open-shift title="Move this shift to the end of the Shift Bay without deleting it. Hotkey: S">Skip</button>
     </div>
     ${renderStagedCandidateSection("Best Fits", candidates.best, "best")}
-    ${renderRecentStagedSection(recent)}
+    ${historicalRecommendation ? renderHistoricalRecommendationSection(historicalRecommendation) : ""}
   `;
   panel.querySelectorAll("[data-stage-assign]").forEach((button) => {
     button.onclick = () => assignUnassignedShift(shift.id, button.dataset.stageAssign);
   });
   panel.querySelector("[data-skip-open-shift]")?.addEventListener("click", skipSelectedOpenShift);
+}
+
+// Keep recommendation inputs independent so future weights can be configured without rewriting candidate rules.
+const RECOMMENDATION_FACTORS = Object.freeze({
+  historicalRepeat: Object.freeze({ weight: 1, minimumWeeks: 2 })
+});
+
+function recommendationFactorWeight(key) {
+  const configured = Number(state.settings?.recommendationWeights?.[key]);
+  return Number.isFinite(configured) ? configured : RECOMMENDATION_FACTORS[key]?.weight || 0;
+}
+
+function historicalShiftMatchCount(stagedShift, employeeId) {
+  const targetDate = parseDateKey(stagedShift?.date);
+  if (!targetDate || !stagedShift?.roleId || !stagedShift?.start) return 0;
+  const targetDay = targetDate.getDay();
+  const targetStart = minutesFromTime(stagedShift.start);
+  const targetEnd = stagedShift.untilVolume ? "Until Volume" : normalizeTime(stagedShift.end);
+  const weeks = new Set();
+  historyShifts().forEach((shift) => {
+    if (String(shift.employeeId || "") !== String(employeeId || "")) return;
+    if (parseDateKey(shift.date)?.getDay() !== targetDay || shift.roleId !== stagedShift.roleId) return;
+    if (minutesFromTime(shift.start) !== targetStart) return;
+    const end = shift.untilVolume ? "Until Volume" : normalizeTime(shift.end);
+    if (end !== targetEnd) return;
+    if (Boolean(shift.isCloser) !== Boolean(stagedShift.isCloser)) return;
+    if (Boolean(shift.isFlexDouble) !== Boolean(stagedShift.isFlexDouble)) return;
+    if (shift.sourceWeekId || shift.sourceWeekStart) weeks.add(shift.sourceWeekId || shift.sourceWeekStart);
+  });
+  return weeks.size;
+}
+
+function historicalMostRecentMatchDate(stagedShift, employeeId) {
+  const targetDate = parseDateKey(stagedShift?.date);
+  if (!targetDate || !stagedShift?.roleId || !stagedShift?.start) return "";
+  const targetDay = targetDate.getDay();
+  const targetStart = minutesFromTime(stagedShift.start);
+  const targetEnd = stagedShift.untilVolume ? "Until Volume" : normalizeTime(stagedShift.end);
+  return historyShifts().reduce((latest, shift) => {
+    if (String(shift.employeeId || "") !== String(employeeId || "")) return latest;
+    if (parseDateKey(shift.date)?.getDay() !== targetDay || shift.roleId !== stagedShift.roleId) return latest;
+    if (minutesFromTime(shift.start) !== targetStart) return latest;
+    const end = shift.untilVolume ? "Until Volume" : normalizeTime(shift.end);
+    if (end !== targetEnd) return latest;
+    if (Boolean(shift.isCloser) !== Boolean(stagedShift.isCloser)) return latest;
+    if (Boolean(shift.isFlexDouble) !== Boolean(stagedShift.isFlexDouble)) return latest;
+    const candidate = String(shift.date || shift.sourceWeekStart || "");
+    return candidate > latest ? candidate : latest;
+  }, "");
+}
+
+function recommendationFactorsForOpenShift(stagedShift, employee) {
+  const historicalWeeks = historicalShiftMatchCount(stagedShift, employee.id);
+  const weight = recommendationFactorWeight("historicalRepeat");
+  return [{
+    key: "historicalRepeat",
+    label: "Repeated historical assignment",
+    value: historicalWeeks,
+    weight,
+    score: historicalWeeks * weight
+  }];
+}
+
+function historicalRecommendationForOpenShift(stagedShift, candidates = stagedShiftCandidates(stagedShift)) {
+  const minimumWeeks = RECOMMENDATION_FACTORS.historicalRepeat.minimumWeeks;
+  return candidates.best
+    .map((item) => ({
+      ...item,
+      factors: recommendationFactorsForOpenShift(stagedShift, item.employee),
+      historicalWeeks: historicalShiftMatchCount(stagedShift, item.employee.id),
+      historicalMostRecentDate: historicalMostRecentMatchDate(stagedShift, item.employee.id)
+    }))
+    .filter((item) => item.historicalWeeks >= minimumWeeks)
+    .sort((a, b) => b.factors.reduce((sum, factor) => sum + factor.score, 0) - a.factors.reduce((sum, factor) => sum + factor.score, 0)
+      || b.historicalWeeks - a.historicalWeeks
+      || b.historicalMostRecentDate.localeCompare(a.historicalMostRecentDate)
+      || displayName(a.employee).localeCompare(displayName(b.employee)))[0] || null;
+}
+
+function renderHistoricalRecommendationSection(recommendation) {
+  return `
+    <div class="staged-info-section staged-info-history-recommendation">
+      <span>Schedule pattern</span>
+      <div>
+        <button type="button" data-stage-assign="${escapeHtml(recommendation.employee.id)}" title="Repeated schedule pattern">
+          ${escapeHtml(displayName(recommendation.employee))} <small>${recommendation.historicalWeeks} repeated weeks</small>
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function stagedShiftCandidates(stagedShift) {
@@ -4096,11 +5061,21 @@ function renderSchedule() {
   document.body.classList.toggle("problem-focus", Boolean(state.settings.problemFocusMode));
   const grid = $("scheduleGrid");
   const dates = weekDates();
+  const weekKeys = new Set(dates.map(formatDateKey));
+  // An assigned shift must keep its employee visible even if availability
+  // was changed afterward. Availability controls suggestions, not visibility
+  // of work that is already on the schedule.
+  const scheduledEmployeeIds = new Set((state.shifts || [])
+    .filter((shift) => weekKeys.has(shift.date) && shift.employeeId && visibleShift(shift))
+    .map((shift) => shift.employeeId));
+  const employeeHasAvailabilityOrScheduledShift = (employee) => (
+    scheduledEmployeeIds.has(employee.id) || employeeHasAvailabilityForWeek(employee)
+  );
   if (focusedDateKey && !dates.some((date) => formatDateKey(date) === focusedDateKey)) focusedDateKey = "";
   const allActiveEmployees = schedulableEmployees().filter(visibleEmployee);
-  const unavailableEmployees = allActiveEmployees.filter((employee) => !employeeHasAvailabilityForWeek(employee));
+  const unavailableEmployees = allActiveEmployees.filter((employee) => !employeeHasAvailabilityOrScheduledShift(employee));
   const activeEmployees = state.settings.hideUnavailableEmployees
-    ? allActiveEmployees.filter((employee) => employeeHasAvailabilityForWeek(employee))
+    ? allActiveEmployees.filter(employeeHasAvailabilityOrScheduledShift)
     : allActiveEmployees;
   const selectedRoleId = selectedOpenShiftRoleId();
   const selectedOpenShift = selectedOpenShiftForSchedule();
@@ -4197,7 +5172,10 @@ function dayFocusRolesForEmployee(employee, dateKey) {
 
 function renderDayFocusRoleSections(grid, employees, dateKey, selectedRoleId = "") {
   const rendered = new Set();
-  orderedRolesForSchedule(selectedRoleId).forEach((role) => {
+  // Keep the user's current vertical position stable in day view. A selected
+  // bay shift may highlight its role, but expanding eligible names must not
+  // reorder that entire role section to the top and make the shift appear to vanish.
+  orderedRolesForSchedule("").forEach((role) => {
     const groupEmployees = employees.filter((employee) => dayFocusRolesForEmployee(employee, dateKey).has(role.id));
     const openRoleShifts = dayFocusOpenShiftsForRole(dateKey, role.id);
     if (!groupEmployees.length && (!dayFocusShowOpenShifts || !openRoleShifts.length)) return;
@@ -4342,6 +5320,39 @@ function dayFocusEmployeeWeekSummary(employee, dateKey) {
   return `${shifts.length} shift${shifts.length === 1 ? "" : "s"} this week | ${roleText} | ${closeCount} close${closeCount === 1 ? "" : "s"}`;
 }
 
+function showDayFocusChipTooltip(chip) {
+  const text = chip?.dataset.chipTip;
+  if (!text) return;
+  let tooltip = $("dayFocusChipTooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "dayFocusChipTooltip";
+    tooltip.className = "day-focus-chip-tooltip";
+    document.body.append(tooltip);
+  }
+  tooltip.textContent = text;
+  tooltip.hidden = false;
+  const chipRect = chip.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const gap = 8;
+  const left = Math.max(8, Math.min(
+    chipRect.left + (chipRect.width - tooltipRect.width) / 2,
+    window.innerWidth - tooltipRect.width - 8
+  ));
+  const above = chipRect.top - tooltipRect.height - gap;
+  const top = above >= 8 ? above : Math.min(chipRect.bottom + gap, window.innerHeight - tooltipRect.height - 8);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${Math.max(8, top)}px`;
+  tooltip.classList.add("visible");
+}
+
+function hideDayFocusChipTooltip() {
+  const tooltip = $("dayFocusChipTooltip");
+  if (!tooltip) return;
+  tooltip.classList.remove("visible");
+  tooltip.hidden = true;
+}
+
 function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
   openShifts.forEach((openShift) => {
     const roleColor = role.color || shiftColor(openShift);
@@ -4378,6 +5389,12 @@ function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
     });
     timelineCell.querySelectorAll("[data-day-open-assign]").forEach((button) => {
       button.addEventListener("click", () => assignUnassignedShift(openShift.id, button.dataset.dayOpenAssign));
+      if (button.dataset.chipTip) {
+        button.addEventListener("pointerenter", () => showDayFocusChipTooltip(button));
+        button.addEventListener("pointerleave", hideDayFocusChipTooltip);
+        button.addEventListener("focus", () => showDayFocusChipTooltip(button));
+        button.addEventListener("blur", hideDayFocusChipTooltip);
+      }
     });
   });
 }
@@ -4393,11 +5410,12 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const left = ((visibleStart - window.start) / range) * 100;
   const width = Math.max(5, ((Math.max(visibleEnd, visibleStart + 30) - visibleStart) / range) * 100);
   const eligible = dayFocusEligibleEmployeesForOpenShift(openShift);
+  const patternRecommendation = historicalRecommendationForOpenShift(openShift);
   const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
-    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
+    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
     : `<em>No clean fits</em>`;
   return `
     <div class="day-focus-row-timebar day-focus-open-timebar-wrap">
@@ -5034,7 +6052,7 @@ function renderDayFocusEmployeeTimeline(dateKey, employee, shifts, unavailableRa
   }).join("");
   return `
     <div class="day-focus-timebar day-focus-row-timeline" data-timeline-date="${dateKey}" data-timeline-start="${window.start}" data-timeline-end="${window.end}">
-      <div class="day-focus-timebar-track" style="--timeline-lanes:${laneCount};">
+      <div class="day-focus-timebar-track" style="--timeline-lanes:${laneCount}; min-height:${Math.max(42, 31 + ((laneCount - 1) * 20))}px;">
         ${segments}
         ${ticks.map((tick) => `<span class="timebar-row-tick" style="left:${tick.left}%"><em>${tick.label}</em></span>`).join("")}
         ${bars}
@@ -5639,7 +6657,9 @@ function renderEmployeeNameCell(employee, groupRole = null, options = {}) {
   nameCell.dataset.employeeFirstLetter = firstEmployeeSearchLetter(employee);
   if (groupRole?.id) nameCell.dataset.roleGroup = groupRole.id;
   if (labor.hours >= 40) nameCell.classList.add("overtime-row");
-  nameCell.title = options.compact ? displayName(employee) : employeeHoverText(employee);
+  // Use the app-styled hover card as the single employee rollover. A native
+  // title tooltip here creates a second tooltip that can overlap the card.
+  nameCell.setAttribute("aria-label", options.compact ? displayName(employee) : employeeHoverText(employee));
   applySelectedOpenShiftRowState(nameCell, employee);
   nameCell.onclick = (event) => {
     if (!selectedUnassignedShiftId) return;
@@ -5922,11 +6942,19 @@ function updateUnavailablePanelToggle(count = 0) {
   button.title = state.settings.showUnavailablePanel ? "Hide unavailable this week" : "Show unavailable this week";
 }
 
+function syncEmployeeAvailabilityMode() {
+  const callWeekly = Boolean($("employeeCallWeekly")?.checked);
+  if ($("regularAvailabilityFieldset")) $("regularAvailabilityFieldset").hidden = callWeekly;
+  if ($("weeklyAvailabilityFieldset")) $("weeklyAvailabilityFieldset").hidden = !callWeekly;
+  if ($("toggleWeeklyAvailabilityBtn")) $("toggleWeeklyAvailabilityBtn").hidden = !callWeekly;
+}
+
 function openEmployeeWeeklyAvailability(employeeId) {
   loadEmployee(employeeId);
   activateTab("employees");
-  setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
-  $("weeklyAvailabilityFieldset").hidden = false;
+  setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
+  $("employeeCallWeekly").checked = true;
+  syncEmployeeAvailabilityMode();
   renderWeeklyAvailabilityEditor(employeeById(employeeId));
   window.setTimeout(() => {
     $("weeklyAvailabilityFieldset")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -5960,10 +6988,9 @@ function renderDayHeader(date) {
       <span class="closer-day-indicator ${closerStatus.className}" title="${closerStatus.title}">
         CL ${closerStatus.scheduled}/${closerStatus.required}
       </span>
-      <button type="button" class="day-view-button" data-day-focus-date="${dateKey}" title="Open Day View for ${displayDate(date)}">Day</button>
     </div>
   `);
-  div.dataset.tooltip = "Open Day View for this date.";
+  div.dataset.tooltip = "Double-click the date header to open Day View.";
   wireProjectionPopover(div, dateKey);
   div.ondblclick = (event) => {
     if (event.target.closest("button, input, select, .projection-popover")) return;
@@ -5974,10 +7001,6 @@ function renderDayHeader(date) {
     event.stopPropagation();
     openCoverageDialog(dateKey);
   };
-  div.querySelector("[data-day-focus-date]")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    enterDayFocus(dateKey);
-  });
   return div;
 }
 
@@ -7182,6 +8205,228 @@ function showAppAlert({ title = "Notice", message = "", items = [], type = "info
   dialog.showModal();
 }
 
+function stateCollectionChanges(localState = {}, serverState = {}) {
+  const employees = new Map((Array.isArray(serverState.employees) ? serverState.employees : []).map((item) => [item.id, item]));
+  const employeeName = (id) => {
+    const employee = employees.get(id) || (state.employees || []).find((item) => item.id === id);
+    return employee ? displayName(employee) : "Unknown employee";
+  };
+  const roleName = (id) => roleById(id)?.name || "Shift";
+  const describe = (key, label, item) => {
+    if (key === "shifts" || key === "unassignedShifts") {
+      const owner = item.employeeId ? employeeName(item.employeeId) : "Open shift";
+      return `${label}: ${owner} / ${roleName(item.roleId)} / ${item.date || "undated"} / ${item.start || "no start"}`;
+    }
+    if (key === "timeOffRequests") return `${label}: ${employeeName(item.employeeId)} / ${item.date || "undated"} / ${isScheduleBlock(item) ? "Block" : "RO"}`;
+    if (key === "employees") return `${label}: ${displayName(item) || item.name || "Employee"}`;
+    if (key === "templates") return `${label}: ${item.name || "Template"}`;
+    return `${label}: ${item.id || "record"}`;
+  };
+  const changes = [];
+  ["shifts", "unassignedShifts", "timeOffRequests", "employees", "templates"].forEach((key) => {
+    const before = new Map((Array.isArray(serverState[key]) ? serverState[key] : []).map((item) => [item.id, item]));
+    const after = new Map((Array.isArray(localState[key]) ? localState[key] : []).map((item) => [item.id, item]));
+    after.forEach((item, id) => {
+      if (!before.has(id)) changes.push(describe(key, "Added", item));
+      else if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) changes.push(describe(key, "Edited", item));
+    });
+    before.forEach((item, id) => {
+      if (!after.has(id)) changes.push(describe(key, "Deleted", item));
+    });
+  });
+  return changes.slice(0, 100);
+}
+
+function cloneSchedulerState(snapshot = {}) {
+  return JSON.parse(JSON.stringify(snapshot || {}));
+}
+
+const REBASABLE_STATE_COLLECTIONS = ["roles", "employees", "templates", "shifts", "unassignedShifts", "timeOffRequests", "scheduleHistory"];
+const REBASABLE_STATE_OBJECTS = ["settings", "salesProjections", "coverageRequirements"];
+
+function sameSchedulerValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function describeRebasedRecord(collection, record) {
+  if (collection === "shifts" || collection === "unassignedShifts") return `${collection === "shifts" ? "Shift" : "Open shift"}: ${record?.date || "undated"} ${record?.start || ""}`.trim();
+  if (collection === "employees") return `Employee: ${displayName(record) || "profile"}`;
+  if (collection === "timeOffRequests") return `${isScheduleBlock(record) ? "Block" : "RO"}: ${record?.date || "undated"}`;
+  if (collection === "templates") return `Template: ${record?.name || "unnamed"}`;
+  return `${collection}: ${record?.id || "record"}`;
+}
+
+// Reapply only the records that changed in the rejected browser copy. A record
+// changed by someone else at the same time is left untouched and preserved for
+// review instead of silently overwriting their work.
+function rebaseCloudRecovery(baseState = {}, localState = {}, latestState = {}) {
+  const rebased = cloneSchedulerState(latestState);
+  const applied = [];
+  const conflicts = [];
+  REBASABLE_STATE_COLLECTIONS.forEach((collection) => {
+    const base = new Map((Array.isArray(baseState[collection]) ? baseState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const local = new Map((Array.isArray(localState[collection]) ? localState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const latest = new Map((Array.isArray(latestState[collection]) ? latestState[collection] : []).map((item) => [String(item?.id || ""), item]));
+    const result = Array.isArray(rebased[collection]) ? [...rebased[collection]] : [];
+    const resultIndex = new Map(result.map((item, index) => [String(item?.id || ""), index]));
+    const replace = (id, item) => {
+      const index = resultIndex.get(id);
+      if (index == null) {
+        resultIndex.set(id, result.length);
+        result.push(item);
+      } else result[index] = item;
+    };
+    const remove = (id) => {
+      const index = resultIndex.get(id);
+      if (index != null) {
+        result.splice(index, 1);
+        resultIndex.clear();
+        result.forEach((item, nextIndex) => resultIndex.set(String(item?.id || ""), nextIndex));
+      }
+    };
+    const ids = new Set([...base.keys(), ...local.keys()]);
+    ids.forEach((id) => {
+      const before = base.get(id);
+      const changed = local.get(id);
+      const remote = latest.get(id);
+      if (sameSchedulerValue(before, changed)) return;
+      const label = describeRebasedRecord(collection, changed || before || remote);
+      if (!before && changed) {
+        if (!remote || sameSchedulerValue(remote, changed)) {
+          replace(id, changed);
+          applied.push(`Restored ${label}`);
+        } else conflicts.push(`Both windows added ${label}`);
+        return;
+      }
+      if (before && !changed) {
+        if (!remote || sameSchedulerValue(remote, before)) {
+          remove(id);
+          applied.push(`Restored deletion of ${label}`);
+        } else conflicts.push(`Both windows changed ${label}`);
+        return;
+      }
+      if (!remote || sameSchedulerValue(remote, before)) {
+        replace(id, changed);
+        applied.push(`Restored ${label}`);
+      } else if (!sameSchedulerValue(remote, changed)) conflicts.push(`Both windows changed ${label}`);
+    });
+    rebased[collection] = result;
+  });
+  REBASABLE_STATE_OBJECTS.forEach((key) => {
+    const before = baseState[key] || {};
+    const changed = localState[key] || {};
+    const remote = latestState[key] || {};
+    if (sameSchedulerValue(before, changed)) return;
+    if (sameSchedulerValue(remote, before) || sameSchedulerValue(remote, changed)) {
+      rebased[key] = cloneSchedulerState(changed);
+      applied.push(`Restored ${key} changes`);
+    } else conflicts.push(`Both windows changed ${key}`);
+  });
+  rebased.meta = { ...(latestState.meta || {}), updatedAt: nowIso(), updatedBy: currentSaveActor() };
+  return { state: rebased, applied, conflicts };
+}
+
+function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "", baseState = lastKnownServerState) {
+  return {
+    savedAt: nowIso(),
+    baseServerSavedAt,
+    existingUpdatedAt,
+    data: cloneSchedulerState(localState),
+    baseData: baseState ? cloneSchedulerState(baseState) : null,
+    changes: [],
+    autoReapplyPending: Boolean(baseState)
+  };
+}
+
+function saveCloudRecovery(recovery) {
+  try { localStorage.setItem(CLOUD_RECOVERY_KEY, JSON.stringify(recovery)); } catch { /* local recovery is best effort */ }
+}
+
+function readCloudRecovery() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CLOUD_RECOVERY_KEY) || "null");
+    return value && value.data ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearCloudRecovery() {
+  try { localStorage.removeItem(CLOUD_RECOVERY_KEY); } catch { /* local recovery is best effort */ }
+}
+
+function refreshBlockedCloudRecovery(localState) {
+  const recovery = readCloudRecovery();
+  if (!recovery) return;
+  recovery.data = cloneSchedulerState(localState);
+  if (recovery.baseData) recovery.changes = stateCollectionChanges(recovery.data, recovery.baseData);
+  saveCloudRecovery(recovery);
+}
+
+async function reapplyCloudRecoveryAfterRefresh(recovery, latestState, latestSavedAt) {
+  const rebased = rebaseCloudRecovery(recovery.baseData, recovery.data, latestState);
+  recovery.autoReapplyPending = false;
+  recovery.rebasedAt = nowIso();
+  recovery.applied = rebased.applied;
+  recovery.conflicts = rebased.conflicts;
+  if (!rebased.applied.length) {
+    saveCloudRecovery(recovery);
+    if (rebased.conflicts.length) {
+      showAppAlert({
+        title: "Some changes need review",
+        message: "Another user changed the same records. Their shared changes were kept, and your browser copy remains available for review.",
+        items: rebased.conflicts,
+        type: "warning"
+      });
+    }
+    return { saved: false, conflicts: rebased.conflicts };
+  }
+  state = normalizeLoadedState(rebased.state);
+  state.meta = { ...(state.meta || {}), serverSavedAt: latestSavedAt, updatedAt: nowIso(), updatedBy: currentSaveActor() };
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  // Preserve this rebased copy until the cloud confirms it. If another write
+  // wins the race, the normal stale handler starts a new rebase from this one.
+  recovery.data = cloneSchedulerState(state);
+  recovery.baseData = cloneSchedulerState(latestState);
+  recovery.autoReapplyPending = true;
+  saveCloudRecovery(recovery);
+  const saved = await persistStateToServer({ immediate: true });
+  if (saved) {
+    lastKnownServerState = cloneSchedulerState(state);
+    if (!rebased.conflicts.length) clearCloudRecovery();
+    else {
+      recovery.autoReapplyPending = false;
+      recovery.presentedAt = nowIso();
+      saveCloudRecovery(recovery);
+    }
+    showAppAlert({
+      title: "Changes restored",
+      message: rebased.conflicts.length
+        ? "Your non-conflicting changes were restored and saved. A few same-record conflicts still need review."
+        : "Your saved browser changes were automatically restored after reconnecting to the newest shared schedule.",
+      items: [...rebased.applied, ...rebased.conflicts],
+      type: rebased.conflicts.length ? "warning" : "info"
+    });
+  }
+  return { saved, conflicts: rebased.conflicts };
+}
+
+function showStaleRecoveryAlert(recovery, blocking = false) {
+  const changes = Array.isArray(recovery?.changes) ? recovery.changes : [];
+  showAppAlert({
+    title: blocking ? "CLOUD SAVE REJECTED" : "Unsaved changes preserved",
+    message: blocking
+      ? "Another user saved the schedule first. Stop editing this window and refresh before making more changes. Your rejected browser copy was preserved, and this list shows what it contained."
+      : "This browser had edits that were newer than the shared schedule. The shared version was loaded, and the older browser copy was preserved for review.",
+    items: changes.length ? changes : ["The rejected browser copy is preserved locally, but no record-level differences were detected."],
+    type: "error"
+  });
+  if (!blocking && recovery) {
+    recovery.presentedAt = nowIso();
+    saveCloudRecovery(recovery);
+  }
+}
+
 function updateShiftNameVisibility() {
   const control = $("shiftLabelControl");
   if (!control) return;
@@ -7219,6 +8464,43 @@ function updateShiftDialogContext() {
   const employeeText = employee ? ` | ${displayName(employee)}` : "";
   target.textContent = `${dateText}${employeeText}`;
   updateShiftNameVisibility();
+}
+
+function auditActorLabel(actor) {
+  if (!actor) return "Unknown user";
+  return actor.email || actor.name || actor.id || "Unknown user";
+}
+
+function renderShiftMetadata(shift) {
+  const details = $("shiftMetadataDetails");
+  const body = $("shiftMetadataBody");
+  if (!details || !body) return;
+  details.hidden = !shift;
+  if (!shift) {
+    body.innerHTML = "";
+    return;
+  }
+  body.innerHTML = `
+    <dl>
+      <div><dt>Created</dt><dd>${escapeHtml(shift.createdAt ? new Date(shift.createdAt).toLocaleString() : "Unknown")}</dd></div>
+      <div><dt>Created by</dt><dd>${escapeHtml(auditActorLabel(shift.createdBy))}</dd></div>
+      <div><dt>Last edited</dt><dd>${escapeHtml(shift.updatedAt ? new Date(shift.updatedAt).toLocaleString() : "Unknown")}</dd></div>
+      <div><dt>Last edited by</dt><dd>${escapeHtml(auditActorLabel(shift.updatedBy))}</dd></div>
+      <div><dt>Created from</dt><dd>${escapeHtml(shift.changeSource || shift.source || "Existing schedule")}</dd></div>
+    </dl>
+  `;
+}
+
+function shiftChangeMetadata(existing, source = "Manual") {
+  const now = nowIso();
+  const actor = currentSaveActor();
+  return {
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || actor,
+    updatedAt: now,
+    updatedBy: actor,
+    changeSource: existing?.changeSource || existing?.source || source
+  };
 }
 
 function openShiftDialog(shift = null) {
@@ -7283,6 +8565,7 @@ function openShiftDialog(shift = null) {
   $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
+  renderShiftMetadata(shift);
   refreshShiftEmployeeOptions(base.employeeId);
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
@@ -7349,6 +8632,7 @@ function openStagedShiftDialog(stagedShift = null) {
   $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
+  renderShiftMetadata(stagedShift);
   updateShiftDialogContext();
   dialog.showModal();
 }
@@ -7461,6 +8745,7 @@ function refreshShiftEmployeeOptions(preferredEmployeeId = "") {
 }
 
 function collectStagedShiftFromDialog() {
+  const existing = (state.unassignedShifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
   const untilVolume = state.settings.showUntilVolumeInShiftEditor && $("shiftUntilVolume").checked;
   const isTraining = $("shiftIsTraining").checked;
@@ -7484,11 +8769,13 @@ function collectStagedShiftFromDialog() {
       segmentEnd: isTraining ? normalizeTime($("shiftTrainingSegmentEnd").value) : "",
       dayOverride: isTraining ? $("shiftTrainingDayOverride").value : ""
     },
-    color: role?.color || "#2563eb"
+    color: role?.color || "#2563eb",
+    ...shiftChangeMetadata(existing, "Manual")
   };
 }
 
 function collectShiftFromDialog() {
+  const existing = (state.shifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
   const isTraining = $("shiftIsTraining").checked;
   const traineeId = $("shiftTrainee").value || $("shiftEmployee").value;
@@ -7515,7 +8802,8 @@ function collectShiftFromDialog() {
       dayOverride: Number($("shiftTrainingDayOverride").value) || null
     },
     notes: $("shiftNotes").value.trim(),
-    color: role?.color || "#2563eb"
+    color: role?.color || "#2563eb",
+    ...shiftChangeMetadata(existing, "Manual")
   };
 }
 
@@ -7566,7 +8854,7 @@ function renderEmployees() {
   const employees = state.employees
     .filter((employee) => showArchived || !employee.archived)
     .slice()
-    .sort((a, b) => fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
+    .sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b), undefined, { sensitivity: "base" }) || fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
   const filteredEmployees = search
     ? employees.filter((employee) => {
         const haystack = [
@@ -7590,7 +8878,9 @@ function renderEmployees() {
   }
   if ($("archiveEmployeeBtn")) $("archiveEmployeeBtn").hidden = Boolean(selectedEmployee?.archived);
   if ($("restoreEmployeeBtn")) $("restoreEmployeeBtn").hidden = !selectedEmployee?.archived;
+  if ($("deleteEmployeeBtn")) $("deleteEmployeeBtn").hidden = !selectedEmployee?.archived;
   renderEmployeeRoster(filteredEmployees, selectedEmployee);
+  renderAvailabilityPatternWorkspace(selectedEmployee);
   renderAvailabilityEditor(selectedEmployee);
   renderWeeklyAvailabilityEditor(selectedEmployee);
   renderEmployeePayRates(selectedEmployee);
@@ -7639,6 +8929,35 @@ function showEmployeeSavedToast(employeeName = "Employee") {
   }, 2600);
 }
 
+function setEmployeeSaveDebugStatus(message, status = "saving") {
+  const indicator = $("employeeSaveDebugStatus");
+  if (!indicator) return;
+  if (currentAccessRole() !== "owner") {
+    indicator.hidden = true;
+    return;
+  }
+  const timestamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  const entry = {
+    at: new Date().toISOString(),
+    status,
+    message: String(message || "")
+  };
+  try {
+    const key = "shiftBay.ownerDiagnostics.v1";
+    const previous = JSON.parse(localStorage.getItem(key) || "[]");
+    const history = Array.isArray(previous) ? previous.slice(-29) : [];
+    history.push(entry);
+    localStorage.setItem(key, JSON.stringify(history));
+    indicator.title = `Recent owner diagnostics (${history.length})`;
+    indicator.dataset.diagnostics = JSON.stringify(history);
+  } catch {
+    // Diagnostics must never interfere with an employee save.
+  }
+  indicator.textContent = `${message} (${timestamp})`;
+  indicator.dataset.state = status;
+  indicator.hidden = false;
+}
+
 function renderEmployeePayRates(employee = null) {
   const rates = employee?.payRates || {};
   $("employeePayRates").innerHTML = state.roles.map((role) => {
@@ -7670,6 +8989,18 @@ function currentWeekKey() {
   return formatDateKey(startOfWeek(currentDate, state.settings.weekStart));
 }
 
+function normalizeAvailabilityWeekKey(dateKey = currentWeekKey()) {
+  const parsed = parseDateKey(dateKey || currentWeekKey());
+  if (Number.isNaN(parsed.getTime())) return currentWeekKey();
+  return formatDateKey(startOfWeek(parsed, state.settings.weekStart));
+}
+
+function normalizeAvailabilityEffectiveDate(dateKey = currentWeekKey()) {
+  const parsed = parseDateKey(dateKey || currentWeekKey());
+  if (Number.isNaN(parsed.getTime())) return currentWeekKey();
+  return formatDateKey(parsed);
+}
+
 function selectedWeeklyAvailabilityWeekKey() {
   const inputValue = $("weeklyAvailabilityWeek")?.value || employeeWeeklyAvailabilityWeekKey || currentWeekKey();
   const parsed = parseDateKey(inputValue);
@@ -7678,12 +9009,17 @@ function selectedWeeklyAvailabilityWeekKey() {
 }
 
 function setWeeklyAvailabilityWeek(dateKey = currentWeekKey(), options = {}) {
-  const parsed = parseDateKey(dateKey);
+  const parsed = parseDateKey(dateKey || currentWeekKey());
   employeeWeeklyAvailabilityWeekKey = Number.isNaN(parsed.getTime())
     ? currentWeekKey()
     : formatDateKey(startOfWeek(parsed, state.settings.weekStart));
   const input = $("weeklyAvailabilityWeek");
   if (input) input.value = employeeWeeklyAvailabilityWeekKey;
+  const summary = $("weeklyAvailabilityWeekSummary");
+  if (summary) {
+    const weekStart = parseDateKey(employeeWeeklyAvailabilityWeekKey);
+    summary.textContent = `Showing the work week of ${displayDate(weekStart)}. All dates are aligned to the restaurant's week-start setting.`;
+  }
   if (options.render !== false) renderWeeklyAvailabilityEditor(employeeById($("employeeId")?.value));
 }
 
@@ -7725,64 +9061,429 @@ function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = curren
   const input = document.querySelector(inputSelector);
   if (!input) return;
   markEmployeeFormDirty();
-  input.value = availabilityPresetForDay(dayIndex, preset, weekKey);
-  input.focus();
-  input.select?.();
+  const row = input.closest(".availability-day");
+  const value = preset === "unavailable" ? "" : availabilityPresetForDay(dayIndex, preset, weekKey);
+  const [start = "", end = ""] = value ? value.split("-").map((part) => toNativeTimeValue(part)) : ["", ""];
+  row?.querySelectorAll(".availability-window").forEach((window, index) => {
+    if (index === 0) {
+      window.querySelector('input[data-availability-slot]')?.setAttribute("value", start);
+      window.querySelector('input[data-availability-slot]') && (window.querySelector('input[data-availability-slot]').value = start);
+      window.querySelector('input[data-availability-end-slot]') && (window.querySelector('input[data-availability-end-slot]').value = end);
+    } else if (index > 0) window.remove();
+  });
+  const addButton = row?.querySelector("[data-add-availability-window]");
+  if (addButton) addButton.hidden = false;
+  if (!row) input.value = value;
+}
+
+function findDuplicateAvailabilityPatternName(name, employeeId = "", patternId = "") {
+  const normalizedName = String(name || "").trim().toLocaleLowerCase();
+  if (!normalizedName) return null;
+  for (const employee of state.employees || []) {
+    for (const pattern of Array.isArray(employee.availabilityPatterns) ? employee.availabilityPatterns : []) {
+      if (employee.id === employeeId && pattern.id === patternId) continue;
+      if (String(pattern.name || "").trim().toLocaleLowerCase() === normalizedName) return { employee, pattern };
+    }
+  }
+  return null;
+}
+function availabilityPatternsForEmployee(employee = null) {
+  if (!employee) {
+    return [{ id: "draft", name: "Regular availability", availability: emptyAvailability(), repeatWeeks: 1, effectiveDate: currentWeekKey() }];
+  }
+  if (Array.isArray(employee.availabilityPatterns) && employee.availabilityPatterns.length) {
+    return employee.availabilityPatterns.map((pattern, index) => ({
+      id: pattern.id || `pattern-${index + 1}`,
+      name: pattern.name || `Availability ${index + 1}`,
+      availability: pattern.availability || emptyAvailability(),
+      repeatWeeks: pattern.repeatWeeks == null || pattern.repeatWeeks === "" ? null : Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
+      active: pattern.active !== false,
+      effectiveDate: pattern.effectiveDate ? normalizeAvailabilityEffectiveDate(pattern.effectiveDate) : "",
+      approvalStatus: String(pattern.approvalStatus || pattern.status || (pattern.approved === true ? "approved" : "")).toLowerCase(),
+      approved: pattern.approved === true || String(pattern.approvalStatus || pattern.status || "").toLowerCase() === "approved"
+    }));
+  }
+  return [{
+    id: "regular",
+    name: employee.availabilityPatternName || "Regular availability",
+    availability: employee.availability || emptyAvailability(),
+    repeatWeeks: Math.max(1, Math.min(4, Number(employee.availabilityRepeatWeeks) || 1)),
+    active: true,
+    effectiveDate: normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey())
+  }];
+}
+
+function selectedAvailabilityPattern(employee = null) {
+  const patterns = availabilityPatternsForEmployee(employee);
+  return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+}
+
+function availabilityRepeatLabel(repeatWeeks) {
+  const weeks = Math.max(1, Math.min(4, Number(repeatWeeks) || 1));
+  return weeks === 1 ? "Every week" : `Every ${weeks} weeks`;
+}
+
+function availabilityDaySummary(availability = {}) {
+  return DAYS.map((day, index) => {
+    const ranges = Array.isArray(availability[index]) ? availability[index] : [];
+    const text = ranges.length
+      ? ranges.map((range) => `${range.start || ""} - ${range.end || ""}`).join(", ")
+      : "Not available";
+    return `<div><strong>${day}</strong><span>${escapeHtml(text)}</span></div>`;
+  }).join("");
+}
+
+function isApprovedFutureAvailabilityPattern(pattern) {
+  if (!pattern?.approved && pattern?.approvalStatus !== "approved") return false;
+  const effectiveDate = normalizeAvailabilityEffectiveDate(pattern.effectiveDate);
+  return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
+}
+
+function availabilityPatternAppliesOnDate(pattern, date) {
+  const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern?.effectiveDate));
+  if (Number.isNaN(effectiveDate.getTime()) || date < effectiveDate) return false;
+  const weekStart = startOfWeek(date, state.settings.weekStart);
+  const effectiveWeekStart = startOfWeek(effectiveDate, state.settings.weekStart);
+  const weeksSinceStart = Math.round((weekStart.getTime() - effectiveWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  const repeatWeeks = Math.max(1, Math.min(4, Number(pattern?.repeatWeeks) || 1));
+  return weeksSinceStart >= 0 && weeksSinceStart % repeatWeeks === 0;
+}
+
+function availabilityPatternConflicts(patterns = []) {
+  const activePatterns = patterns.filter((pattern) => pattern?.active !== false);
+  if (activePatterns.length < 2) return null;
+  const effectiveDates = activePatterns.map((pattern) => parseDateKey(normalizeAvailabilityEffectiveDate(pattern.effectiveDate)));
+  const latestEffectiveDate = new Date(Math.max(...effectiveDates.map((date) => date.getTime())));
+  const checkThrough = addDays(latestEffectiveDate, 56);
+  for (let leftIndex = 0; leftIndex < activePatterns.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < activePatterns.length; rightIndex += 1) {
+      const left = activePatterns[leftIndex];
+      const right = activePatterns[rightIndex];
+      for (let date = new Date(latestEffectiveDate); date <= checkThrough; date = addDays(date, 1)) {
+        if (!availabilityPatternAppliesOnDate(left, date) || !availabilityPatternAppliesOnDate(right, date)) continue;
+        const dayIndex = date.getDay();
+        const leftWindows = left.availability?.[dayIndex] || [];
+        const rightWindows = right.availability?.[dayIndex] || [];
+        for (const leftWindow of leftWindows) {
+          const leftStart = minutesFromTime(leftWindow.start);
+          const leftEnd = minutesFromTime(leftWindow.end);
+          if (leftStart == null || leftEnd == null || leftEnd <= leftStart) continue;
+          for (const rightWindow of rightWindows) {
+            const rightStart = minutesFromTime(rightWindow.start);
+            const rightEnd = minutesFromTime(rightWindow.end);
+            if (rightStart == null || rightEnd == null || rightEnd <= rightStart) continue;
+            if (leftStart < rightEnd && rightStart < leftEnd) return { left, right, date: new Date(date) };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function pendingAvailabilitySubmissionsForEmployee(employee = null) {
+  return (Array.isArray(employee?.availabilitySubmissions) ? employee.availabilitySubmissions : [])
+    .filter((submission) => ["submitted", "pending"].includes(String(submission.status || "").toLowerCase()))
+    .sort((left, right) => String(left.weekStart || "").localeCompare(String(right.weekStart || "")));
+}
+
+async function hydrateEmployeeAvailabilitySubmissions(employee) {
+  if (!employee || !currentUser || isDemoLocation()) return;
+  try {
+    const result = await fetchJson("/api/staff-availability", { cache: "no-store", headers: authRequestHeaders() });
+    employee.availabilitySubmissions = (result.submissions || []).filter((submission) => String(submission.legacyEmployeeId || "") === String(employee.id || ""));
+    renderActiveAvailabilitySummary(employee);
+  } catch (error) {
+    // The profile remains usable if the separate approval queue is unavailable.
+  }
+}
+function renderActiveAvailabilitySummary(employee = null, patterns = availabilityPatternsForEmployee(employee), selected = selectedAvailabilityPattern(employee)) {
+  const tabs = $("activeAvailabilityTabs");
+  if (!tabs) return;
+  const activePatterns = patterns
+    .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
+    .sort((left, right) => {
+      const leftFuture = isApprovedFutureAvailabilityPattern(left);
+      const rightFuture = isApprovedFutureAvailabilityPattern(right);
+      if (leftFuture !== rightFuture) return leftFuture ? 1 : -1;
+      return String(left.effectiveDate || "").localeCompare(String(right.effectiveDate || ""));
+    });
+  const pendingSubmissions = pendingAvailabilitySubmissionsForEmployee(employee);
+  const activeTabMarkup = activePatterns.map((pattern) => {
+    const futureApproved = isApprovedFutureAvailabilityPattern(pattern);
+    const stateLabel = futureApproved ? "Approved" : "Live";
+    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${futureApproved ? " approved-future" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
+      <strong>${escapeHtml(pattern.name)}</strong>
+      <span>${stateLabel}</span>
+    </button>`;
+  }).join("");
+  const pendingTabMarkup = pendingSubmissions.map((submission) => `<button type="button" class="active-availability-tab pending-availability-tab" data-availability-submission-id="${escapeHtml(submission.id || submission.weekStart || "pending")}" disabled>
+    <strong>Submitted availability</strong>
+    <span>Awaiting approval</span>
+  </button>`).join("");
+  const selectedActivePattern = activePatterns.find((pattern) => pattern.id === selected?.id);
+  const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content">
+    <strong>${escapeHtml(selectedActivePattern.name)}</strong>
+    <span>${isApprovedFutureAvailabilityPattern(selectedActivePattern) ? "Approved" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}</span>
+    <div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>
+  </div>` : "";
+  tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
+  if (!activePatterns.length && !pendingSubmissions.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
+  tabs.querySelectorAll("[data-active-availability-id]").forEach((button) => {
+    button.onclick = () => {
+      selectedAvailabilityPatternId = button.dataset.activeAvailabilityId;
+      const currentEmployee = employeeById($("employeeId")?.value);
+      renderAvailabilityPatternWorkspace(currentEmployee);
+      renderAvailabilityEditor(currentEmployee);
+    };
+  });
+  const conflict = availabilityPatternConflicts(patterns);
+  const conflictNotice = $("activeAvailabilityConflict");
+  if (conflictNotice) {
+    conflictNotice.hidden = !conflict;
+    conflictNotice.textContent = conflict
+      ? `${conflict.left.name} and ${conflict.right.name} overlap on ${displayDate(conflict.date)}. Deactivate or edit one pattern before saving or submitting availability.`
+      : "";
+  }
+}
+
+function availabilityPatternGuidance(pattern) {
+  const warnings = [];
+  const gaps = [];
+  DAYS.forEach((day, dayIndex) => {
+    const windows = (pattern?.availability?.[dayIndex] || [])
+      .map((range) => ({ start: minutesFromTime(range.start), end: minutesFromTime(range.end) }))
+      .filter((range) => range.start != null && range.end != null)
+      .sort((a, b) => a.start - b.start);
+    windows.forEach((range, index) => {
+      if (range.end <= range.start) warnings.push(`${day} has an end time that is not after its start time.`);
+      if (index && range.start < windows[index - 1].end) warnings.push(`${day} has overlapping availability windows.`);
+      if (index && range.start > windows[index - 1].end) gaps.push(day);
+    });
+  });
+  if (warnings.length) return { text: warnings[0], warning: true };
+  const repeat = Number(pattern?.repeatWeeks) || 1;
+  const gapText = gaps.length ? ` Intentional gaps: ${gaps.join(", ")}.` : "";
+  return { text: `Repeats ${availabilityRepeatLabel(repeat).toLowerCase()}.${gapText} Blank days mean unavailable.`, warning: false };
+}
+
+function renderAvailabilityPatternWorkspace(employee = null) {
+  const list = $("availabilityPatternList");
+  if (!list) return;
+  const patterns = availabilityPatternsForEmployee(employee);
+  if (!patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = patterns[0]?.id || "draft";
+  const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+  renderActiveAvailabilitySummary(employee, patterns, selected);
+  const editButton = $("editAvailabilityPatternBtn");
+  if (editButton) editButton.disabled = !selected;
+  const deleteButton = $("deleteAvailabilityPatternBtn");
+  const selectedStatus = String(selected?.approvalStatus || "").toLowerCase();
+  const canDelete = Boolean(selected && !selected.active && !["submitted", "pending", "awaiting_approval"].includes(selectedStatus));
+  if (deleteButton) {
+    deleteButton.disabled = !canDelete;
+    deleteButton.hidden = !canDelete;
+  }
+  list.innerHTML = patterns.map((pattern) => {
+    const dayCount = Object.values(pattern.availability || {}).filter((ranges) => Array.isArray(ranges) && ranges.length).length;
+    return `<button type="button" class="availability-pattern-card${pattern.id === selected?.id ? " selected" : ""}${pattern.active ? "" : " inactive"}" data-availability-pattern-id="${escapeHtml(pattern.id)}">
+      <strong>${escapeHtml(pattern.name)}</strong>
+      <span>${dayCount} available days</span>
+      ${pattern.id === selected?.id ? `<div class="availability-pattern-selected-details"><strong>Selected availability</strong><div class="availability-pattern-day-grid">${availabilityDaySummary(pattern.availability)}</div></div>` : ""}
+    </button>`;
+  }).join("");
+  list.querySelectorAll("[data-availability-pattern-id]").forEach((button) => {
+    button.onclick = () => {
+      selectedAvailabilityPatternId = button.dataset.availabilityPatternId;
+      availabilityEditingPatternId = "";
+      renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
+    };
+  });
+  if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = selected?.name || "";
+  if ($("employeeAvailabilityRepeatWeeks")) $("employeeAvailabilityRepeatWeeks").value = String(selected?.repeatWeeks || 1);
+  if ($("employeeAvailabilityEffectiveDate")) {
+    $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
+  }
+  const submitButton = $("makeAvailabilityLiveBtn");
+  if (submitButton) {
+    submitButton.disabled = !selected;
+    submitButton.textContent = selected?.active ? "Deactivate from Scheduling" : "Make Live for Scheduling";
+    submitButton.classList.toggle("danger", Boolean(selected?.active));
+  }
 }
 function renderAvailabilityEditor(employee = null) {
-  const availability = employee?.availability || emptyAvailability();
-  $("availabilityEditor").innerHTML = DAYS.map((day, index) => {
-    const ranges = (availability[index] || []).map((range) => `${range.start}-${range.end}`).join(", ");
-    return `
-      <div class="availability-day">
-        <strong>${day}</strong>
-        <input data-availability-day="${index}" placeholder="7a-2p, 5p-10p or blank unavailable" value="${ranges}">
-        <small>available</small>
-        <button type="button" class="small-button" data-availability-preset="open" data-availability-preset-day="${index}">Open</button>
-        <button type="button" class="small-button" data-availability-preset="am" data-availability-preset-day="${index}">AM</button>
-        <button type="button" class="small-button" data-availability-preset="pm" data-availability-preset-day="${index}">PM</button>
+  const availability = selectedAvailabilityPattern(employee)?.availability || emptyAvailability();
+  selectedAvailabilityDayIndex = Math.max(0, Math.min(DAYS.length - 1, Number(selectedAvailabilityDayIndex) || 0));
+  const selectedDay = selectedAvailabilityDayIndex;
+  const summaryForDay = (ranges) => {
+    if (!ranges.length) return "Not available";
+    if (ranges.length > 1) return `${ranges.length} availability windows`;
+    return `${toNativeTimeValue(ranges[0].start) || "Not available"} to ${toNativeTimeValue(ranges[0].end) || "Not available"}`;
+  };
+  const windowMarkupForDay = (day, index, ranges) => (ranges.length ? ranges : [{}]).map((range, windowIndex) => `
+        <div class="availability-window" data-availability-window="${windowIndex}">
+          <label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.start))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} start time; leave blank if unavailable"></label>
+          <span class="availability-time-separator" aria-hidden="true">to</span>
+          <label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-availability-day="${index}" data-availability-end-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.end))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} end time; leave blank if unavailable"></label>
+          ${windowIndex > 0 ? `<button type="button" class="icon-button availability-remove-window" data-remove-availability-window="${index}" data-availability-window-index="${windowIndex}" aria-label="Remove ${day} window ${windowIndex + 1}" title="Remove this availability window">&times;</button>` : ""}
+        </div>`).join("");
+  $("availabilityEditor").innerHTML = `
+    <div class="availability-day-toolbar">
+      <span>Editing <strong>${DAYS[selectedDay]}</strong></span>
+      <div class="availability-shared-presets" role="group" aria-label="Presets for the selected day">
+        <button type="button" class="small-button" data-availability-editor-preset="open" data-availability-preset="open">Open</button>
+        <button type="button" class="small-button" data-availability-editor-preset="am" data-availability-preset="am">AM</button>
+        <button type="button" class="small-button" data-availability-editor-preset="pm" data-availability-preset="pm">PM</button>
+        <button type="button" class="small-button availability-unavailable-button" data-availability-editor-preset="unavailable" data-availability-preset="unavailable">Unavailable</button>
       </div>
-    `;
-  }).join("");
-  document.querySelectorAll("[data-availability-preset]").forEach((button) => {
-    button.onclick = () => setAvailabilityPreset(
-      `[data-availability-day="${button.dataset.availabilityPresetDay}"]`,
-      button.dataset.availabilityPresetDay,
-      button.dataset.availabilityPreset
-    );
+    </div>
+    <div class="availability-day-list">
+      ${[selectedDay, ...DAYS.map((_, index) => index).filter((index) => index !== selectedDay)].map((index) => {
+    const day = DAYS[index];
+    const ranges = availability[index] || [];
+    return `<section class="availability-day${index === selectedDay ? " selected" : ""}" data-availability-row="${index}">
+      <button type="button" class="availability-day-heading" data-availability-day-select="${index}">
+        <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
+      </button>
+      <div class="availability-day-editor">
+        <div class="availability-input-stack">${windowMarkupForDay(day, index, ranges)}<button type="button" class="availability-add-window" data-add-availability-window="${index}">+ Add another time</button></div>
+        <small>Leave both times blank if unavailable.</small>
+      </div>
+    </section>`;
+  }).join("")}
+    </div>`;
+  document.querySelectorAll("[data-availability-day-select]").forEach((button) => {
+    button.onclick = () => {
+      selectedAvailabilityDayIndex = Number(button.dataset.availabilityDaySelect) || 0;
+      document.querySelectorAll("[data-availability-row]").forEach((row) => row.classList.toggle("selected", Number(row.dataset.availabilityRow) === selectedAvailabilityDayIndex));
+      const label = $("availabilityEditor").querySelector(".availability-day-toolbar strong");
+      if (label) label.textContent = DAYS[selectedAvailabilityDayIndex];
+    };
+  });
+  document.querySelectorAll("[data-availability-editor-preset]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setAvailabilityPreset(
+        `[data-availability-day="${selectedAvailabilityDayIndex}"][data-availability-slot="0"]`,
+        selectedAvailabilityDayIndex,
+        button.dataset.availabilityEditorPreset
+      );
+      const row = document.querySelector(`[data-availability-row="${selectedAvailabilityDayIndex}"]`);
+      const summary = row?.querySelector(".availability-day-heading span");
+      if (summary) summary.textContent = button.dataset.availabilityEditorPreset === "unavailable" ? "Not available" : button.textContent;
+      refreshAvailabilityDayCardSummaries();
+    };
+  });
+  document.querySelectorAll("#availabilityEditor [data-time-picker]").forEach(attachTimePickerInput);
+  document.querySelectorAll("[data-add-availability-window]").forEach((button) => {
+    button.onclick = () => {
+      const row = button.closest(".availability-day");
+      if (!row || row.querySelectorAll(".availability-window").length >= 4) return;
+      const day = button.dataset.addAvailabilityWindow;
+      const windowIndex = row.querySelectorAll(".availability-window").length;
+      button.insertAdjacentHTML("beforebegin", `<div class="availability-window" data-availability-window="${windowIndex}"><label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-availability-day="${day}" data-availability-slot="${windowIndex}" aria-label="${DAYS[day]} window ${windowIndex + 1} start time"></label><span class="availability-time-separator" aria-hidden="true">to</span><label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-availability-day="${day}" data-availability-end-slot="${windowIndex}" aria-label="${DAYS[day]} window ${windowIndex + 1} end time"></label><button type="button" class="icon-button availability-remove-window" data-remove-availability-window="${day}" data-availability-window-index="${windowIndex}" aria-label="Remove ${DAYS[day]} window ${windowIndex + 1}" title="Remove this availability window">&times;</button></div>`);
+      row.querySelector("[data-remove-availability-window]:last-of-type")?.addEventListener("click", () => {
+        const added = row.querySelectorAll(".availability-window");
+        if (added.length <= 1) return;
+        added[added.length - 1].remove();
+        button.hidden = false;
+      });
+      row.querySelectorAll("[data-time-picker]").forEach(attachTimePickerInput);
+      wireAvailabilityTabFlow("[data-availability-day]");
+      wireAvailabilityDaySummaryUpdates();
+      if (row.querySelectorAll(".availability-window").length >= 4) button.hidden = true;
+    };
+  });
+  document.querySelectorAll("[data-remove-availability-window]").forEach((button) => {
+    button.onclick = () => {
+      const row = button.closest(".availability-day");
+      const window = button.closest(".availability-window");
+      if (!row || !window || row.querySelectorAll(".availability-window").length <= 1) return;
+      window.remove();
+      const addButton = row.querySelector("[data-add-availability-window]");
+      if (addButton) addButton.hidden = false;
+      refreshAvailabilityDayCardSummaries();
+    };
   });
   wireAvailabilityTabFlow("[data-availability-day]");
+  wireAvailabilityDaySummaryUpdates();
 }
 
 function renderWeeklyAvailabilityEditor(employee = null) {
   const weekKey = selectedWeeklyAvailabilityWeekKey();
   const input = $("weeklyAvailabilityWeek");
   if (input) input.value = weekKey;
+  const summary = $("weeklyAvailabilityWeekSummary");
+  if (summary) summary.textContent = `Showing the work week of ${displayDate(parseDateKey(weekKey))}. All dates are aligned to the restaurant's week-start setting.`;
   const availability = employee?.weeklyAvailability?.[weekKey] || emptyAvailability();
   $("weeklyAvailabilityEditor").innerHTML = DAYS.map((day, index) => {
-    const ranges = (availability[index] || []).map((range) => `${range.start}-${range.end}`).join(", ");
+    const ranges = availability[index] || [];
+    const windowMarkup = (ranges.length ? ranges : [{}]).map((range, windowIndex) => `
+          <div class="availability-window" data-availability-window="${windowIndex}">
+            <label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-weekly-availability-day="${index}" data-availability-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.start))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} start time; leave blank if unavailable"></label>
+            <span class="availability-time-separator" aria-hidden="true">to</span>
+            <label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-weekly-availability-day="${index}" data-availability-end-slot="${windowIndex}" value="${escapeHtml(toNativeTimeValue(range.end))}" placeholder="Not available" aria-label="${day} window ${windowIndex + 1} end time; leave blank if unavailable"></label>
+            ${windowIndex > 0 ? `<button type="button" class="icon-button availability-remove-window" data-remove-weekly-window="${index}" aria-label="Remove ${day} window ${windowIndex + 1}" title="Remove this availability window">&times;</button>` : ""}
+          </div>`).join("");
     const dayDate = availabilityDayDateLabel(index, weekKey);
     return `
-      <div class="availability-day weekly-availability-day">
-        <strong>${day}</strong>
-        <span class="availability-date-label">${escapeHtml(dayDate)}</span>
-        <input data-weekly-availability-day="${index}" placeholder="7a-2p, 5p-10p or blank unavailable" value="${ranges}">
-        <small>${weekKey}</small>
-        <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
-        <button type="button" class="small-button" data-weekly-availability-preset="am" data-weekly-availability-preset-day="${index}">AM</button>
-        <button type="button" class="small-button" data-weekly-availability-preset="pm" data-weekly-availability-preset-day="${index}">PM</button>
-      </div>
+      <section class="availability-day weekly-availability-day">
+        <div class="availability-day-heading">
+          <strong>${day}</strong>
+          <span>${escapeHtml(dayDate)}</span>
+        </div>
+        <div class="availability-day-editor">
+          <div class="availability-input-stack">${windowMarkup}<button type="button" class="availability-add-window" data-add-weekly-window="${index}">+ Add another time</button></div>
+          <small>Leave both times blank if unavailable.</small>
+          <div class="availability-shared-presets weekly-day-presets" role="group" aria-label="${day} availability presets">
+            <button type="button" class="small-button" data-weekly-availability-preset="open" data-weekly-availability-preset-day="${index}">Open</button>
+            <button type="button" class="small-button" data-weekly-availability-preset="am" data-weekly-availability-preset-day="${index}">AM</button>
+            <button type="button" class="small-button" data-weekly-availability-preset="pm" data-weekly-availability-preset-day="${index}">PM</button>
+            <button type="button" class="small-button availability-unavailable-button" data-weekly-availability-preset="unavailable" data-weekly-availability-preset-day="${index}">Unavailable</button>
+          </div>
+        </div>
+      </section>
     `;
   }).join("");
   document.querySelectorAll("[data-weekly-availability-preset]").forEach((button) => {
-    button.onclick = () => setAvailabilityPreset(
-      `[data-weekly-availability-day="${button.dataset.weeklyAvailabilityPresetDay}"]`,
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setAvailabilityPreset(
+      `[data-weekly-availability-day="${button.dataset.weeklyAvailabilityPresetDay}"][data-availability-slot="0"]`,
       button.dataset.weeklyAvailabilityPresetDay,
       button.dataset.weeklyAvailabilityPreset,
       weekKey
-    );
+        );
+      };
   });
-  wireAvailabilityTabFlow("[data-weekly-availability-day]");
+  document.querySelectorAll("#weeklyAvailabilityEditor [data-time-picker]").forEach(attachTimePickerInput);
+  document.querySelectorAll("[data-add-weekly-window]").forEach((button) => {
+    button.onclick = () => {
+      const row = button.closest(".availability-day");
+      if (!row || row.querySelectorAll(".availability-window").length >= 4) return;
+      const day = button.dataset.addWeeklyWindow;
+      const windowIndex = row.querySelectorAll(".availability-window").length;
+      button.insertAdjacentHTML("beforebegin", `<div class="availability-window" data-availability-window="${windowIndex}"><label class="availability-time-field"><span>Start</span><input type="text" data-time-picker data-weekly-availability-day="${day}" data-availability-slot="${windowIndex}" aria-label="${DAYS[day]} window ${windowIndex + 1} start time"></label><span class="availability-time-separator" aria-hidden="true">to</span><label class="availability-time-field"><span>End</span><input type="text" data-time-picker data-weekly-availability-day="${day}" data-availability-end-slot="${windowIndex}" aria-label="${DAYS[day]} window ${windowIndex + 1} end time"></label><button type="button" class="icon-button availability-remove-window" data-remove-weekly-window="${day}" aria-label="Remove ${DAYS[day]} window ${windowIndex + 1}" title="Remove this availability window">&times;</button></div>`);
+      row.querySelector("[data-remove-weekly-window]:last-of-type")?.addEventListener("click", () => {
+        const added = row.querySelectorAll(".availability-window");
+        if (added.length <= 1) return;
+        added[added.length - 1].remove();
+        button.hidden = false;
+      });
+      if (row.querySelectorAll(".availability-window").length >= 4) button.hidden = true;
+    };
+  });
+  document.querySelectorAll("[data-remove-weekly-window]").forEach((button) => {
+    button.onclick = () => {
+      const window = button.closest(".availability-window");
+      const row = button.closest(".availability-day");
+      if (!window || !row || row.querySelectorAll(".availability-window").length <= 1) return;
+      window.remove();
+      row.querySelector("[data-add-weekly-window]")?.removeAttribute("hidden");
+    };
+  });
+      wireAvailabilityTabFlow("[data-weekly-availability-day]");
 }
 
 function wireAvailabilityTabFlow(selector) {
@@ -7853,6 +9554,32 @@ function setAvailabilityInputs(selector, value) {
   });
 }
 
+function wireAvailabilityDaySummaryUpdates() {
+  document.querySelectorAll("#availabilityEditor [data-availability-day]").forEach((input) => {
+    if (input.dataset.summaryWired === "true") return;
+    input.dataset.summaryWired = "true";
+    input.addEventListener("input", refreshAvailabilityDayCardSummaries);
+    input.addEventListener("change", refreshAvailabilityDayCardSummaries);
+  });
+  refreshAvailabilityDayCardSummaries();
+}
+
+function refreshAvailabilityDayCardSummaries() {
+  document.querySelectorAll("#availabilityEditor [data-availability-row]").forEach((row) => {
+    const windows = Array.from(row.querySelectorAll(".availability-window")).map((window) => ({
+      start: window.querySelector('[data-availability-slot]')?.value.trim() || "",
+      end: window.querySelector('[data-availability-end-slot]')?.value.trim() || ""
+    })).filter((range) => range.start && range.end);
+    const summary = row.querySelector(".availability-day-heading span");
+    if (!summary) return;
+    summary.textContent = !windows.length
+      ? "Not available"
+      : windows.length > 1
+        ? `${windows.length} availability windows`
+        : `${windows[0].start} to ${windows[0].end}`;
+  });
+}
+
 function parseWeeklyRules() {
   return Array.from(document.querySelectorAll(".weekly-rule-row")).map((row) => ({
     days: Array.from(row.querySelectorAll("[data-rule-day]:checked")).map((input) => Number(input.value)),
@@ -7873,32 +9600,22 @@ function collectEmployeePayRates() {
 
 function parseAvailability() {
   const availability = emptyAvailability();
-  document.querySelectorAll("[data-availability-day]").forEach((input) => {
+  document.querySelectorAll("[data-availability-day][data-availability-slot]").forEach((input) => {
     const day = input.dataset.availabilityDay;
-    availability[day] = input.value.split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const [start, end] = part.split("-").map((value) => value?.trim());
-        return { start: normalizeTime(start), end: normalizeTime(end) };
-      })
-      .filter((range) => range.start && range.end);
+    const window = input.closest(".availability-window");
+    const end = window?.querySelector("[data-availability-end-slot]")?.value || "";
+    if (input.value.trim() && end.trim()) availability[day].push({ start: normalizeTime(input.value), end: normalizeTime(end) });
   });
   return availability;
 }
 
 function parseWeeklyAvailability() {
   const availability = emptyAvailability();
-  document.querySelectorAll("[data-weekly-availability-day]").forEach((input) => {
+  document.querySelectorAll("[data-weekly-availability-day][data-availability-slot]").forEach((input) => {
     const day = input.dataset.weeklyAvailabilityDay;
-    availability[day] = input.value.split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const [start, end] = part.split("-").map((value) => value?.trim());
-        return { start: normalizeTime(start), end: normalizeTime(end) };
-      })
-      .filter((range) => range.start && range.end);
+    const window = input.closest(".availability-window");
+    const end = window?.querySelector("[data-availability-end-slot]")?.value || "";
+    if (input.value.trim() && end.trim()) availability[day].push({ start: normalizeTime(input.value), end: normalizeTime(end) });
   });
   return availability;
 }
@@ -7906,6 +9623,8 @@ function parseWeeklyAvailability() {
 function loadEmployee(id) {
   const employee = employeeById(id);
   if (!employee) return;
+  employeeFormHydrating = true;
+  employeeFormDirty = false;
   employeeNewProfileDraft = false;
   $("employeeId").value = employee.id;
   $("firstName").value = employee.firstName;
@@ -7921,27 +9640,35 @@ function loadEmployee(id) {
   $("employeeAlwaysPrintEndTime").checked = Boolean(employee.alwaysPrintFloorEndTime);
   setCheckedValues("employeeDepartments", normalizeEmployeeDepartments(employee));
   $("employeeCallWeekly").checked = Boolean(employee.callWeekly);
-  $("weeklyAvailabilityFieldset").hidden = !employee.callWeekly;
-  setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
+  $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey());
+  $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || "Regular availability";
+  $("employeeAvailabilityRepeatWeeks").value = String(employee.availabilityRepeatWeeks || 1);
+  syncEmployeeAvailabilityMode();
+  setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
   renderEmployeePayRates(employee);
   setCheckedValues("mealTraining", employee.mealTraining || []);
   setCheckedValues("roleTraining", employee.roleTraining || []);
   setCheckedValues("emergencyRoleIds", employee.emergencyRoleIds || []);
   setRoleMealTrainingValues(employee.roleMealTraining || {});
   setCheckedValues("trainerRoles", employee.trainerRoles || []);
+  renderAvailabilityPatternWorkspace(employee);
   renderAvailabilityEditor(employee);
   renderWeeklyAvailabilityEditor(employee);
+  hydrateEmployeeAvailabilitySubmissions(employee);
   renderWeeklyRuleEditor(employee);
   updateStickyEmployeeName();
+  employeeFormHydrating = false;
   markEmployeeFormClean();
 }
 
 function updateStickyEmployeeName() {
-  const label = $("stickyEmployeeName");
-  if (!label) return;
   const employee = employeeById($("employeeId")?.value);
   const typedName = `${$("firstName")?.value || ""} ${$("lastName")?.value || ""}`.trim();
-  label.textContent = employee ? fullEmployeeName(employee) : typedName || "Unsaved employee";
+  const name = employee ? fullEmployeeName(employee) : typedName || "Unsaved employee";
+  const label = $("stickyEmployeeName");
+  if (label) label.textContent = name;
+  const title = $("employeeProfileTitle");
+  if (title) title.textContent = name;
 }
 
 function activateEmployeeProfileTab(tabName = "profile") {
@@ -7959,6 +9686,8 @@ function activateEmployeeProfileTab(tabName = "profile") {
 }
 
 function resetEmployeeForm() {
+  employeeFormHydrating = true;
+  employeeFormDirty = false;
   employeeNewProfileDraft = true;
   $("employeeForm").reset();
   $("employeeId").value = "";
@@ -7971,7 +9700,8 @@ function resetEmployeeForm() {
   $("employeeBirthday").value = "";
   $("employeeManagerNotes").value = "";
   $("employeeCallWeekly").checked = false;
-  $("weeklyAvailabilityFieldset").hidden = true;
+  $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
+  syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
   renderEmployeePayRates();
   renderAvailabilityEditor();
@@ -7980,6 +9710,7 @@ function resetEmployeeForm() {
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
   activateEmployeeProfileTab("profile");
+  employeeFormHydrating = false;
   markEmployeeFormClean();
 }
 
@@ -8253,6 +9984,7 @@ function renderSettings() {
   updateShiftNameVisibility();
   $("autoSetCloserEndTime").checked = state.settings.autoSetCloserEndTime !== false;
   $("closerEndBufferMinutes").value = String(Number(state.settings.closerEndBufferMinutes ?? 60));
+  $("floorPlanCleanupMinutes").value = String(Number(state.settings.floorPlanCleanupMinutes ?? 90));
   $("flexDoubleEndTime").value = normalizeTime(state.settings.flexDoubleEndTime || "7:00 PM");
   $("lunchCloserEndTime").value = normalizeTime(state.settings.lunchCloserEndTime || "5:00 PM");
   $("closerTrainingRule").value = state.settings.closerTrainingRule || "onePerDay";
@@ -9453,8 +11185,46 @@ function isCompactPrintLayout(layout) {
 function updateCompactPrintAdvancedVisibility() {
   const advanced = $("compactPrintAdvanced");
   if (!advanced) return;
-  advanced.hidden = !isCompactPrintLayout($("printLayout")?.value);
+  const layout = $("printLayout")?.value;
+  advanced.hidden = !isCompactPrintLayout(layout);
+  const departmentFilters = $("printDepartmentFilters");
+  if (departmentFilters) departmentFilters.hidden = !isCompactPrintLayout(layout);
+  if (isCompactPrintLayout(layout)) renderPrintDepartmentOptions();
   if (!advanced.hidden) renderCompactPrintRoleOrderEditor();
+}
+
+function printDepartmentList() {
+  return Array.from(new Set((state.roles || [])
+    .map((role) => String(role.department || "").trim())
+    .filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function selectedPrintDepartments() {
+  const options = Array.from(document.querySelectorAll("#printDepartmentOptions input[data-print-department]"));
+  if (!options.length) return null;
+  return new Set(options.filter((input) => input.checked).map((input) => input.value));
+}
+
+function printDepartmentMatches(shift, departments) {
+  if (!departments) return true;
+  const department = String(roleById(shift.roleId)?.department || shift.department || "").trim();
+  return departments.has(department);
+}
+
+function renderPrintDepartmentOptions() {
+  const target = $("printDepartmentOptions");
+  if (!target) return;
+  const previous = new Set(Array.from(target.querySelectorAll("input[data-print-department]:checked"), (input) => input.value));
+  const departments = printDepartmentList();
+  target.innerHTML = departments.map((department) => `
+    <label class="print-department-option">
+      <input type="checkbox" data-print-department value="${escapeHtml(department)}" ${!previous.size || previous.has(department) ? "checked" : ""}>
+      <span>${escapeHtml(department)}</span>
+    </label>
+  `).join("") || `<span class="hint">No departments are configured.</span>`;
+  target.querySelectorAll("input[data-print-department]").forEach((input) => {
+    input.addEventListener("change", renderPrintWarningChecklist);
+  });
 }
 
 function renderCompactPrintRoleOrderEditor() {
@@ -9514,6 +11284,10 @@ function renderPrintWarningChecklist() {
     { warn: issues.length > 0, text: issues.length ? `${issues.length} schedule warning/error${issues.length === 1 ? "" : "s"} found.` : "No schedule warnings found." },
     { warn: hiddenEmployees > 0, text: hiddenEmployees ? `${hiddenEmployees} active employee${hiddenEmployees === 1 ? "" : "s"} hidden by filters.` : "No active employees hidden by filters." },
     { warn: false, text: printLayoutDescription($("printLayout")?.value) },
+    ...(isCompactPrintLayout($("printLayout")?.value) ? [{
+      warn: false,
+      text: `Departments: ${Array.from(selectedPrintDepartments() || printDepartmentList()).join(", ") || "none"}.`
+    }] : []),
     ...(isCompactPrintLayout($("printLayout")?.value) ? [{ warn: false, text: `Shift order inside cells: ${compactPrintShiftOrderLabel(compactPrintShiftOrder())}.` }] : [])
   ];
   target.innerHTML = `
@@ -9523,26 +11297,39 @@ function renderPrintWarningChecklist() {
 }
 
 async function printSchedule() {
-  if (!(await checkPrintCoverage())) return;
-  preparePrintView($("printLayout").value, $("printSort").value, { shiftOrder: compactPrintShiftOrder() });
+  const layout = $("printLayout").value;
+  if (layout !== "currentPage" && !(await checkPrintCoverage())) return;
+  preparePrintView(layout, $("printSort").value, {
+    shiftOrder: compactPrintShiftOrder(),
+    departments: selectedPrintDepartments()
+  });
   window.print();
   window.setTimeout(clearPrintView, 500);
 }
 
 function preparePrintView(layout, sortMode, options = {}) {
-  document.body.classList.remove("printing-grid", "printing-employee-compact");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page");
+  if (layout === "currentPage") {
+    clearPrintView();
+    document.body.classList.add("printing-current-page");
+    return;
+  }
   if (layout === "ctuitEntry") {
     renderCtuitEntryPrintView();
     document.body.classList.add("printing-simple", "printing-ctuit-entry");
     return;
   }
   if (layout === "simpleRole" || layout === "simpleRoleWithBay") {
-    renderSimpleRolePrintView(sortMode, { includeOpenShiftBoxes: layout === "simpleRoleWithBay", shiftOrder: options.shiftOrder });
+    renderSimpleRolePrintView(sortMode, {
+      includeOpenShiftBoxes: layout === "simpleRoleWithBay",
+      shiftOrder: options.shiftOrder,
+      departments: options.departments
+    });
     document.body.classList.add("printing-simple");
     return;
   }
   if (layout === "simpleEmployee") {
-    renderSimpleEmployeePrintView(sortMode, { shiftOrder: options.shiftOrder });
+    renderSimpleEmployeePrintView(sortMode, { shiftOrder: options.shiftOrder, departments: options.departments });
     document.body.classList.add("printing-simple", "printing-employee-compact");
     return;
   }
@@ -9555,11 +11342,12 @@ function printLayoutDescription(layout) {
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
   if (layout === "simpleRoleWithBay") return "Compact role grid with open Shift Bay boxes selected.";
   if (layout === "simpleRole") return "Compact role grid selected.";
+  if (layout === "currentPage") return "Current page selected. The active screen will be printed intentionally.";
   return "Current grid layout selected.";
 }
 
 function clearPrintView() {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "compact-preview");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "compact-preview");
   updateCompactPreviewButton();
   $("printView").hidden = true;
   $("printView").innerHTML = "";
@@ -9580,9 +11368,9 @@ function toggleCompactPreview() {
 
 function renderSimpleRolePrintView(sortMode, options = {}) {
   const dates = weekDates();
-  const visible = state.shifts.filter((shift) => visibleShift(shift));
-  const roleGroups = groupPrintShiftsByRole(visible, sortMode);
-  const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes() : "";
+  const visible = state.shifts.filter((shift) => visibleShift(shift) && printDepartmentMatches(shift, options.departments));
+  const roleGroups = groupPrintShiftsByRole(visible, sortMode, options.departments);
+  const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes(options.departments) : "";
   const shiftOrder = options.shiftOrder || "time";
   $("printView").hidden = false;
   $("printView").innerHTML = `
@@ -9594,7 +11382,7 @@ function renderSimpleRolePrintView(sortMode, options = {}) {
 function renderSimpleEmployeePrintView(sortMode, options = {}) {
   const dates = weekDates();
   const dateKeys = dates.map(formatDateKey);
-  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift));
+  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift) && printDepartmentMatches(shift, options.departments));
   const shiftOrder = options.shiftOrder || "time";
   const employeeIds = Array.from(new Set([
     ...visible.map((shift) => shift.employeeId).filter(Boolean),
@@ -9622,7 +11410,7 @@ function renderSimpleEmployeePrintView(sortMode, options = {}) {
           ${employeeIds.map((employeeId) => `
             <tr class="employee-row">
               <th>${displayName(employeeById(employeeId))}</th>
-              ${dateKeys.map((dateKey) => `<td>${renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder)}</td>`).join("")}
+              ${dateKeys.map((dateKey) => `<td>${renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder, options.departments)}</td>`).join("")}
             </tr>
           `).join("")}
         </tbody>
@@ -9631,11 +11419,11 @@ function renderSimpleEmployeePrintView(sortMode, options = {}) {
   `;
 }
 
-function renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder) {
+function renderSimpleEmployeeAllRolesCell(employeeId, dateKey, shiftOrder, departments = null) {
   const employee = employeeById(employeeId);
   const extras = renderSimplePrintExtras(employee, employeeId, dateKey);
   const dayShifts = state.shifts
-    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId && visibleShift(shift))
+    .filter((shift) => shift.date === dateKey && shift.employeeId === employeeId && visibleShift(shift) && printDepartmentMatches(shift, departments))
     .sort((a, b) => compareCompactCellShifts(a, b, shiftOrder));
   const shiftLines = dayShifts.map((shift) => {
     const role = roleById(shift.roleId);
@@ -9714,6 +11502,7 @@ function renderCtuitEntryRow(shift) {
   const flags = [];
   if (shift.isCloser) flags.push("CL");
   if (shift.isFlexDouble) flags.push("Flex");
+  trainingBadgesForShift(shift).forEach((trainingNote) => flags.push(trainingNote));
   if (shift.notes) flags.push(shift.notes);
   const roleClass = `role-${(role?.name || "other").toLowerCase().replace(/\s+/g, "-")}`;
   return `
@@ -9727,8 +11516,8 @@ function renderCtuitEntryRow(shift) {
   `;
 }
 
-function renderOpenShiftPrintBoxes() {
-  const shifts = currentWeekOpenShifts();
+function renderOpenShiftPrintBoxes(departments = null) {
+  const shifts = currentWeekOpenShifts().filter((shift) => printDepartmentMatches(shift, departments));
   if (!shifts.length) {
     return `
       <section class="open-shift-print-section">
@@ -9774,7 +11563,7 @@ function renderOpenShiftPrintBox(shift) {
   `;
 }
 
-function groupPrintShiftsByRole(shifts, sortMode) {
+function groupPrintShiftsByRole(shifts, sortMode, departments = null) {
   const groups = {};
   const ensureGroup = (roleName, roleId = "") => {
     if (!groups[roleName]) groups[roleName] = { roleName, roleId, shifts: [], employeeIds: new Set() };
@@ -9795,7 +11584,7 @@ function groupPrintShiftsByRole(shifts, sortMode) {
     .forEach((employee) => {
       (employee.roleTraining || []).forEach((roleId) => {
         const role = roleById(roleId);
-        if (!role || !state.settings.visibleDepartments.includes(role.department)) return;
+        if (!role || !state.settings.visibleDepartments.includes(role.department) || (departments && !departments.has(role.department))) return;
         ensureGroup(role.name, role.id).employeeIds.add(employee.id);
       });
     });
@@ -9961,9 +11750,10 @@ function printStaffingAnalysis() {
 function syncFloorPlanDateToActiveWeek(options = {}) {
   const input = $("floorPlanDate");
   if (!input) return;
-  const activeKey = formatDateKey(currentDate);
-  const activeWeekKeys = new Set(weekDateKeys());
-  if (options.force || !input.value || !activeWeekKeys.has(input.value)) {
+  const activeKey = focusedDateKey || formatDateKey(currentDate);
+  if (options.handoffDateKey) {
+    input.value = options.handoffDateKey;
+  } else if (!input.value) {
     input.value = activeKey;
   }
 }
@@ -10213,7 +12003,15 @@ function shiftMatchesFloorPlanPeriod(shift, period) {
   if (range.start == null || range.end == null) return false;
   const sortedPeriods = [...periods].sort((a, b) => a.startMinutes - b.startMinutes);
   const dinner = sortedPeriods.find((mealPeriod) => mealPeriod.name === "Dinner");
-  if (period === "pm") return shift.isFlexDouble || shift.untilVolume || (dinner ? range.start >= dinner.startMinutes || range.end > dinner.startMinutes : false);
+  if (period === "pm") {
+    if (shift.isFlexDouble || shift.untilVolume) return true;
+    if (!dinner) return false;
+    const dinnerIndex = sortedPeriods.indexOf(dinner);
+    const previousMeal = [...sortedPeriods.slice(0, dinnerIndex)].reverse().find((mealPeriod) => mealPeriod.endMinutes != null);
+    const serviceCutoff = previousMeal?.endMinutes ?? dinner.startMinutes;
+    const cleanupMinutes = Math.max(0, Number(state.settings.floorPlanCleanupMinutes ?? 90) || 0);
+    return range.start >= dinner.startMinutes || range.end > serviceCutoff + cleanupMinutes;
+  }
   if (period === "am") return dinner ? range.start < dinner.startMinutes : true;
   const startsInNamedPeriod = (names) => sortedPeriods
     .filter((mealPeriod) => names.includes(mealPeriod.name))
@@ -10519,12 +12317,49 @@ function openStorageInfo() {
   $("storageInfoDialog").showModal();
 }
 
+function formatAuditChangeSummary(summary = {}) {
+  const items = [
+    [summary.shiftsCreated, "shifts created"],
+    [summary.shiftsEdited, "shifts edited"],
+    [summary.shiftsDeleted, "shifts deleted"],
+    [summary.openShiftsCreated, "open shifts added"],
+    [summary.openShiftsEdited, "open shifts edited"],
+    [summary.openShiftsDeleted, "open shifts deleted"],
+    [summary.requestOffsCreated, "ROs/blocks added"],
+    [summary.requestOffsEdited, "ROs/blocks edited"],
+    [summary.requestOffsDeleted, "ROs/blocks deleted"],
+    [summary.employeesChanged, "employees changed"],
+    [summary.templatesChanged, "templates changed"]
+  ].filter(([count]) => Number(count) > 0);
+  return items.length ? items.map(([, label]) => label).join(" / ") : "No schedule records changed";
+}
+
+function updateRecentActivityDetailsButton() {
+  const button = $("toggleRecentActivityDetailsBtn");
+  if (!button) return;
+  button.textContent = recentActivityDetailsVisible ? "-" : "+";
+  button.setAttribute("aria-expanded", String(recentActivityDetailsVisible));
+  button.title = recentActivityDetailsVisible ? "Hide advanced audit details" : "Show advanced audit details";
+}
+
+function renderRecentActivityEvents(events = recentActivityEvents) {
+  const body = $("recentActivityBody");
+  updateRecentActivityDetailsButton();
+  if (!body) return;
+  if (!events.length) {
+    body.innerHTML = `<p class="hint">No recent cloud activity has been recorded yet.</p>`;
+    return;
+  }
+  body.innerHTML = events.map(formatAuditEvent).join("");
+}
+
 function formatAuditEvent(event) {
   const details = event.details || {};
   const when = event.created_at ? new Date(event.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Unknown time";
   const device = details.savedByDeviceId ? String(details.savedByDeviceId).slice(0, 8) : "";
   const label = event.event_type === "scheduler_state_saved" ? "Schedule saved" : String(event.event_type || "Activity").replaceAll("_", " ");
   const user = details.savedByEmail || event.user_email || (event.user_id ? `User ${String(event.user_id).slice(0, 8)}` : "Unknown user");
+  const summary = details.changeSummary;
   const role = details.savedByRole || "";
   const meta = [
     role ? `Role: ${role}` : "",
@@ -10538,7 +12373,8 @@ function formatAuditEvent(event) {
         <span>${escapeHtml(when)}</span>
       </div>
       <div class="recent-activity-user">Saved by ${escapeHtml(user)}</div>
-      ${meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      ${summary ? `<div class="recent-activity-summary">${escapeHtml(formatAuditChangeSummary(summary))}</div>` : ""}
+      ${recentActivityDetailsVisible && meta.length ? `<div class="recent-activity-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     </article>
   `;
 }
@@ -10552,16 +12388,8 @@ async function openRecentActivity() {
       cache: "no-store",
       headers: authRequestHeaders()
     });
-    const events = Array.isArray(result.events) ? result.events : [];
-    if (!events.length) {
-      if (body) body.innerHTML = `<p class="hint">No recent cloud activity has been recorded yet.</p>`;
-      return;
-    }
-    if (body) {
-      body.innerHTML = `
-        ${events.map(formatAuditEvent).join("")}
-      `;
-    }
+    recentActivityEvents = Array.isArray(result.events) ? result.events : [];
+    renderRecentActivityEvents();
   } catch {
     if (body) body.innerHTML = `<p class="hint">Recent cloud activity is not available in this version yet.</p>`;
   }
@@ -10587,11 +12415,13 @@ function renderTemporaryManagerLogin(details = null) {
   const loginUrl = details.loginUrl || "https://shift-bay.netlify.app";
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
+    `<strong>${details.temporaryPasswordReissued ? "New temporary password issued. The previous password no longer works." : details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing manager login relinked. Copy this new temporary password before closing." : "Manager login created. Copy this before closing."}</strong>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    details.inviteEmailSent
+    details.temporaryPasswordReissued
+      ? "<small>This replacement password remains valid until the manager creates a permanent password.</small>"
+      : details.inviteEmailSent
       ? "<small>The email includes these login details. Keep this panel available as a backup until the manager confirms receipt.</small>"
       : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
@@ -10618,6 +12448,7 @@ function renderManagerAccessList(managers = []) {
             </select>
           </label>
           <span class="manager-access-added">${manager.createdAt ? escapeHtml(new Date(manager.createdAt).toLocaleDateString()) : ""}</span>
+          <button type="button" class="temporary-password-action" data-manager-temp-password ${manager.passwordChangeRequired ? "" : "disabled title=\"This password has already been replaced by a permanent password.\""}>${manager.passwordChangeRequired ? "Issue temp password" : "Password set"}</button>
           <button type="button" data-manager-remove ${manager.userId === currentUser?.id ? "disabled" : ""}>Remove</button>
         </section>
       `).join("")}
@@ -10633,6 +12464,12 @@ function renderManagerAccessList(managers = []) {
     button.addEventListener("click", async (event) => {
       const row = event.target.closest("[data-manager-user-id]");
       await removeManagerAccess(row?.dataset.managerUserId);
+    });
+  });
+  target.querySelectorAll("[data-manager-temp-password]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const row = event.target.closest("[data-manager-user-id]");
+      await issueManagerTemporaryPassword(row?.dataset.managerUserId, button);
     });
   });
 }
@@ -10731,6 +12568,33 @@ async function removeManagerAccess(userId) {
     setManagerAccessMessage(error.message || "Could not remove manager access.");
   }
 }
+
+async function issueManagerTemporaryPassword(userId, button) {
+  if (!userId || button?.disabled) return;
+  button.disabled = true;
+  setManagerAccessMessage("Issuing a replacement temporary password...");
+  try {
+    const result = await fetchJson("/api/managers/temporary-password", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ userId })
+    });
+    renderTemporaryManagerLogin({
+      email: result.email,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl,
+      temporaryPasswordReissued: true,
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
+    });
+    setManagerAccessMessage("A replacement temporary password is ready above. The old one is no longer valid.");
+    await loadManagerAccess();
+  } catch (error) {
+    setManagerAccessMessage(error.message || "Could not issue a temporary password.");
+    button.disabled = false;
+  }
+}
+
 function staffAccountStatusLabel(status = "") {
   const labels = { invited: "Invited", active: "Active", disabled: "Disabled" };
   return labels[String(status).toLowerCase()] || status || "Invited";
@@ -10768,15 +12632,17 @@ function renderTemporaryStaffLogin(details = null) {
     target.innerHTML = "";
     return;
   }
-  const loginUrl = details.loginUrl || `${window.location.origin}/staff.html`;
+  const loginUrl = details.loginUrl || window.location.origin;
   target.hidden = false;
   target.innerHTML = [
-    `<strong>${details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
+    `<strong>${details.temporaryPasswordReissued ? "New temporary password issued. The previous password no longer works." : details.inviteEmailSent ? "Invitation email sent." : details.reusedExistingLogin ? "Existing staff login relinked. Copy this new temporary password before closing." : "Staff login created. Copy this before closing."}</strong>`,
     `<div>Employee: <code>${escapeHtml(details.displayName || "")}</code></div>`,
     `<div>Email: <code>${escapeHtml(details.email || "")}</code></div>`,
     `<div>Temporary password: <code>${escapeHtml(details.temporaryPassword)}</code></div>`,
     `<div>Login URL: <code>${escapeHtml(loginUrl)}</code></div>`,
-    details.inviteEmailSent
+    details.temporaryPasswordReissued
+      ? "<small>This replacement password remains valid until the staff member creates a permanent password.</small>"
+      : details.inviteEmailSent
       ? "<small>The email includes these login details. Keep this panel available as a backup until the staff member confirms receipt.</small>"
       : `<small>Email was not sent${details.inviteEmailError ? `: ${escapeHtml(details.inviteEmailError)}` : "."} Share this password directly for now.</small>`
   ].join("");
@@ -10803,6 +12669,7 @@ function renderStaffAccessList(staff = []) {
             <span class="staff-access-status">${staffAccountStatusLabel(account.status)}</span>
             <span class="staff-access-privacy">${escapeHtml(staffPhoneVisibilityLabel(account.phoneVisibility))}</span>
             <span class="manager-access-added">${account.invitedAt ? escapeHtml(new Date(account.invitedAt).toLocaleDateString()) : ""}</span>
+            <button type="button" class="temporary-password-action" data-staff-temp-password="${escapeHtml(account.id || "")}" data-staff-user-id="${escapeHtml(account.userId || "")}" ${account.passwordChangeRequired ? "" : "disabled title=\"This password has already been replaced by a permanent password.\""}>${account.passwordChangeRequired ? "Issue temp password" : "Password set"}</button>
             <button type="button" class="staff-access-remove" data-staff-remove="${escapeHtml(account.id || "")}" data-staff-user-id="${escapeHtml(account.userId || "")}">Remove Login</button>
           </section>
         `;
@@ -10812,6 +12679,11 @@ function renderStaffAccessList(staff = []) {
   target.querySelectorAll("[data-staff-remove]").forEach((button) => {
     button.addEventListener("click", async () => {
       await removeStaffLogin(button.dataset.staffRemove, button.dataset.staffUserId, button);
+    });
+  });
+  target.querySelectorAll("[data-staff-temp-password]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await issueStaffTemporaryPassword(button.dataset.staffTempPassword, button.dataset.staffUserId, button);
     });
   });
 }
@@ -10845,6 +12717,33 @@ async function removeStaffLogin(accountId, userId, button) {
   }
 }
 
+async function issueStaffTemporaryPassword(accountId, userId, button) {
+  if (!accountId || !userId || button?.disabled) return;
+  button.disabled = true;
+  setStaffAccessMessage("Issuing a replacement temporary password...");
+  try {
+    const result = await fetchJson("/api/staff-accounts/temporary-password", {
+      method: "POST",
+      headers: authRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ accountId, userId })
+    });
+    renderTemporaryStaffLogin({
+      email: result.email,
+      displayName: result.displayName,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl: result.loginUrl,
+      temporaryPasswordReissued: true,
+      inviteEmailSent: Boolean(result.inviteEmailSent),
+      inviteEmailError: result.inviteEmailError || ""
+    });
+    setStaffAccessMessage("A replacement temporary password is ready above. The old one is no longer valid.");
+    await loadStaffAccess();
+  } catch (error) {
+    setStaffAccessMessage(error.message || "Could not issue a temporary password.");
+    button.disabled = false;
+  }
+}
+
 async function loadStaffAccess() {
   setStaffAccessMessage("Loading staff access...");
   try {
@@ -10871,6 +12770,64 @@ async function openStaffAccess() {
   renderTemporaryStaffLogin(null);
   $("staffAccessDialog")?.showModal();
   await loadStaffAccess();
+}
+
+function setStaffRequestsMessage(message = "") {
+  const target = $("staffRequestsMessage");
+  if (target) target.textContent = message;
+}
+
+function staffRequestEmployeeName(request) {
+  return fullEmployeeName(employeeById(request.legacyEmployeeId)) || request.legacyEmployeeId || "Staff member";
+}
+
+function renderStaffRequestsReview(requests = [], submissions = []) {
+  const requestTarget = $("staffRequestsList");
+  const availabilityTarget = $("staffAvailabilityReviewList");
+  if (requestTarget) {
+    requestTarget.innerHTML = requests.length ? requests.map((request) => `
+      <section class="staff-review-row">
+        <div><strong>${escapeHtml(staffRequestEmployeeName(request))}</strong><span>${escapeHtml(request.startDate)} - ${escapeHtml(request.endDate)}${request.startTime && request.endTime ? ` | ${escapeHtml(request.startTime)} - ${escapeHtml(request.endTime)}` : " | Full day"}</span>${request.note ? `<small>${escapeHtml(request.note)}</small>` : ""}</div>
+        <div class="staff-review-actions"><b>${escapeHtml(request.status)}</b>${request.status === "pending" ? `<button type="button" data-staff-request-review="${escapeHtml(request.id)}" data-review-status="approved">Approve</button><button type="button" data-staff-request-review="${escapeHtml(request.id)}" data-review-status="denied">Deny</button>` : ""}</div>
+      </section>`).join("") : `<p class="hint">No request-offs have been submitted.</p>`;
+    requestTarget.querySelectorAll("[data-staff-request-review]").forEach((button) => button.addEventListener("click", () => reviewStaffRequest(button.dataset.staffRequestReview, button.dataset.reviewStatus)));
+  }
+  if (availabilityTarget) {
+    availabilityTarget.innerHTML = submissions.length ? submissions.map((submission) => `
+      <section class="staff-review-row"><div><strong>${escapeHtml(staffRequestEmployeeName(submission))}</strong><span>Week of ${escapeHtml(submission.weekStart)} | ${escapeHtml(submission.status)}</span>${submission.note ? `<small>${escapeHtml(submission.note)}</small>` : ""}</div><div class="staff-review-actions"><code>${escapeHtml(JSON.stringify(submission.availability || {}))}</code>${["submitted", "pending", "awaiting_approval"].includes(String(submission.status || "").toLowerCase()) ? `<button type="button" data-staff-request-review="${escapeHtml(submission.id)}" data-review-status="approved">Approve</button><button type="button" data-staff-request-review="${escapeHtml(submission.id)}" data-review-status="denied">Deny</button>` : ""}</div></section>`).join("") : `<p class="hint">No availability submissions have been received.</p>`;
+  }
+}
+
+async function loadStaffRequestsReview() {
+  setStaffRequestsMessage("Loading staff requests...");
+  try {
+    const [requests, submissions] = await Promise.all([
+      fetchJson("/api/staff-requests", { cache: "no-store", headers: authRequestHeaders() }),
+      fetchJson("/api/staff-availability", { cache: "no-store", headers: authRequestHeaders() })
+    ]);
+    renderStaffRequestsReview(requests.requests || [], submissions.submissions || []);
+    setStaffRequestsMessage("Manager review queue");
+  } catch (error) {
+    setStaffRequestsMessage(error.message || "Could not load staff requests.");
+    renderStaffRequestsReview([], []);
+  }
+}
+
+async function openStaffRequests() {
+  if (!["owner", "manager"].includes(String(currentUser?.role || "").toLowerCase())) return;
+  $("staffRequestsDialog")?.showModal();
+  await loadStaffRequestsReview();
+}
+
+async function reviewStaffRequest(requestId, status) {
+  if (!requestId || !status) return;
+  setStaffRequestsMessage("Saving review...");
+  try {
+    await fetchJson("/api/staff-requests/review", { method: "POST", headers: authRequestHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ requestId, status }) });
+    await loadStaffRequestsReview();
+  } catch (error) {
+    setStaffRequestsMessage(error.message || "Could not review request-off.");
+  }
 }
 
 async function sendStaffInvite(event) {
@@ -11415,7 +13372,9 @@ function roPdfColumnForX(x) {
   if (x < 122) return "submitted";
   if (x < 150) return "recurring";
   if (x < 205) return "employee";
-  if (x < 245) return "date";
+  // CTUIT places the request date near x=206 and the request details near x=241.
+  // Keep the boundary between those columns narrow enough for compact reports.
+  if (x < 230) return "date";
   if (x < 295) return "info";
   if (x < 340) return "note";
   if (x < 452) return "approvedBy";
@@ -11452,7 +13411,7 @@ function roPdfRowToRequest(row, fileName) {
   const date = normalizeImportDate(cells.date) || normalizeImportDate(cells.info);
   if (!date) return null;
   const { firstName, lastName } = roPdfSplitReportName(cells.employee);
-  if (!firstName && !lastName) return null;
+  if (!firstName || !lastName) return null;
   const daypart = roPdfRequestDaypart(cells.info) || "All day";
   return {
     firstName,
@@ -11470,7 +13429,7 @@ function roPdfParsePageItems(items, fileName) {
     .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
     .filter((item) => item.text);
   const anchors = textItems
-    .filter((item) => /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(item.text) && item.x >= 205 && item.x < 245)
+    .filter((item) => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(item.text) && item.x >= 190 && item.x < 230)
     .sort((a, b) => b.y - a.y);
   const requests = [];
   anchors.forEach((anchor, index) => {
@@ -11492,6 +13451,36 @@ function roPdfParsePageItems(items, fileName) {
   return requests;
 }
 
+function toNativeTimeValue(value = "") {
+  const normalized = normalizeTime(value);
+  if (!normalized) return "";
+  const minutes = minutesFromTime(normalized);
+  return minutes == null ? normalized : timeFromMinutes(minutes);
+}
+
+function roPdfParseRequestedDateRows(items, fileName) {
+  const textItems = items
+    .map((item) => ({ text: cleanCell(item.str), x: Number(item.transform?.[4]) || 0, y: Number(item.transform?.[5]) || 0 }))
+    .filter((item) => item.text);
+  const anchors = textItems
+    .filter((item) => item.x >= 190 && item.x < 230 && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(item.text))
+    .sort((a, b) => b.y - a.y);
+  return anchors.map((anchor, index) => {
+    const previousY = anchors[index - 1]?.y;
+    const nextY = anchors[index + 1]?.y;
+    const upper = previousY ? Math.min(anchor.y + 18, ((previousY + anchor.y) / 2) + 6) : anchor.y + 18;
+    const lower = nextY ? Math.max(anchor.y - 30, ((anchor.y + nextY) / 2) - 6) : anchor.y - 30;
+    return roPdfRowToRequest(textItems.filter((item) => item.y <= upper && item.y >= lower), fileName);
+  }).filter((request) => request && request.firstName && request.lastName && request.daypart);
+}
+
+function roPdfPlausibleRequest(request) {
+  const name = `${request.firstName} ${request.lastName}`.trim();
+  return Boolean(name)
+    && !/[0-9]/.test(name)
+    && !/\b(?:Approve|Disallow|Manager|All\s+Day|AM|PM|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i.test(name);
+}
+
 async function parseRequestOffPdfFilesInBrowser(files) {
   const pdfjs = await loadRequestOffPdfJs();
   const results = [];
@@ -11507,11 +13496,34 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
         const items = content.items || [];
-        requests.push(...roPdfParsePageItems(items, fileName));
+        const pageRequests = [
+          ...roPdfParsePageItems(items, fileName),
+          ...roPdfParseRequestedDateRows(items, fileName)
+        ];
+        const pageSeen = new Set();
+        pageRequests.forEach((request) => {
+          if (!roPdfPlausibleRequest(request)) return;
+          const key = [request.firstName, request.lastName, request.date, request.daypart]
+            .map((value) => cleanCell(value).toLowerCase())
+            .join("|");
+          if (pageSeen.has(key)) return;
+          pageSeen.add(key);
+          requests.push(request);
+        });
         pageText.push(items.map((item) => cleanCell(item.str)).filter(Boolean).join("\n"));
       }
       const fallbackRequests = parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName);
-      results.push({ fileName, pages: document.numPages, requests: [...requests, ...fallbackRequests] });
+      const combinedRequests = [];
+      const seen = new Set();
+      [...requests, ...fallbackRequests].forEach((request) => {
+        const key = [request.firstName, request.lastName, request.date, request.daypart]
+          .map((value) => cleanCell(value).toLowerCase())
+          .join("|");
+        if (seen.has(key) || !roPdfPlausibleRequest(request)) return;
+        seen.add(key);
+        combinedRequests.push(request);
+      });
+      results.push({ fileName, pages: document.numPages, requests: combinedRequests });
     } catch (error) {
       errors.push({ fileName, error: error.message || "Could not parse PDF." });
     }
@@ -11541,14 +13553,17 @@ function parseCtuitAvailabilityTimeOffText(text, fileName = "Ctuit RO PDF") {
   const dayNames = new Set(DAYS.map((day) => day.toLowerCase()));
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    const nameMatch = line.match(/^([A-Z][A-Za-z' -]+),\s*$/) || line.match(/^([A-Z][A-Za-z' -]+),\s*(?:Disallow|Approve|All Day|\d|Manager\b|$)/i);
+    const nameMatch = line.match(/^([A-Z][A-Za-z' -]+),\s*$/)
+      || line.match(/^([A-Z][A-Za-z' -]+),\s*(?:Disallow|Approve|All Day|\d|Manager\b|$)/i)
+      || line.match(/^([A-Z][A-Za-z' -]+),\s*[A-Z][A-Za-z' -]+?\d{1,2}\/\d{1,2}\/\d{4}/i);
     if (!nameMatch) continue;
     const lastName = cleanCell(nameMatch[1]);
     const previous = lines[index - 1] || "";
     const next = lines[index + 1] || "";
     const combined = [lines[index - 3], lines[index - 2], previous, line, next, lines[index + 2], lines[index + 3], lines[index + 4]].filter(Boolean).join(" ");
     const firstNameMatch = combined.match(new RegExp(`${lastName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},\\s*(?:Disallow\\s+)?([A-Z][A-Za-z' -]+?)(?:\\s+All\\s+Day|\\s+Manager\\b|\\s+Disallow|\\s+Approve|\\s+\\d|$)`, "i"));
-    const firstName = cleanCell(firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
+    const inlineFirstName = line.match(/^[A-Z][A-Za-z' -]+,\s*([A-Z][A-Za-z' -]+?)(?=\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+    const firstName = cleanCell(inlineFirstName || firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
     if (!firstName || dayNames.has(firstName.toLowerCase())) continue;
     const dateMatches = [...combined.matchAll(datePattern)].map((match) => normalizeImportDate(match[0])).filter(Boolean);
     const requestDate = dateMatches.find((dateKey) => {
@@ -11633,14 +13648,8 @@ function mergeRequestOffParses(groups) {
   const diagnostics = { undatedSections: [], errors: [], files: [], duplicates: 0 };
   groups.filter(Boolean).forEach((group) => {
     (group.requests || []).forEach((request) => {
-      const key = [
-        request.firstName,
-        request.lastName,
-        request.date,
-        request.daypart,
-        request.note,
-        request.source
-      ].map((value) => cleanCell(value).toLowerCase()).join("|");
+      const key = [request.firstName, request.lastName, request.date, request.daypart]
+        .map((value) => cleanCell(value).toLowerCase()).join("|");
       if (seen.has(key)) {
         diagnostics.duplicates++;
         return;
@@ -11663,11 +13672,14 @@ function applyParsedRequestOffs(parsed) {
   let skipped = 0;
   let duplicates = 0;
   const unmatched = new Set();
+  const unmatchedRequests = [];
+  const duplicateRequests = [];
   parsed.requests.forEach((request) => {
     const employee = findEmployeeByReportName(request.lastName, request.firstName);
     if (!employee) {
       skipped++;
       unmatched.add(`${request.firstName} ${request.lastName}`.trim());
+      unmatchedRequests.push({ ...request, reason: "No matching employee found" });
       return;
     }
     const nextRequest = {
@@ -11688,8 +13700,26 @@ function applyParsedRequestOffs(parsed) {
       imported++;
     } else {
       duplicates++;
+      duplicateRequests.push({ ...request, reason: "Already exists for this employee and date" });
     }
   });
+  const parserDuplicates = Number(parsed.diagnostics?.duplicates) || 0;
+  state.requestOffImportLog = Array.isArray(state.requestOffImportLog) ? state.requestOffImportLog : [];
+  state.requestOffImportLog.unshift({
+    id: uid("ro-import"),
+    importedAt: new Date().toISOString(),
+    files: (parsed.diagnostics?.files || []).map((file) => ({
+      fileName: file.fileName,
+      pages: file.pages,
+      readableRows: file.requests?.length || 0
+    })),
+    imported,
+    alreadyExisting: duplicates,
+    duplicateRowsInFiles: parserDuplicates,
+    unmatched: unmatchedRequests,
+    duplicates: duplicateRequests
+  });
+  state.requestOffImportLog = state.requestOffImportLog.slice(0, 50);
   if (!imported && undoStack.length) undoStack.pop();
   saveState();
   renderAll();
@@ -11702,7 +13732,7 @@ function applyParsedRequestOffs(parsed) {
   const errorItems = (parsed.diagnostics?.errors || []).map((item) => `${item.fileName}: ${item.error}`);
   showAppAlert({
     title: "RO Import Complete",
-    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} duplicate${duplicates === 1 ? "" : "s"}.` : ""}${suffix}${diagnostic}`,
+    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} already-imported entr${duplicates === 1 ? "y" : "ies"}.` : ""}${parserDuplicates ? ` Ignored ${parserDuplicates} duplicate row${parserDuplicates === 1 ? "" : "s"} found within the selected files.` : ""}${suffix}${diagnostic}`,
     type: skipped || diagnostic || errorItems.length ? "warning" : "info",
     items: [...fileItems, ...errorItems]
   });
@@ -12141,6 +14171,22 @@ function selectTimeInputText(input) {
     if (document.activeElement === input) input.select();
   }, 0);
 }
+
+function wirePasswordToggles(root = document) {
+  root.querySelectorAll("[data-password-toggle]").forEach((button) => {
+    if (button.dataset.passwordToggleBound === "true") return;
+    button.dataset.passwordToggleBound = "true";
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.passwordToggle);
+      if (!input) return;
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      button.textContent = visible ? "Show" : "Hide";
+      button.setAttribute("aria-pressed", String(!visible));
+    });
+  });
+}
+
 function openTimePicker(input) {
   activeTimeInput = input;
   const picker = $("timePicker");
@@ -12221,6 +14267,7 @@ function armDeleteButton(button, onConfirm) {
 }
 
 function wireEvents() {
+  wirePasswordToggles();
   document.querySelectorAll(".toolbar-menu").forEach((menu) => {
     menu.addEventListener("toggle", () => {
       if (!menu.open) return;
@@ -12269,6 +14316,12 @@ function wireEvents() {
   $("weekPicker").onchange = () => { setCurrentWeek(parseDateKey($("weekPicker").value)); renderAll(); };
   $("weekViewBtn")?.addEventListener("click", exitDayFocus);
   $("dayViewBtn")?.addEventListener("click", () => enterDayFocus());
+  document.querySelectorAll("[data-mobile-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.mobileView === "day") enterDayFocus();
+      else toggleCompactPreview();
+    });
+  });
   $("issueBtn").onclick = (event) => {
     event.stopPropagation();
     toggleIssuePopover();
@@ -12370,6 +14423,7 @@ function wireEvents() {
     try {
       setLoginMessage("Checking account...");
       const user = await signInWithPassword($("loginEmail").value.trim(), $("loginPassword").value);
+      if (user?.redirectingToStaffPortal) return;
       if (user?.passwordChangeRequired) {
         showPasswordChangeDialog();
         return;
@@ -12379,7 +14433,8 @@ function wireEvents() {
     } catch (error) {
       clearAuthSession();
       updateAccountUi();
-      setLoginMessage("Sign in failed. Check the email and password, then try again.", error.message);
+      const errorMessage = String(error?.message || "");
+      setLoginMessage("Sign in failed. Check the email and password, then try again.", errorMessage);
     } finally {
       if (button) { button.disabled = false; button.textContent = "Sign In"; }
     }
@@ -12389,8 +14444,8 @@ function wireEvents() {
   });
   $("passwordChangeForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const password = $("newManagerPassword")?.value || "";
-    const confirm = $("confirmManagerPassword")?.value || "";
+      const password = $("newManagerPassword")?.value || "";
+      const confirm = $("confirmManagerPassword")?.value || "";
     if (password.length < 8) { setPasswordChangeMessage("Use at least 8 characters."); return; }
     if (password !== confirm) { setPasswordChangeMessage("The passwords do not match."); return; }
     const button = $("passwordChangeSubmitBtn");
@@ -12398,6 +14453,17 @@ function wireEvents() {
     try {
       setPasswordChangeMessage("Saving password...");
       await changeRequiredPassword(password);
+      // Supabase can invalidate the temporary-password session after the
+      // admin password update. Re-authenticate before loading the scheduler so
+      // the next request does not fail with a misleading blank-login error.
+      const email = currentLoginEmail
+        || currentUser?.email
+        || authSession?.email
+        || authSession?.user?.email
+        || $("passwordChangeDialog")?.dataset.loginEmail
+        || "";
+      if (!email) throw new Error("Your login email could not be recovered. Sign in again before saving the password.");
+      await signInWithPassword(email, password);
       hidePasswordChangeDialog();
       hideLoginOverlay();
       await hydrateStateFromServer();
@@ -12409,11 +14475,20 @@ function wireEvents() {
   });
   $("closeStorageInfoBtn").onclick = () => $("storageInfoDialog").close();
   $("closeRecentActivityBtn")?.addEventListener("click", () => $("recentActivityDialog").close());
+  $("toggleRecentActivityDetailsBtn")?.addEventListener("click", () => {
+    recentActivityDetailsVisible = !recentActivityDetailsVisible;
+    renderRecentActivityEvents();
+  });
   $("closeManagerAccessBtn")?.addEventListener("click", () => $("managerAccessDialog").close());
   $("managerInviteForm")?.addEventListener("submit", sendManagerInvite);
   $("staffAccessBtn")?.addEventListener("click", openStaffAccess);
   $("closeStaffAccessBtn")?.addEventListener("click", () => $("staffAccessDialog").close());
   $("staffInviteForm")?.addEventListener("submit", sendStaffInvite);
+  $("staffRequestsBtn")?.addEventListener("click", openStaffRequests);
+  $("closeStaffRequestsBtn")?.addEventListener("click", () => $("staffRequestsDialog").close());
+  $("sandboxStaffPortalBtn")?.addEventListener("click", () => {
+    if (isDemoLocation()) window.location.href = "staff.html?demo=1";
+  });
   $("pasteEmployeesBtn").onclick = openPasteEmployeesDialog;
   $("revealArchiveAllEmployees").onchange = () => {
     $("archiveAllEmployeesBtn").hidden = !$("revealArchiveAllEmployees").checked;
@@ -12544,8 +14619,15 @@ function wireEvents() {
   $("employeeForm").addEventListener("change", (event) => {
     if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
   });
-  $("employeeForm").onsubmit = (event) => {
+  $("employeeForm").onsubmit = async (event) => {
     event.preventDefault();
+    setEmployeeSaveDebugStatus("Employee form handler reached");
+    const saveAvailability = availabilitySaveRequested;
+    const activateSubmittedAvailability = submitAvailabilityPatternRequested;
+    const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
+    availabilitySaveRequested = false;
+    submitAvailabilityPatternRequested = false;
+    deactivateAvailabilityPatternRequested = false;
     pushUndo();
     const id = $("employeeId").value || uid("employee");
     const existingEmployee = state.employees.find((item) => item.id === id);
@@ -12559,12 +14641,71 @@ function wireEvents() {
     const duplicateEmployee = importMatch.employee || importMatch.possible?.[0];
     if (duplicateEmployee) {
       undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: possible duplicate employee", "failed");
       showConflict(`${displayName(duplicateEmployee)} may already be in the employee list. I opened that profile instead of creating a duplicate.`);
       loadEmployee(duplicateEmployee.id);
       return;
     }
     const callWeekly = $("employeeCallWeekly").checked;
     const weeklyPanelOpen = !$("weeklyAvailabilityFieldset").hidden;
+    const availabilityEffectiveDate = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value || existingEmployee?.availabilityEffectiveDate || currentWeekKey());
+    $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
+    const parsedAvailability = parseAvailability();
+    const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
+    const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
+    const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
+    const patternName = $("employeeAvailabilityPatternName").value.trim() || selectedPattern?.name || existingEmployee?.availabilityPatternName || "Regular availability";
+    // Call Weekly has its own per-week availability records. The regular
+    // availability editor is hidden in this mode, so its naming and overlap
+    // rules must not block or rewrite a Call Weekly profile save.
+    const regularAvailabilityMode = !callWeekly;
+    const availabilityAction = regularAvailabilityMode && (saveAvailability || activateSubmittedAvailability || deactivateAvailabilityPattern);
+    const duplicatePattern = saveAvailability
+      ? findDuplicateAvailabilityPatternName(patternName, existingEmployee?.id || id, selectedPatternId)
+      : null;
+    if (duplicatePattern) {
+      undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: duplicate availability name", "failed");
+      showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
+      return;
+    }
+    const patternActive = availabilityAction
+      && !deactivateAvailabilityPattern
+      && (activateSubmittedAvailability || selectedPattern?.active === true);
+    const updatedPattern = {
+      id: selectedPatternId,
+      name: patternName,
+      availability: saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability),
+      repeatWeeks: patternActive ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : null,
+      active: patternActive,
+      effectiveDate: patternActive ? availabilityEffectiveDate : "",
+      approvalStatus: selectedPattern?.approvalStatus || "",
+      approved: selectedPattern?.approved === true
+    };
+    const availabilityPatterns = availabilityAction
+      ? (existingPatterns.some((pattern) => pattern.id === selectedPatternId)
+        ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
+        : [updatedPattern, ...existingPatterns])
+      : existingPatterns;
+    const availabilityConflict = availabilityAction
+      ? availabilityPatternConflicts(availabilityPatterns)
+      : null;
+    if (availabilityConflict) {
+      undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: availability patterns overlap", "failed");
+      showConflict(`${availabilityConflict.left.name} and ${availabilityConflict.right.name} overlap on ${displayDate(availabilityConflict.date)}. Deactivate or edit one pattern before saving or submitting availability.`);
+      return;
+    }
+    const availabilitySchedule = Array.isArray(existingEmployee?.availabilitySchedule)
+      ? existingEmployee.availabilitySchedule.map((item) => ({ ...item, availability: { ...(item.availability || {}) } }))
+      : [];
+    if (availabilityAction && patternActive) {
+      const scheduledIndex = availabilitySchedule.findIndex((item) => item.effectiveDate === availabilityEffectiveDate);
+      const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: parsedAvailability };
+      if (scheduledIndex >= 0) availabilitySchedule[scheduledIndex] = scheduledVersion;
+      else availabilitySchedule.push(scheduledVersion);
+      availabilitySchedule.sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
+    }
     const weeklyAvailability = { ...(existingEmployee?.weeklyAvailability || {}) };
     const weeklyAvailabilityWeekKey = selectedWeeklyAvailabilityWeekKey();
     if (callWeekly || weeklyPanelOpen) {
@@ -12593,18 +14734,46 @@ function wireEvents() {
       roleMealTraining: collectRoleMealTraining(),
       trainerRoles: checkedValues("trainerRoles"),
       payRates: collectEmployeePayRates(),
-      availability: parseAvailability(),
+      availabilityEffectiveDate: availabilityAction ? availabilityEffectiveDate : (existingEmployee?.availabilityEffectiveDate || availabilityEffectiveDate),
+      availabilityPatternName: availabilityAction ? patternName : (existingEmployee?.availabilityPatternName || patternName),
+      availabilityRepeatWeeks: availabilityAction ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : (existingEmployee?.availabilityRepeatWeeks || 1),
+      availabilityPatterns,
+      availabilitySchedule,
+      availability: availabilityAction && patternActive && (availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee)
+        ? parsedAvailability
+        : (existingEmployee?.availability || emptyAvailability()),
       weeklyAvailability,
       weeklyRules: parseWeeklyRules()
     };
     const isExisting = state.employees.some((item) => item.id === id);
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
-    saveState();
-    renderAll();
+    // Employee profile edits should be durable before the user switches
+    // profiles; waiting for the general schedule debounce can lose a fast edit.
+    state.meta = {
+      ...(state.meta || {}),
+      schemaVersion: DATA_SCHEMA_VERSION,
+      deviceId: getDeviceId(),
+      updatedAt: nowIso(),
+      updatedBy: currentSaveActor()
+    };
+    migrateState(state, state);
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    const saved = SERVER_STORAGE_ENABLED
+      ? await persistEmployeeProfileToServer(employee)
+      : (saveState(), true);
+    // The scoped employee save already completed above. Do not let this render
+    // immediately enqueue a stale whole-schedule write behind it.
+    renderAll({ skipSave: true });
     loadEmployee(id);
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
-    markEmployeeFormClean();
-    showEmployeeSavedToast(displayName(employee));
+    if (saved || !SERVER_STORAGE_ENABLED) {
+      markEmployeeFormClean();
+      showEmployeeSavedToast(displayName(employee));
+      return true;
+    } else {
+      showConflict("The employee profile was kept in this browser, but the shared save did not confirm. Refresh before continuing schedule edits.");
+      return false;
+    }
   };
   $("newEmployeeBtn").onclick = async () => {
     if (!(await confirmDiscardEmployeeChanges())) return;
@@ -12619,17 +14788,114 @@ function wireEvents() {
     saveState();
     renderEmployees();
   };
-  $("stickySaveEmployeeBtn").onclick = () => $("employeeForm").requestSubmit();
   document.querySelectorAll("[data-employee-profile-tab]").forEach((button) => {
     button.onclick = () => activateEmployeeProfileTab(button.dataset.employeeProfileTab);
   });
   ["firstName", "lastName"].forEach((id) => {
     $(id).addEventListener("input", updateStickyEmployeeName);
   });
-  $("openAllAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-availability-day]", "12a-11:59p");
-  $("clearAllAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-availability-day]", "");
+  $("openAllAvailabilityBtn").onclick = () => {
+    DAYS.forEach((_, dayIndex) => setAvailabilityPreset(`[data-availability-day="${dayIndex}"][data-availability-slot="0"]`, dayIndex, "open"));
+    refreshAvailabilityDayCardSummaries();
+  };
+  $("clearAllAvailabilityBtn").onclick = () => {
+    DAYS.forEach((_, dayIndex) => setAvailabilityPreset(`[data-availability-day="${dayIndex}"][data-availability-slot="0"]`, dayIndex, "unavailable"));
+    refreshAvailabilityDayCardSummaries();
+  };
   $("openAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "12a-11:59p");
   $("clearAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "");
+  $("saveAvailabilityPatternBtn").onclick = () => {
+    const current = employeeById($("employeeId")?.value);
+    const name = $("employeeAvailabilityPatternName")?.value.trim();
+    if (!name) {
+      showConflict("Give this availability a name before saving it.");
+      return;
+    }
+    const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
+    if (duplicate) {
+      showConflict(`The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Choose a unique name.`);
+      return;
+    }
+    if (!availabilityEditingPatternId) {
+      selectedAvailabilityPatternId = "pattern-" + Date.now();
+    }
+    markEmployeeFormDirty();
+    availabilitySaveRequested = true;
+    $("employeeForm").requestSubmit();
+  };
+  $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    if (!selected) return;
+    availabilityEditingPatternId = selected.id;
+    renderAvailabilityEditor(employee);
+    setAvailabilityInputs("[data-availability-day]", "");
+    Object.entries(selected.availability || {}).forEach(([day, ranges]) => {
+      (ranges || []).forEach((range, index) => {
+        if (index === 0) setAvailabilityPreset(`[data-availability-day="${day}"][data-availability-slot="0"]`, Number(day), "open");
+        const row = document.querySelector(`[data-availability-row="${day}"]`);
+        const add = row?.querySelector("[data-add-availability-window]");
+        while (row && row.querySelectorAll(".availability-window").length <= index && add) add.click();
+        const window = row?.querySelectorAll(".availability-window")[index];
+        if (window) {
+          window.querySelector("[data-availability-slot]").value = toNativeTimeValue(range.start);
+          window.querySelector("[data-availability-end-slot]").value = toNativeTimeValue(range.end);
+        }
+      });
+    });
+    markEmployeeFormDirty();
+  });
+  $("newAvailabilityPatternBtn").onclick = () => {
+    const patterns = availabilityPatternsForEmployee(employeeById($("employeeId")?.value));
+    selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    availabilityEditingPatternId = "";
+    $("employeeAvailabilityPatternName").value = `Availability ${patterns.length + 1}`;
+    $("employeeAvailabilityRepeatWeeks").value = "1";
+    $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
+    setAvailabilityInputs("[data-availability-day]", "");
+    markEmployeeFormDirty();
+  };
+  $("deleteAvailabilityPatternBtn")?.addEventListener("click", () => {
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    const status = String(selected?.approvalStatus || "").toLowerCase();
+    if (!employee || !selected || selected.active || ["submitted", "pending", "awaiting_approval"].includes(status)) return;
+    if (!window.confirm(`Delete the saved availability "${selected.name}"?`)) return;
+    markEmployeeFormDirty();
+    state.employees = state.employees.map((item) => item.id === employee.id ? { ...item, availabilityPatterns: (item.availabilityPatterns || []).filter((pattern) => pattern.id !== selected.id) } : item);
+    selectedAvailabilityPatternId = "";
+    availabilityEditingPatternId = "";
+    saveState();
+    renderAll();
+    loadEmployee(employee.id);
+  });
+  $("makeAvailabilityLiveBtn").onclick = () => {
+    const employee = employeeById($("employeeId")?.value);
+    const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    if (!selected) return;
+    const form = $("employeeForm");
+    if (!form) return;
+    if (selected.active) {
+      markEmployeeFormDirty();
+      deactivateAvailabilityPatternRequested = true;
+      availabilityEditingPatternId = selected.id;
+      // Invoke the existing save path without native form validation blocking
+      // the availability action on an unrelated employee field.
+      submitEmployeeFormDirectly();
+      return;
+    }
+    const guidance = availabilityPatternGuidance(selected);
+    if (guidance.warning) {
+      showConflict(guidance.text);
+      return;
+    }
+    markEmployeeFormDirty();
+    submitAvailabilityPatternRequested = true;
+    availabilityEditingPatternId = selected.id;
+    // Keep the selected card in place so the new live state is visible after
+    // the save instead of briefly showing a stale, deselected copy.
+    submitEmployeeFormDirectly();
+  };
   $("weeklyAvailabilityWeek").onchange = () => {
     setWeeklyAvailabilityWeek($("weeklyAvailabilityWeek").value);
   };
@@ -12638,15 +14904,24 @@ function wireEvents() {
     setWeeklyAvailabilityWeek(currentWeekKey());
   };
   $("employeeCallWeekly").onchange = () => {
-    $("weeklyAvailabilityFieldset").hidden = !$("employeeCallWeekly").checked;
+    syncEmployeeAvailabilityMode();
     if ($("employeeCallWeekly").checked && !employeeWeeklyAvailabilityWeekKey) setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
+  };
+  $("employeeAvailabilityEffectiveDate").onchange = () => {
+    const normalized = normalizeAvailabilityEffectiveDate($("employeeAvailabilityEffectiveDate").value);
+    $("employeeAvailabilityEffectiveDate").value = normalized;
+    markEmployeeFormDirty();
+  };
+  $("stickySaveEmployeeBtn").onclick = () => {
+    setEmployeeSaveDebugStatus("Save Employee button clicked");
+    submitEmployeeFormDirectly();
   };
   $("toggleWeeklyAvailabilityBtn").onclick = () => {
     markEmployeeFormDirty();
     $("employeeCallWeekly").checked = true;
     if (!employeeWeeklyAvailabilityWeekKey) setWeeklyAvailabilityWeek(currentWeekKey(), { render: false });
-    $("weeklyAvailabilityFieldset").hidden = !$("weeklyAvailabilityFieldset").hidden;
+    syncEmployeeAvailabilityMode();
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
   };
   $("addWeeklyRuleBtn").onclick = addWeeklyRuleRow;
@@ -12776,6 +15051,7 @@ function wireEvents() {
     state.settings.showShiftNameFields = $("showShiftNameFields").checked;
     state.settings.autoSetCloserEndTime = $("autoSetCloserEndTime").checked;
     state.settings.closerEndBufferMinutes = Number($("closerEndBufferMinutes").value) || 0;
+    state.settings.floorPlanCleanupMinutes = Math.max(0, Number($("floorPlanCleanupMinutes").value) || 0);
     state.settings.flexDoubleEndTime = normalizeTime($("flexDoubleEndTime").value) || "7:00 PM";
     state.settings.lunchCloserEndTime = normalizeTime($("lunchCloserEndTime").value) || "5:00 PM";
     state.settings.closerTrainingRule = $("closerTrainingRule").value || "onePerDay";
@@ -12950,16 +15226,33 @@ function wireEvents() {
 
 setupTimePicker();
 wireEvents();
-renderAll();
-updateZoomVisibility();
+if (!initialReadSourceHydrationPending) {
+  renderAll();
+  updateZoomVisibility();
+}
 updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
   showConflict("This window is in local file mode. Use https://shift-bay.netlify.app or the Shift Bay Cloud launcher so employees save to the cloud schedule.");
 }
-initializeAuth().then((canLoad) => {
-  if (canLoad) hydrateStateFromServer();
+initializeAuth().then(async (canLoad) => {
+  if (canLoad) {
+    await hydrateStateFromServer();
+    await runNormalizedEmployeeShadowCheck();
+    await runNormalizedScheduleShadowCheck();
+    await runNormalizedAvailabilityShadowCheck();
+  } else if (initialReadSourceHydrationPending) {
+    // The sign-in overlay is visible, but retain a usable local fallback if
+    // authentication cannot load the requested read source.
+    finishInitialReadSourceHydrationRender();
+  }
 });
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedEmployeeChanges);
 window.addEventListener("beforeunload", flushServerSaveOnClose);
+window.addEventListener("focus", () => { checkForNewerSharedSchedule(); });
+window.addEventListener("online", () => { checkForNewerSharedSchedule(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkForNewerSharedSchedule();
+});
+window.setInterval(checkForNewerSharedSchedule, 30000);
 
