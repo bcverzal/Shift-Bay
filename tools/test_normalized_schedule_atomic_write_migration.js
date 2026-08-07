@@ -5,6 +5,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const sql = fs.readFileSync(path.join(root, "supabase", "normalized-schedule-atomic-write.sql"), "utf8");
 const edge = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay-api", "index.ts"), "utf8");
+const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 
 assert.match(sql, /create or replace function public\.write_normalized_schedule_atomically/i);
 assert.match(sql, /security definer/i);
@@ -31,6 +32,7 @@ assert.match(edge, /function normalizedAtomicScheduleState/);
 assert.match(edge, /normalizedAtomicScheduleState\(state\)/);
 assert.match(edge, /new AbortController\(\)/);
 assert.match(edge, /Another Atomic Sandbox save is already in progress/);
+assert.match(app, /function flushServerSaveOnClose\(\)[\s\S]*?NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE\) return/);
 assert.match(edge, /statement timeout|canceling statement due to lock timeout/i);
 assert.match(edge, /Atomic normalized schedule writes are limited to the Sandbox location/);
 assert.doesNotMatch(edge, /normalized-production-direct/);
