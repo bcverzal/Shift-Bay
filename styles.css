@@ -6602,6 +6602,18 @@ legend {
   color: #8a641e;
 }
 
+.active-availability-tab.future-availability,
+.active-availability-tab.future-availability.selected {
+  border-color: #e5a63a;
+  background: #fff7df;
+  color: #704500;
+}
+
+.active-availability-tab.future-availability span,
+.active-availability-tab.future-availability small {
+  color: #8a641e;
+}
+
 .availability-conflict-notice {
   margin-top: 8px;
   padding: 7px 9px;

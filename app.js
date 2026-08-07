@@ -4632,6 +4632,17 @@ function renderPendingTrayWarning() {
   return card;
 }
 
+function focusDayOnOpenShiftDate(shift) {
+  if (!focusedDateKey || !shift?.date || shift.date === focusedDateKey) return false;
+  const shiftDate = parseDateKey(shift.date);
+  if (Number.isNaN(shiftDate.getTime())) return false;
+  if (!weekDates().some((date) => formatDateKey(date) === shift.date)) {
+    setCurrentWeek(shiftDate, { shared: false });
+  }
+  focusedDateKey = shift.date;
+  return true;
+}
+
 function selectOpenShiftWithoutFullRender(unassignedId) {
   const shift = state.unassignedShifts?.find((item) => item.id === unassignedId);
   pendingDeleteUnassignedShiftId = null;
@@ -4640,10 +4651,13 @@ function selectOpenShiftWithoutFullRender(unassignedId) {
   selectedCell = null;
   pendingDeleteShiftId = null;
   pendingTrayWarning = null;
-  if (focusedDateKey && shift?.date && shift.date !== focusedDateKey) {
-    focusedDateKey = shift.date;
+  if (focusDayOnOpenShiftDate(shift)) {
     renderSchedule();
     showConflict(`Showing ${displayDate(parseDateKey(shift.date))} for selected bay shift.`);
+    return;
+  }
+  if (focusedDateKey) {
+    renderSchedulePreservingGridScroll();
     return;
   }
   document.querySelectorAll(".unassigned-shift-card").forEach((card) => {
@@ -6329,7 +6343,9 @@ function jumpToEmployeeByLetter(letter) {
 
 function selectedOpenShiftForSchedule() {
   if (mouseOpenShiftDrag?.active || dragUnassignedShiftId) return null;
-  return state.unassignedShifts?.find((shift) => shift.id === selectedUnassignedShiftId) || null;
+  const shift = state.unassignedShifts?.find((item) => item.id === selectedUnassignedShiftId) || null;
+  if (focusedDateKey && shift?.date !== focusedDateKey) return null;
+  return shift;
 }
 
 function scrollToOpenShiftRoleForDrag(unassignedId) {
@@ -9143,6 +9159,11 @@ function isApprovedFutureAvailabilityPattern(pattern) {
   return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
 }
 
+function isFutureAvailabilityPattern(pattern) {
+  const effectiveDate = normalizeAvailabilityEffectiveDate(pattern?.effectiveDate);
+  return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
+}
+
 function availabilityPatternAppliesOnDate(pattern, date) {
   const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern?.effectiveDate));
   if (Number.isNaN(effectiveDate.getTime()) || date < effectiveDate) return false;
@@ -9220,16 +9241,16 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const activePatterns = patterns
     .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
     .sort((left, right) => {
-      const leftFuture = isApprovedFutureAvailabilityPattern(left);
-      const rightFuture = isApprovedFutureAvailabilityPattern(right);
+      const leftFuture = isFutureAvailabilityPattern(left);
+      const rightFuture = isFutureAvailabilityPattern(right);
       if (leftFuture !== rightFuture) return leftFuture ? 1 : -1;
       return String(left.effectiveDate || "").localeCompare(String(right.effectiveDate || ""));
     });
   const pendingSubmissions = pendingAvailabilitySubmissionsForEmployee(employee);
   const activeTabMarkup = activePatterns.map((pattern) => {
-    const futureApproved = isApprovedFutureAvailabilityPattern(pattern);
-    const stateLabel = futureApproved ? "Approved" : "Live";
-    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${futureApproved ? " approved-future" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
+    const future = isFutureAvailabilityPattern(pattern);
+    const stateLabel = future ? "Will be live soon" : "Live";
+    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${future ? " future-availability" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
       <span>${stateLabel}</span>
     </button>`;
@@ -9241,7 +9262,7 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const selectedActivePattern = activePatterns.find((pattern) => pattern.id === selected?.id);
   const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content">
     <strong>${escapeHtml(selectedActivePattern.name)}</strong>
-    <span>${isApprovedFutureAvailabilityPattern(selectedActivePattern) ? "Approved" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(selectedActivePattern.endsOn)}` : ""}</span>
+    <span>${isFutureAvailabilityPattern(selectedActivePattern) ? "Will be live soon" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(selectedActivePattern.endsOn)}` : ""}</span>
     <div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>
   </div>` : "";
   tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
@@ -14704,11 +14725,14 @@ function wireEvents() {
       ? availabilityPatternsReplacedOnDate(existingPatterns, selectedPatternId, availabilityEffectiveDate)
       : [];
     if (replacedPatterns.length) {
-      const replacementNames = replacedPatterns.map((pattern) => `"${pattern.name}"`).join(", ");
       const replacementDate = displayDate(parseDateKey(availabilityEffectiveDate));
-      const shouldReplace = window.confirm(
-        `${replacementNames} will stop being used for scheduling on ${replacementDate}, and "${patternName}" will take over from that date forward. The prior availability will stay saved in this profile. Continue?`
-      );
+      const shouldReplace = await showAppConfirm({
+        title: "Replace Availability?",
+        message: `This availability will take over for scheduling starting ${replacementDate}. The prior availability stays saved in this profile.`,
+        items: replacedPatterns.map((pattern) => `${pattern.name} stops applying on ${replacementDate}`),
+        confirmText: "Replace Availability",
+        cancelText: "Keep Current"
+      });
       if (!shouldReplace) {
         undoStack.pop();
         setEmployeeSaveDebugStatus("Availability replacement cancelled", "idle");
@@ -15146,6 +15170,7 @@ function wireEvents() {
       state.unassignedShifts = state.unassignedShifts?.some((item) => item.id === staged.id)
         ? state.unassignedShifts.map((item) => item.id === staged.id ? staged : item)
         : [...(state.unassignedShifts || []), staged];
+      focusDayOnOpenShiftDate(staged);
       selectedUnassignedShiftId = staged.id;
       $("shiftDialog").close();
       renderAll();
