@@ -67,10 +67,24 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${cfg.supabaseUrl}/rest/v1${pathOrUrl}`;
   const response = await fetch(url, options);
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body: any = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Supabase or an upstream proxy can return plain-text failures. Preserve
+      // that text so the caller sees the actual cause instead of a JSON parse
+      // exception that obscures the original error.
+      body = { message: text };
+    }
+  }
   if (!response.ok) {
     const message = body?.message || body?.msg || body?.error_description || body?.details || body?.error_code || `Supabase request failed with ${response.status}.`;
-    throw Object.assign(new Error(message), { status: response.status });
+    throw Object.assign(new Error(message), {
+      status: response.status,
+      code: body?.code || "",
+      details: body?.details || ""
+    });
   }
   return body;
 }
@@ -372,6 +386,13 @@ function normalizedReadAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
+// The live restaurant is still backed by the compatibility document while the
+// migration is proven. Only the disposable Sandbox mirrors ordinary schedule
+// saves into normalized rows.
+function normalizedScheduleMirrorAllowed(locationId: string) {
+  return locationId === SANDBOX_LOCATION_ID;
+}
+
 async function loadNormalizedScheduleRevision(locationId: string) {
   const rows = await supabaseJson(
     `/normalized_schedule_revisions?location_id=eq.${encodeURIComponent(locationId)}&select=revision,updated_at`,
@@ -401,17 +422,29 @@ async function claimNormalizedScheduleRevision(locationId: string, expectedRevis
 // bridge remains authoritative until the atomic procedure completes a
 // Sandbox-only canary and its rollback checks.
 async function writeNormalizedScheduleAtomically(locationId: string, expectedRevision: number, state: JsonRecord, userId: string) {
-  const rows = await supabaseJson("/rpc/write_normalized_schedule_atomically", {
-    method: "POST",
-    headers: serviceHeaders({ Prefer: "return=representation" }),
-    body: JSON.stringify({
-      p_location_id: locationId,
-      p_expected_revision: expectedRevision,
-      p_state: state,
-      p_user_id: userId || null
-    })
-  });
-  return Array.isArray(rows) ? rows[0] || null : rows;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const rows = await supabaseJson("/rpc/write_normalized_schedule_atomically", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({
+        p_location_id: locationId,
+        p_expected_revision: expectedRevision,
+        p_state: state,
+        p_user_id: userId || null
+      }),
+      signal: controller.signal
+    });
+    return Array.isArray(rows) ? rows[0] || null : rows;
+  } catch (error) {
+    if ((error as any)?.name === "AbortError") {
+      throw Object.assign(new Error("The Atomic Sandbox write timed out before Supabase completed. No normalized commit was confirmed; wait briefly and retry once."), { status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // The atomic Sandbox canary only needs schedule collections. Keeping employee
@@ -752,7 +785,7 @@ async function removeNormalizedLegacyRowsNotIn(table: string, locationId: string
 // Only changed legacy records are mirrored after the first baseline write, so
 // a normal schedule edit never rewrites an entire location's history.
 async function syncNormalizedSchedule(locationId: string, state: JsonRecord, previousState: JsonRecord | null = null) {
-  if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" };
+  if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" };
   try {
     const [employeeRows, roleRows, weekRows] = await Promise.all([
       supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
@@ -1814,17 +1847,16 @@ async function handleSaveState(request: Request) {
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
-  const existingRow = await loadDocumentRow(
-    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
-    locationId
-  );
-  const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
   if (profileRequested && (!employeeProfile || String(employeeProfile?.id || "") !== employeeId)) {
     return json(400, { ok: false, error: "Employee profile save did not include a valid employee record." });
   }
   const profileOnlySave = profileRequested;
   if (profileOnlySave) {
+    // Profile-only saves must not wait for the whole scheduler document or
+    // normalized schedule migration work. Availability edits are stored in
+    // the compatibility override first, then mirrored separately when the
+    // database has capacity.
     const savedAt = new Date().toISOString();
     await supabaseJson("/employee_profile_overrides?on_conflict=location_id,employee_id", {
       method: "POST",
@@ -1838,21 +1870,28 @@ async function handleSaveState(request: Request) {
         updated_at: savedAt
       }])
     });
-    const normalizedSync = await syncNormalizedEmployeeProfile(locationId, employeeProfile);
-    await logAuditEvent("employee_profile_saved", (validated.user as any).id, {
-      documentKey: cfg.documentKey,
-      savedAt,
-      savedByEmail: (validated.user as any).email || "",
-      savedByRole: (validated.user as any).role || "",
-      savedByDeviceId: payload?.savedByDeviceId || null,
-      saveScope,
-      saveAttemptId: saveAttemptId || null,
-      employeeId,
-      normalizedSync,
-      changeSummary: { employeesChanged: 1 }
-    }, locationId);
-    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null });
+    await Promise.race([
+      logAuditEvent("employee_profile_saved", (validated.user as any).id, {
+        documentKey: cfg.documentKey,
+        savedAt,
+        savedByEmail: (validated.user as any).email || "",
+        savedByRole: (validated.user as any).role || "",
+        savedByDeviceId: payload?.savedByDeviceId || null,
+        saveScope,
+        saveAttemptId: saveAttemptId || null,
+        employeeId,
+        normalizedSync: { synced: false, reason: "normalized sync deferred" },
+        changeSummary: { employeesChanged: 1 }
+      }),
+      new Promise<void>((resolve) => setTimeout(resolve, 500))
+    ]);
+    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync: { synced: false, reason: "normalized sync deferred" } });
   }
+  const existingRow = await loadDocumentRow(
+    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
+    locationId
+  );
+  const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
       error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
@@ -1959,7 +1998,21 @@ async function handleSaveState(request: Request) {
         (validated.user as any).id
       );
     } catch (error) {
-      if (String((error as Error)?.message || "").includes("Normalized schedule revision conflict")) {
+      const errorCode = String((error as any)?.code || "");
+      const errorMessage = String((error as Error)?.message || "");
+      if (errorCode === "55P03" || errorMessage.includes("Another normalized atomic write is already in progress")) {
+        return json(409, {
+          error: "Another Atomic Sandbox save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (errorCode === "57014" || /statement timeout|canceling statement due to lock timeout/i.test(errorMessage)) {
+        return json(504, {
+          error: "The Atomic Sandbox write was stopped by the database before it could finish. Wait briefly and retry once; no normalized commit was confirmed.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (errorMessage.includes("Normalized schedule revision conflict")) {
         const currentRevision = await loadNormalizedScheduleRevision(locationId);
         return json(409, {
           error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",

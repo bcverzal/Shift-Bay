@@ -905,8 +905,9 @@ async function persistEmployeeProfileToServer(employee) {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || `Employee profile save failed: ${response.status}`);
     if (result.savedAt) {
-      lastKnownServerSavedAt = result.savedAt;
-      state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
+      // This endpoint saves an employee override, not the scheduler document.
+      // Do not advance the schedule document timestamp here: doing so makes a
+      // profile-only save look like a newer unsaved schedule after refresh.
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (lastKnownServerState?.employees) {
         lastKnownServerState.employees = lastKnownServerState.employees.map((item) => String(item?.id || "") === String(employee?.id || "") ? cloneSchedulerState(employee) : item);
@@ -1012,6 +1013,7 @@ async function persistStateToServer(options = {}) {
     if (Number.isInteger(Number(result.normalizedScheduleRevision))) {
       lastKnownNormalizedScheduleRevision = Number(result.normalizedScheduleRevision);
     }
+    if (options.scope !== "employee-profile") clearCloudRecovery();
     if (options.scope === "employee-profile" && cloudSaveBlockedByStale) {
       setStorageStatus("stale", "Employee profile saved. Refresh before editing schedule data in this window.");
     } else if (result.normalizedDirect) {
@@ -2317,18 +2319,9 @@ async function hydrateStateFromServer() {
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       serverStorageReady = true;
-      const loadedFromReadOverride = LEGACY_SNAPSHOT_OVERRIDE
-        || NORMALIZED_SCHEDULE_READ_MODE
-        || NORMALIZED_AVAILABILITY_READ_MODE
-        || envelope.readSource === "normalized-sandbox"
-        || envelope.readSource === "normalized-live-canary"
-        || normalizedAvailabilityReadState === "availabilityActive";
-      // Alternate read sources intentionally reshape or bypass the compatibility
-      // document. Loading either path must remain read-only and never queue a
-      // surprise snapshot write because representations differ.
-      if (!loadedFromReadOverride && JSON.stringify(envelope.data || envelope) !== JSON.stringify(state)) {
-        queueServerSave();
-      }
+      // A load must remain read-only. Client-side normalization can make a
+      // correctly loaded document look structurally different, so writing it
+      // back here creates needless saves and false stale conflicts.
       currentDate = loadLocalActiveWeek(state.settings.weekStart);
       saveLocalActiveWeek({ shared: false });
       finishInitialReadSourceHydrationRender();
@@ -14749,11 +14742,14 @@ function wireEvents() {
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
     // Employee profile edits should be durable before the user switches
     // profiles; waiting for the general schedule debounce can lose a fast edit.
+    const profileSaveUpdatedAt = state.meta?.updatedAt || "";
     state.meta = {
       ...(state.meta || {}),
       schemaVersion: DATA_SCHEMA_VERSION,
       deviceId: getDeviceId(),
-      updatedAt: nowIso(),
+      // Employee profile saves use a separate server override and must not
+      // make the whole schedule document appear newer than it is.
+      updatedAt: SERVER_STORAGE_ENABLED ? profileSaveUpdatedAt : nowIso(),
       updatedBy: currentSaveActor()
     };
     migrateState(state, state);
@@ -14804,7 +14800,9 @@ function wireEvents() {
   };
   $("openAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "12a-11:59p");
   $("clearAllWeeklyAvailabilityBtn").onclick = () => setAvailabilityInputs("[data-weekly-availability-day]", "");
-  $("saveAvailabilityPatternBtn").onclick = () => {
+  $("saveAvailabilityPatternBtn").onclick = async () => {
+    const button = $("saveAvailabilityPatternBtn");
+    if (button?.disabled) return;
     const current = employeeById($("employeeId")?.value);
     const name = $("employeeAvailabilityPatternName")?.value.trim();
     if (!name) {
@@ -14821,7 +14819,25 @@ function wireEvents() {
     }
     markEmployeeFormDirty();
     availabilitySaveRequested = true;
-    $("employeeForm").requestSubmit();
+    // Save Availability is a scoped employee-profile action. Use the same
+    // direct handler as Save Employee so hidden/unrelated required fields
+    // cannot silently prevent the availability save from reaching the
+    // profile-save path.
+    if (button) {
+      button.disabled = true;
+      button.dataset.originalLabel = button.textContent || "Save Availability";
+      button.textContent = "Saving Availability...";
+    }
+    try {
+      await submitEmployeeFormDirectly();
+    } finally {
+      const currentButton = $("saveAvailabilityPatternBtn");
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.textContent = currentButton.dataset.originalLabel || "Save Availability";
+        delete currentButton.dataset.originalLabel;
+      }
+    }
   };
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
     const employee = employeeById($("employeeId")?.value);

@@ -6,6 +6,22 @@
 -- same PostgreSQL transaction. Any validation or write failure rolls back the
 -- entire request, including the revision claim.
 
+-- Keep the canary's location/legacy joins and cleanup passes bounded even when
+-- a location has accumulated several schedule versions.
+create index if not exists shifts_location_schedule_week_idx
+  on public.shifts (location_id, schedule_week_id);
+
+create index if not exists template_shifts_template_idx
+  on public.template_shifts (template_id);
+
+create index if not exists roles_location_legacy_lookup_idx
+  on public.roles (location_id, legacy_id)
+  where legacy_id is not null and legacy_id <> '';
+
+create index if not exists employees_location_legacy_lookup_idx
+  on public.employees (location_id, legacy_id)
+  where legacy_id is not null and legacy_id <> '';
+
 create or replace function public.write_normalized_schedule_atomically(
   p_location_id uuid,
   p_expected_revision bigint,
@@ -27,12 +43,30 @@ declare
   v_block_count integer := 0;
   v_template_count integer := 0;
 begin
+  -- A client timeout must not leave a database transaction working
+  -- indefinitely after the Edge Function has already returned. The short
+  -- lock timeout turns a queued table/revision lock into a retryable response
+  -- instead of another long 504.
+  set local lock_timeout = '3s';
+  set local statement_timeout = '20s';
+
   if p_state is null or jsonb_typeof(p_state) <> 'object' then
     raise exception 'Normalized schedule write requires a scheduler state object';
   end if;
 
   if v_week_start_day not between 0 and 6 then
     raise exception 'Invalid week start day: %', v_week_start_day;
+  end if;
+
+  -- Do not let a second Atomic Sandbox tab queue behind a long write. The
+  -- caller can retry after the first writer finishes, while the normal
+  -- scheduler path remains completely unaffected.
+  if not pg_try_advisory_xact_lock(
+    hashtextextended('shift-bay:normalized-schedule:' || p_location_id::text, 0)
+  ) then
+    raise exception using
+      errcode = '55P03',
+      message = 'Another normalized atomic write is already in progress for this location';
   end if;
 
   insert into public.normalized_schedule_revisions (location_id, revision, updated_by)
@@ -118,6 +152,11 @@ begin
       from jsonb_array_elements(coalesce(p_state->'unassignedShifts', '[]'::jsonb))
   ) entries(item, is_open_bay)
   cross join lateral (select entries.item as value) item;
+
+  -- Temporary tables do not have planner statistics until they are analyzed.
+  -- Without this, a full schedule save can choose an unnecessarily expensive
+  -- join plan even when the normalized input is small.
+  analyze _shift_bay_atomic_shift_input;
 
   if exists (
     select 1 from _shift_bay_atomic_shift_input
@@ -216,7 +255,20 @@ begin
         metadata = excluded.metadata,
         legacy_created_at = excluded.legacy_created_at,
         legacy_updated_at = excluded.legacy_updated_at,
-        updated_at = now();
+        updated_at = now()
+    where (public.shifts.schedule_week_id, public.shifts.employee_id, public.shifts.role_id,
+           public.shifts.department, public.shifts.shift_date, public.shifts.shift_name,
+           public.shifts.start_time, public.shifts.end_time, public.shifts.until_volume,
+           public.shifts.is_closer, public.shifts.is_lunch_closer, public.shifts.is_flex_double,
+           public.shifts.is_open_bay, public.shifts.color, public.shifts.notes, public.shifts.source,
+           public.shifts.metadata, public.shifts.legacy_created_at, public.shifts.legacy_updated_at)
+      is distinct from
+          (excluded.schedule_week_id, excluded.employee_id, excluded.role_id,
+           excluded.department, excluded.shift_date, excluded.shift_name,
+           excluded.start_time, excluded.end_time, excluded.until_volume,
+           excluded.is_closer, excluded.is_lunch_closer, excluded.is_flex_double,
+           excluded.is_open_bay, excluded.color, excluded.notes, excluded.source,
+           excluded.metadata, excluded.legacy_created_at, excluded.legacy_updated_at);
 
   delete from public.shifts existing
    where existing.location_id = p_location_id
@@ -273,6 +325,8 @@ begin
     lower(coalesce(item.value->>'kind', '')) = 'block' or coalesce(item.value->>'blockType', '') <> ''
   from jsonb_array_elements(coalesce(p_state->'timeOffRequests', '[]'::jsonb)) as item(value);
 
+  analyze _shift_bay_atomic_time_off_input;
+
   if exists (
     select 1 from _shift_bay_atomic_time_off_input
      where legacy_id is null or employee_legacy_id is null or item_date is null
@@ -318,7 +372,18 @@ begin
         kind = excluded.kind,
         daypart = excluded.daypart,
         metadata = excluded.metadata,
-        updated_at = excluded.updated_at;
+        updated_at = excluded.updated_at
+    where (public.request_offs.employee_id, public.request_offs.request_date,
+           public.request_offs.start_time, public.request_offs.end_time,
+           public.request_offs.all_day, public.request_offs.reason,
+           public.request_offs.source, public.request_offs.source_fingerprint,
+           public.request_offs.kind, public.request_offs.daypart,
+           public.request_offs.metadata, public.request_offs.updated_at)
+      is distinct from
+          (excluded.employee_id, excluded.request_date, excluded.start_time,
+           excluded.end_time, excluded.all_day, excluded.reason, excluded.source,
+           excluded.source_fingerprint, excluded.kind, excluded.daypart,
+           excluded.metadata, excluded.updated_at);
 
   insert into public.schedule_blocks (
     location_id, legacy_id, employee_id, block_date, block_type, start_time,
@@ -343,7 +408,16 @@ begin
         note = excluded.note,
         source = excluded.source,
         metadata = excluded.metadata,
-        updated_at = excluded.updated_at;
+        updated_at = excluded.updated_at
+    where (public.schedule_blocks.employee_id, public.schedule_blocks.block_date,
+           public.schedule_blocks.block_type, public.schedule_blocks.start_time,
+           public.schedule_blocks.end_time, public.schedule_blocks.all_day,
+           public.schedule_blocks.note, public.schedule_blocks.source,
+           public.schedule_blocks.metadata, public.schedule_blocks.updated_at)
+      is distinct from
+          (excluded.employee_id, excluded.block_date, excluded.block_type,
+           excluded.start_time, excluded.end_time, excluded.all_day, excluded.note,
+           excluded.source, excluded.metadata, excluded.updated_at);
 
   delete from public.request_offs existing
    where existing.location_id = p_location_id
@@ -387,6 +461,8 @@ begin
     item.value
   from jsonb_array_elements(coalesce(p_state->'templates', '[]'::jsonb)) as item(value);
 
+  analyze _shift_bay_atomic_template_input;
+
   if exists (select 1 from _shift_bay_atomic_template_input where legacy_id is null) then
     raise exception 'Normalized schedule write contains a template without an id';
   end if;
@@ -402,7 +478,12 @@ begin
         metadata = excluded.metadata,
         legacy_created_at = excluded.legacy_created_at,
         legacy_updated_at = excluded.legacy_updated_at,
-        updated_at = now();
+        updated_at = now()
+    where (public.templates.name, public.templates.active, public.templates.metadata,
+           public.templates.legacy_created_at, public.templates.legacy_updated_at)
+      is distinct from
+          (excluded.name, excluded.active, excluded.metadata,
+           excluded.legacy_created_at, excluded.legacy_updated_at);
 
   if exists (
     select 1
@@ -468,7 +549,22 @@ begin
         sort_order = excluded.sort_order,
         metadata = excluded.metadata,
         legacy_created_at = excluded.legacy_created_at,
-        legacy_updated_at = excluded.legacy_updated_at;
+        legacy_updated_at = excluded.legacy_updated_at
+    where (public.template_shifts.day_index, public.template_shifts.role_id,
+           public.template_shifts.department, public.template_shifts.shift_name,
+           public.template_shifts.start_time, public.template_shifts.end_time,
+           public.template_shifts.until_volume, public.template_shifts.is_closer,
+           public.template_shifts.is_lunch_closer, public.template_shifts.is_flex_double,
+           public.template_shifts.color, public.template_shifts.notes,
+           public.template_shifts.sort_order, public.template_shifts.metadata,
+           public.template_shifts.legacy_created_at, public.template_shifts.legacy_updated_at)
+      is distinct from
+          (excluded.day_index, excluded.role_id, excluded.department,
+           excluded.shift_name, excluded.start_time, excluded.end_time,
+           excluded.until_volume, excluded.is_closer, excluded.is_lunch_closer,
+           excluded.is_flex_double, excluded.color, excluded.notes,
+           excluded.sort_order, excluded.metadata, excluded.legacy_created_at,
+           excluded.legacy_updated_at);
 
   delete from public.template_shifts existing
   using public.templates template_row
