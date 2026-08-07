@@ -125,7 +125,7 @@ function run() {
   includes(edgeFunction, "Direct normalized schedule writes are limited to the Sandbox location.", "direct normalized writes must reject live locations");
   includes(edgeFunction, "claimNormalizedScheduleRevision", "revision-locked normalized writes must claim a server revision");
   includes(edgeFunction, "Revision-locked normalized schedule writes are limited to the Sandbox location.", "revision-locked direct writes must reject live locations");
-  includes(edgeFunction, 'if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" }', "normalized schedule writes must remain limited to enabled transition locations");
+  includes(edgeFunction, 'if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" }', "ordinary schedule mirroring must remain limited to the Sandbox during cutover");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");
   includes(edgeFunction, "changedSnapshotItems", "live schedule mirroring must limit normal saves to changed records");
   includes(edgeFunction, 'mode: "delta"', "normal schedule mirror responses must report delta synchronization");

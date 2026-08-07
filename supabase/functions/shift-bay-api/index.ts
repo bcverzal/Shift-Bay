@@ -386,6 +386,13 @@ function normalizedReadAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
+// The live restaurant is still backed by the compatibility document while the
+// migration is proven. Only the disposable Sandbox mirrors ordinary schedule
+// saves into normalized rows.
+function normalizedScheduleMirrorAllowed(locationId: string) {
+  return locationId === SANDBOX_LOCATION_ID;
+}
+
 async function loadNormalizedScheduleRevision(locationId: string) {
   const rows = await supabaseJson(
     `/normalized_schedule_revisions?location_id=eq.${encodeURIComponent(locationId)}&select=revision,updated_at`,
@@ -778,7 +785,7 @@ async function removeNormalizedLegacyRowsNotIn(table: string, locationId: string
 // Only changed legacy records are mirrored after the first baseline write, so
 // a normal schedule edit never rewrites an entire location's history.
 async function syncNormalizedSchedule(locationId: string, state: JsonRecord, previousState: JsonRecord | null = null) {
-  if (!normalizedReadAllowed(locationId)) return { synced: false, skipped: "location not enabled" };
+  if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" };
   try {
     const [employeeRows, roleRows, weekRows] = await Promise.all([
       supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
@@ -1840,17 +1847,16 @@ async function handleSaveState(request: Request) {
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
-  const existingRow = await loadDocumentRow(
-    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
-    locationId
-  );
-  const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
   if (profileRequested && (!employeeProfile || String(employeeProfile?.id || "") !== employeeId)) {
     return json(400, { ok: false, error: "Employee profile save did not include a valid employee record." });
   }
   const profileOnlySave = profileRequested;
   if (profileOnlySave) {
+    // Profile-only saves must not wait for the whole scheduler document or
+    // normalized schedule migration work. Availability edits are stored in
+    // the compatibility override first, then mirrored separately when the
+    // database has capacity.
     const savedAt = new Date().toISOString();
     await supabaseJson("/employee_profile_overrides?on_conflict=location_id,employee_id", {
       method: "POST",
@@ -1864,21 +1870,28 @@ async function handleSaveState(request: Request) {
         updated_at: savedAt
       }])
     });
-    const normalizedSync = await syncNormalizedEmployeeProfile(locationId, employeeProfile);
-    await logAuditEvent("employee_profile_saved", (validated.user as any).id, {
-      documentKey: cfg.documentKey,
-      savedAt,
-      savedByEmail: (validated.user as any).email || "",
-      savedByRole: (validated.user as any).role || "",
-      savedByDeviceId: payload?.savedByDeviceId || null,
-      saveScope,
-      saveAttemptId: saveAttemptId || null,
-      employeeId,
-      normalizedSync,
-      changeSummary: { employeesChanged: 1 }
-    }, locationId);
-    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null });
+    await Promise.race([
+      logAuditEvent("employee_profile_saved", (validated.user as any).id, {
+        documentKey: cfg.documentKey,
+        savedAt,
+        savedByEmail: (validated.user as any).email || "",
+        savedByRole: (validated.user as any).role || "",
+        savedByDeviceId: payload?.savedByDeviceId || null,
+        saveScope,
+        saveAttemptId: saveAttemptId || null,
+        employeeId,
+        normalizedSync: { synced: false, reason: "normalized sync deferred" },
+        changeSummary: { employeesChanged: 1 }
+      }),
+      new Promise<void>((resolve) => setTimeout(resolve, 500))
+    ]);
+    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync: { synced: false, reason: "normalized sync deferred" } });
   }
+  const existingRow = await loadDocumentRow(
+    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
+    locationId
+  );
+  const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
       error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",
