@@ -1993,6 +1993,12 @@ async function handleSaveState(request: Request) {
           expectedNormalizedScheduleRevision
         });
       }
+      if (errorCode === "57014" || /statement timeout|canceling statement due to lock timeout/i.test(errorMessage)) {
+        return json(504, {
+          error: "The Atomic Sandbox write was stopped by the database before it could finish. Wait briefly and retry once; no normalized commit was confirmed.",
+          expectedNormalizedScheduleRevision
+        });
+      }
       if (errorMessage.includes("Normalized schedule revision conflict")) {
         const currentRevision = await loadNormalizedScheduleRevision(locationId);
         return json(409, {

@@ -6,6 +6,22 @@
 -- same PostgreSQL transaction. Any validation or write failure rolls back the
 -- entire request, including the revision claim.
 
+-- Keep the canary's location/legacy joins and cleanup passes bounded even when
+-- a location has accumulated several schedule versions.
+create index if not exists shifts_location_schedule_week_idx
+  on public.shifts (location_id, schedule_week_id);
+
+create index if not exists template_shifts_template_idx
+  on public.template_shifts (template_id);
+
+create index if not exists roles_location_legacy_lookup_idx
+  on public.roles (location_id, legacy_id)
+  where legacy_id is not null and legacy_id <> '';
+
+create index if not exists employees_location_legacy_lookup_idx
+  on public.employees (location_id, legacy_id)
+  where legacy_id is not null and legacy_id <> '';
+
 create or replace function public.write_normalized_schedule_atomically(
   p_location_id uuid,
   p_expected_revision bigint,
@@ -27,6 +43,13 @@ declare
   v_block_count integer := 0;
   v_template_count integer := 0;
 begin
+  -- A client timeout must not leave a database transaction working
+  -- indefinitely after the Edge Function has already returned. The short
+  -- lock timeout turns a queued table/revision lock into a retryable response
+  -- instead of another long 504.
+  set local lock_timeout = '3s';
+  set local statement_timeout = '20s';
+
   if p_state is null or jsonb_typeof(p_state) <> 'object' then
     raise exception 'Normalized schedule write requires a scheduler state object';
   end if;
