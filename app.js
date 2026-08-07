@@ -24,11 +24,13 @@ const NORMALIZED_QUERY = new URLSearchParams(window.location.search);
 const NORMALIZED_EMPLOYEE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedEmployees") === "shadow";
 const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule") === "shadow";
 const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
-// Normalized records are now the default manager read path. Keep one URL-level
-// escape hatch while the legacy document remains available for rollback.
+const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
+// The compatibility snapshot remains the proven scheduler source. Normalized
+// schedule records stay behind an explicit URL opt-in during cutover.
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
-const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedSchedule") !== "legacy";
+const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
+  ["read", "direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_SCHEDULE_MODE);
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
@@ -9097,6 +9099,9 @@ function availabilityPatternsForEmployee(employee = null) {
       repeatWeeks: pattern.repeatWeeks == null || pattern.repeatWeeks === "" ? null : Math.max(1, Math.min(4, Number(pattern.repeatWeeks) || 1)),
       active: pattern.active !== false,
       effectiveDate: pattern.effectiveDate ? normalizeAvailabilityEffectiveDate(pattern.effectiveDate) : "",
+      // An availability can be replaced on a future date without losing its
+      // history. `endsOn` is exclusive: it no longer applies on that date.
+      endsOn: pattern.endsOn ? normalizeAvailabilityEffectiveDate(pattern.endsOn) : "",
       approvalStatus: String(pattern.approvalStatus || pattern.status || (pattern.approved === true ? "approved" : "")).toLowerCase(),
       approved: pattern.approved === true || String(pattern.approvalStatus || pattern.status || "").toLowerCase() === "approved"
     }));
@@ -9107,7 +9112,8 @@ function availabilityPatternsForEmployee(employee = null) {
     availability: employee.availability || emptyAvailability(),
     repeatWeeks: Math.max(1, Math.min(4, Number(employee.availabilityRepeatWeeks) || 1)),
     active: true,
-    effectiveDate: normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey())
+    effectiveDate: normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey()),
+    endsOn: ""
   }];
 }
 
@@ -9140,11 +9146,24 @@ function isApprovedFutureAvailabilityPattern(pattern) {
 function availabilityPatternAppliesOnDate(pattern, date) {
   const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern?.effectiveDate));
   if (Number.isNaN(effectiveDate.getTime()) || date < effectiveDate) return false;
+  const endsOn = pattern?.endsOn ? parseDateKey(normalizeAvailabilityEffectiveDate(pattern.endsOn)) : null;
+  if (endsOn && !Number.isNaN(endsOn.getTime()) && date >= endsOn) return false;
   const weekStart = startOfWeek(date, state.settings.weekStart);
   const effectiveWeekStart = startOfWeek(effectiveDate, state.settings.weekStart);
   const weeksSinceStart = Math.round((weekStart.getTime() - effectiveWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
   const repeatWeeks = Math.max(1, Math.min(4, Number(pattern?.repeatWeeks) || 1));
   return weeksSinceStart >= 0 && weeksSinceStart % repeatWeeks === 0;
+}
+
+function availabilityPatternsReplacedOnDate(patterns = [], replacementId = "", effectiveDate = "") {
+  const replacementDate = normalizeAvailabilityEffectiveDate(effectiveDate);
+  if (!replacementDate) return [];
+  return patterns.filter((pattern) => {
+    if (!pattern || pattern.id === replacementId || pattern.active === false) return false;
+    const startsOn = normalizeAvailabilityEffectiveDate(pattern.effectiveDate);
+    const endsOn = pattern.endsOn ? normalizeAvailabilityEffectiveDate(pattern.endsOn) : "";
+    return startsOn && startsOn < replacementDate && (!endsOn || endsOn > replacementDate);
+  });
 }
 
 function availabilityPatternConflicts(patterns = []) {
@@ -9222,7 +9241,7 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const selectedActivePattern = activePatterns.find((pattern) => pattern.id === selected?.id);
   const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content">
     <strong>${escapeHtml(selectedActivePattern.name)}</strong>
-    <span>${isApprovedFutureAvailabilityPattern(selectedActivePattern) ? "Approved" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}</span>
+    <span>${isApprovedFutureAvailabilityPattern(selectedActivePattern) ? "Approved" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(selectedActivePattern.endsOn)}` : ""}</span>
     <div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>
   </div>` : "";
   tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
@@ -14677,13 +14696,38 @@ function wireEvents() {
       repeatWeeks: patternActive ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : null,
       active: patternActive,
       effectiveDate: patternActive ? availabilityEffectiveDate : "",
+      endsOn: selectedPattern?.endsOn || "",
       approvalStatus: selectedPattern?.approvalStatus || "",
       approved: selectedPattern?.approved === true
     };
+    const replacedPatterns = availabilityAction && patternActive && !deactivateAvailabilityPattern
+      ? availabilityPatternsReplacedOnDate(existingPatterns, selectedPatternId, availabilityEffectiveDate)
+      : [];
+    if (replacedPatterns.length) {
+      const replacementNames = replacedPatterns.map((pattern) => `"${pattern.name}"`).join(", ");
+      const replacementDate = displayDate(parseDateKey(availabilityEffectiveDate));
+      const shouldReplace = window.confirm(
+        `${replacementNames} will stop being used for scheduling on ${replacementDate}, and "${patternName}" will take over from that date forward. The prior availability will stay saved in this profile. Continue?`
+      );
+      if (!shouldReplace) {
+        undoStack.pop();
+        setEmployeeSaveDebugStatus("Availability replacement cancelled", "idle");
+        return;
+      }
+    }
     const availabilityPatterns = availabilityAction
       ? (existingPatterns.some((pattern) => pattern.id === selectedPatternId)
-        ? existingPatterns.map((pattern) => pattern.id === selectedPatternId ? updatedPattern : pattern)
-        : [updatedPattern, ...existingPatterns])
+        ? existingPatterns.map((pattern) => {
+          if (pattern.id === selectedPatternId) return updatedPattern;
+          return replacedPatterns.some((replaced) => replaced.id === pattern.id)
+            ? { ...pattern, endsOn: availabilityEffectiveDate }
+            : pattern;
+        })
+        : [updatedPattern, ...existingPatterns.map((pattern) => (
+          replacedPatterns.some((replaced) => replaced.id === pattern.id)
+            ? { ...pattern, endsOn: availabilityEffectiveDate }
+            : pattern
+        ))])
       : existingPatterns;
     const availabilityConflict = availabilityAction
       ? availabilityPatternConflicts(availabilityPatterns)
@@ -14699,7 +14743,7 @@ function wireEvents() {
       : [];
     if (availabilityAction && patternActive) {
       const scheduledIndex = availabilitySchedule.findIndex((item) => item.effectiveDate === availabilityEffectiveDate);
-      const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: parsedAvailability };
+      const scheduledVersion = { effectiveDate: availabilityEffectiveDate, availability: updatedPattern.availability };
       if (scheduledIndex >= 0) availabilitySchedule[scheduledIndex] = scheduledVersion;
       else availabilitySchedule.push(scheduledVersion);
       availabilitySchedule.sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
@@ -14738,7 +14782,7 @@ function wireEvents() {
       availabilityPatterns,
       availabilitySchedule,
       availability: availabilityAction && patternActive && (availabilityEffectiveDate <= formatDateKey(currentDate) || !existingEmployee)
-        ? parsedAvailability
+        ? updatedPattern.availability
         : (existingEmployee?.availability || emptyAvailability()),
       weeklyAvailability,
       weeklyRules: parseWeeklyRules()
