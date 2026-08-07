@@ -74,6 +74,13 @@ const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
     : NORMALIZED_LIVE_CANARY_MODE
     ? "normalized"
     : "snapshot";
+// A compatibility snapshot or a direct-write canary can intentionally read a
+// different source from the browser's last cached schedule. Do not paint that
+// cached schedule first, otherwise a shift can briefly appear in the wrong
+// place before hydration replaces it with the selected source.
+const DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE = SERVER_STORAGE_ENABLED &&
+  (LEGACY_SNAPSHOT_OVERRIDE || NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE);
+let initialReadSourceHydrationPending = DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE;
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
@@ -2266,8 +2273,7 @@ async function hydrateStateFromServer() {
         const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
-        renderAll({ skipSave: true });
-        updateZoomVisibility();
+        finishInitialReadSourceHydrationRender();
         if (!restored?.saved) showStaleRecoveryAlert(readCloudRecovery() || recovery);
         return;
       }
@@ -2295,8 +2301,7 @@ async function hydrateStateFromServer() {
         showStaleRecoveryAlert(newerBrowserRecovery);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
-        renderAll({ skipSave: true });
-        updateZoomVisibility();
+        finishInitialReadSourceHydrationRender();
         return;
       }
       lastKnownServerSavedAt = serverSavedAt;
@@ -2319,8 +2324,7 @@ async function hydrateStateFromServer() {
       }
       currentDate = loadLocalActiveWeek(state.settings.weekStart);
       saveLocalActiveWeek({ shared: false });
-      renderAll({ skipSave: true });
-      updateZoomVisibility();
+      finishInitialReadSourceHydrationRender();
       const pendingRecovery = readCloudRecovery();
       if (pendingRecovery && !pendingRecovery.presentedAt && !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE) {
         if (!pendingRecovery.changes?.length) {
@@ -2342,8 +2346,7 @@ async function hydrateStateFromServer() {
       if (createCleanLocation) {
         state = defaultState();
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
-        renderAll({ skipSave: true });
-        updateZoomVisibility();
+        finishInitialReadSourceHydrationRender();
       }
       serverStorageReady = true;
       lastKnownServerSavedAt = "";
@@ -2363,7 +2366,14 @@ async function hydrateStateFromServer() {
     serverStorageReady = false;
     setStorageStatus("error", "Could not reach the shared scheduler file. Browser backup is still saved locally.");
     showConflict("Could not reach the shared scheduler file. This window is using its browser backup for now.");
+    finishInitialReadSourceHydrationRender();
   }
+}
+
+function finishInitialReadSourceHydrationRender() {
+  initialReadSourceHydrationPending = false;
+  renderAll({ skipSave: true });
+  updateZoomVisibility();
 }
 
 function localStateIsNewerThanServer(localState, serverState) {
@@ -15209,8 +15219,10 @@ function wireEvents() {
 
 setupTimePicker();
 wireEvents();
-renderAll();
-updateZoomVisibility();
+if (!initialReadSourceHydrationPending) {
+  renderAll();
+  updateZoomVisibility();
+}
 updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
   showConflict("This window is in local file mode. Use https://shift-bay.netlify.app or the Shift Bay Cloud launcher so employees save to the cloud schedule.");
@@ -15221,6 +15233,10 @@ initializeAuth().then(async (canLoad) => {
     await runNormalizedEmployeeShadowCheck();
     await runNormalizedScheduleShadowCheck();
     await runNormalizedAvailabilityShadowCheck();
+  } else if (initialReadSourceHydrationPending) {
+    // The sign-in overlay is visible, but retain a usable local fallback if
+    // authentication cannot load the requested read source.
+    finishInitialReadSourceHydrationRender();
   }
 });
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);

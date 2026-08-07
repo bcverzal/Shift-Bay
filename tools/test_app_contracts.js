@@ -95,6 +95,9 @@ function run() {
   includes(app, "quarantinedByLegacySnapshot", "the compatibility rollback view must not auto-replay a previously captured browser recovery");
   includes(app, "function readSourceKey", "read-source tracking must stay scoped to the selected location");
   includes(app, "readSourceChanged", "switching read sources must not be treated as a schedule edit");
+  includes(app, "DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE", "explicit snapshot and direct-read routes must not briefly paint cached schedule data");
+  includes(app, "finishInitialReadSourceHydrationRender", "the selected read source must render only after hydration finishes");
+  includes(app, "if (!initialReadSourceHydrationPending)", "explicit read-source overrides must defer the initial browser-cache render");
   includes(app, '"/api/state?normalizedSchedule=read"', "normalized schedule read mode must request the guarded state path");
   includes(app, "Loaded normalized Sandbox schedule data.", "normalized read testing must identify the active read source");
   includes(app, "function setNormalizedScheduleReadBadge", "normalized read mode must expose a persistent confirmed source marker");
