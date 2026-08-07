@@ -12,6 +12,11 @@ function includes(source, value, message) {
 }
 
 function run() {
+  const availabilitySaveHandlerStart = app.indexOf('$("saveAvailabilityPatternBtn").onclick');
+  const availabilitySaveHandlerEnd = app.indexOf('$("editAvailabilityPatternBtn")', availabilitySaveHandlerStart);
+  const availabilitySaveHandler = app.slice(availabilitySaveHandlerStart, availabilitySaveHandlerEnd);
+  assert.ok(availabilitySaveHandler.includes("submitEmployeeFormDirectly()"), "Save Availability must use the direct profile save handler");
+  assert.ok(!availabilitySaveHandler.includes("requestSubmit()"), "Save Availability must not be silently blocked by native form validation");
   includes(app, 'saveScope: "employee-profile"', "client profile saves must use a scoped request");
   includes(app, "employeeProfile: employee", "client profile saves must send the selected employee only");
   includes(app, "employeeProfileSavePriority", "profile saves must be prioritized over a queued schedule save");

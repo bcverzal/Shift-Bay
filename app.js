@@ -14821,7 +14821,11 @@ function wireEvents() {
     }
     markEmployeeFormDirty();
     availabilitySaveRequested = true;
-    $("employeeForm").requestSubmit();
+    // Save Availability is a scoped employee-profile action. Use the same
+    // direct handler as Save Employee so hidden/unrelated required fields
+    // cannot silently prevent the availability save from reaching the
+    // profile-save path.
+    submitEmployeeFormDirectly();
   };
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
     const employee = employeeById($("employeeId")?.value);
