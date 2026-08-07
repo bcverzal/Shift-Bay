@@ -1067,6 +1067,11 @@ async function saveNow() {
 function flushServerSaveOnClose() {
   if (!canEditScheduler()) return;
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return;
+  // A normalized canary has revision-based conflict protection. Sending a
+  // second keepalive write while its page is closing can race the confirmed
+  // save (or a different test tab) and needlessly keep the database busy.
+  // The normal snapshot path still gets its close-time safety flush.
+  if (NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE) return;
   try {
     const payload = JSON.stringify(serverEnvelope());
     if (HOSTED_API_BASE) {
