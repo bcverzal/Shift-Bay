@@ -393,6 +393,13 @@ function normalizedScheduleMirrorAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID;
 }
 
+// The Atomic Sandbox path is an isolated migration canary. Keep it opt-in at
+// the Edge Function so an old browser tab or bookmarked test URL cannot keep
+// consuming database resources while the canary is paused.
+function normalizedAtomicCanaryEnabled() {
+  return env("SHIFT_BAY_ATOMIC_CANARY_ENABLED") === "true";
+}
+
 async function loadNormalizedScheduleRevision(locationId: string) {
   const rows = await supabaseJson(
     `/normalized_schedule_revisions?location_id=eq.${encodeURIComponent(locationId)}&select=revision,updated_at`,
@@ -1985,6 +1992,9 @@ async function handleSaveState(request: Request) {
   if (saveMode === "normalized-sandbox-atomic-revision") {
     if (locationId !== SANDBOX_LOCATION_ID) {
       return json(403, { ok: false, error: "Atomic normalized schedule writes are limited to the Sandbox location." });
+    }
+    if (!normalizedAtomicCanaryEnabled()) {
+      return json(503, { ok: false, error: "Atomic Sandbox schedule writes are temporarily paused while the migration canary is stabilized." });
     }
     if (profileOnlySave || !Number.isInteger(expectedNormalizedScheduleRevision) || expectedNormalizedScheduleRevision < 0) {
       return json(400, { ok: false, error: "A current normalized schedule revision is required for this Sandbox save." });

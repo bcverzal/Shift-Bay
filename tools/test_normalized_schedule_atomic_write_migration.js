@@ -27,6 +27,8 @@ assert.match(sql, /revoke all on function public\.write_normalized_schedule_atom
 assert.match(sql, /grant execute on function public\.write_normalized_schedule_atomically[\s\S]*service_role/i);
 assert.match(edge, /async function writeNormalizedScheduleAtomically/);
 assert.match(edge, /\/rpc\/write_normalized_schedule_atomically/);
+assert.match(edge, /function normalizedAtomicCanaryEnabled\(\)/);
+assert.match(edge, /Atomic Sandbox schedule writes are temporarily paused/);
 assert.match(edge, /saveMode === "normalized-sandbox-atomic-revision"/);
 assert.match(edge, /function normalizedAtomicScheduleState/);
 assert.match(edge, /normalizedAtomicScheduleState\(state\)/);
