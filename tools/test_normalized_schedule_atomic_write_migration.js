@@ -9,6 +9,8 @@ const edge = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay
 assert.match(sql, /create or replace function public\.write_normalized_schedule_atomically/i);
 assert.match(sql, /security definer/i);
 assert.match(sql, /for update/i);
+assert.match(sql, /pg_try_advisory_xact_lock/i);
+assert.match(sql, /errcode = '55P03'/i);
 assert.match(sql, /Normalized schedule revision conflict/i);
 assert.match(sql, /insert into public\.shifts/i);
 assert.match(sql, /insert into public\.request_offs/i);
@@ -23,6 +25,8 @@ assert.match(edge, /\/rpc\/write_normalized_schedule_atomically/);
 assert.match(edge, /saveMode === "normalized-sandbox-atomic-revision"/);
 assert.match(edge, /function normalizedAtomicScheduleState/);
 assert.match(edge, /normalizedAtomicScheduleState\(state\)/);
+assert.match(edge, /new AbortController\(\)/);
+assert.match(edge, /Another Atomic Sandbox save is already in progress/);
 assert.match(edge, /Atomic normalized schedule writes are limited to the Sandbox location/);
 assert.doesNotMatch(edge, /normalized-production-direct/);
 

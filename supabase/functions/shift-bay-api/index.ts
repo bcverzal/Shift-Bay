@@ -80,7 +80,11 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   }
   if (!response.ok) {
     const message = body?.message || body?.msg || body?.error_description || body?.details || body?.error_code || `Supabase request failed with ${response.status}.`;
-    throw Object.assign(new Error(message), { status: response.status });
+    throw Object.assign(new Error(message), {
+      status: response.status,
+      code: body?.code || "",
+      details: body?.details || ""
+    });
   }
   return body;
 }
@@ -411,17 +415,29 @@ async function claimNormalizedScheduleRevision(locationId: string, expectedRevis
 // bridge remains authoritative until the atomic procedure completes a
 // Sandbox-only canary and its rollback checks.
 async function writeNormalizedScheduleAtomically(locationId: string, expectedRevision: number, state: JsonRecord, userId: string) {
-  const rows = await supabaseJson("/rpc/write_normalized_schedule_atomically", {
-    method: "POST",
-    headers: serviceHeaders({ Prefer: "return=representation" }),
-    body: JSON.stringify({
-      p_location_id: locationId,
-      p_expected_revision: expectedRevision,
-      p_state: state,
-      p_user_id: userId || null
-    })
-  });
-  return Array.isArray(rows) ? rows[0] || null : rows;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const rows = await supabaseJson("/rpc/write_normalized_schedule_atomically", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({
+        p_location_id: locationId,
+        p_expected_revision: expectedRevision,
+        p_state: state,
+        p_user_id: userId || null
+      }),
+      signal: controller.signal
+    });
+    return Array.isArray(rows) ? rows[0] || null : rows;
+  } catch (error) {
+    if ((error as any)?.name === "AbortError") {
+      throw Object.assign(new Error("The Atomic Sandbox write timed out before Supabase completed. No normalized commit was confirmed; wait briefly and retry once."), { status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // The atomic Sandbox canary only needs schedule collections. Keeping employee
@@ -1969,7 +1985,15 @@ async function handleSaveState(request: Request) {
         (validated.user as any).id
       );
     } catch (error) {
-      if (String((error as Error)?.message || "").includes("Normalized schedule revision conflict")) {
+      const errorCode = String((error as any)?.code || "");
+      const errorMessage = String((error as Error)?.message || "");
+      if (errorCode === "55P03" || errorMessage.includes("Another normalized atomic write is already in progress")) {
+        return json(409, {
+          error: "Another Atomic Sandbox save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (errorMessage.includes("Normalized schedule revision conflict")) {
         const currentRevision = await loadNormalizedScheduleRevision(locationId);
         return json(409, {
           error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
