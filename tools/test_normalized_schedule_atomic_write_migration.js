@@ -21,6 +21,8 @@ assert.match(sql, /grant execute on function public\.write_normalized_schedule_a
 assert.match(edge, /async function writeNormalizedScheduleAtomically/);
 assert.match(edge, /\/rpc\/write_normalized_schedule_atomically/);
 assert.match(edge, /saveMode === "normalized-sandbox-atomic-revision"/);
+assert.match(edge, /function normalizedAtomicScheduleState/);
+assert.match(edge, /normalizedAtomicScheduleState\(state\)/);
 assert.match(edge, /Atomic normalized schedule writes are limited to the Sandbox location/);
 assert.doesNotMatch(edge, /normalized-production-direct/);
 

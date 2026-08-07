@@ -994,7 +994,14 @@ async function persistStateToServer(options = {}) {
       showStaleRecoveryAlert(recovery, true);
       return false;
     }
-    if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      const serverError = String(errorBody?.error || errorBody?.message || "").trim();
+      if (response.status === 546) {
+        throw new Error("Cloud save was stopped by Supabase resource limits. The normalized Sandbox save was not completed; refresh and retry once.");
+      }
+      throw new Error(serverError ? `Save failed: ${response.status} - ${serverError}` : `Save failed: ${response.status}`);
+    }
     const result = await response.json().catch(() => ({}));
     if (result.savedAt) {
       lastKnownServerSavedAt = result.savedAt;

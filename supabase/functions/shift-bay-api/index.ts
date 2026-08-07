@@ -414,6 +414,22 @@ async function writeNormalizedScheduleAtomically(locationId: string, expectedRev
   return Array.isArray(rows) ? rows[0] || null : rows;
 }
 
+// The atomic Sandbox canary only needs schedule collections. Keeping employee
+// profiles, roles, history, and UI metadata out of this request is important:
+// the compatibility document can be megabytes larger than the normalized
+// schedule being written and can exceed the Edge Function resource budget.
+function normalizedAtomicScheduleState(state: JsonRecord = {}) {
+  return {
+    settings: {
+      weekStart: Number((state.settings as any)?.weekStart || 0)
+    },
+    shifts: Array.isArray(state.shifts) ? state.shifts : [],
+    unassignedShifts: Array.isArray(state.unassignedShifts) ? state.unassignedShifts : [],
+    timeOffRequests: Array.isArray(state.timeOffRequests) ? state.timeOffRequests : [],
+    templates: Array.isArray(state.templates) ? state.templates : []
+  };
+}
+
 function normalizedTimeValue(value: unknown) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -1798,7 +1814,10 @@ async function handleSaveState(request: Request) {
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
-  const existingRow = await loadDocumentRow("state,saved_at,updated_at", locationId);
+  const existingRow = await loadDocumentRow(
+    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
+    locationId
+  );
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
   if (profileRequested && (!employeeProfile || String(employeeProfile?.id || "") !== employeeId)) {
@@ -1936,7 +1955,7 @@ async function handleSaveState(request: Request) {
       normalizedAtomicWrite = await writeNormalizedScheduleAtomically(
         locationId,
         expectedNormalizedScheduleRevision,
-        state,
+        normalizedAtomicScheduleState(state),
         (validated.user as any).id
       );
     } catch (error) {
