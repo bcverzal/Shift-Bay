@@ -67,7 +67,17 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${cfg.supabaseUrl}/rest/v1${pathOrUrl}`;
   const response = await fetch(url, options);
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body: any = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Supabase or an upstream proxy can return plain-text failures. Preserve
+      // that text so the caller sees the actual cause instead of a JSON parse
+      // exception that obscures the original error.
+      body = { message: text };
+    }
+  }
   if (!response.ok) {
     const message = body?.message || body?.msg || body?.error_description || body?.details || body?.error_code || `Supabase request failed with ${response.status}.`;
     throw Object.assign(new Error(message), { status: response.status });
