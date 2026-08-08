@@ -8566,6 +8566,10 @@ fieldset .checkbox {
   grid-column: 2;
   line-height: 1.08;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .floor-host .floor-note-extra,
@@ -8578,6 +8582,21 @@ fieldset .checkbox {
   font-size: 0.92em;
   line-height: 1.02;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Training notes are often the longest text on a floor-plan line. Keep them
+   inside their assigned role area so one employee cannot run into the next. */
+.floor-host,
+.floor-expo,
+.floor-busser,
+.floor-bartender,
+.floor-banquet {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .floor-servers .floor-time,
@@ -9487,6 +9506,51 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .password-change-editor {
   border-color: #1d4ed8;
   background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
   color: #ffffff;
+}
+
+#timeOffEditDialog {
+  width: min(560px, calc(100vw - 28px));
+}
+
+#timeOffEditDialog .time-off-edit-editor {
+  min-width: 0;
+}
+
+#timeOffEditDialog .hint {
+  margin-top: 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#timeOffEditDialog .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+#timeOffEditDialog .form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+#timeOffEditDialog input[readonly] {
+  background: #eef4fb;
+  color: #475569;
+}
+
+#timeOffEditDialog .warnings {
+  margin-top: 0;
+}
+
+@media (max-width: 560px) {
+  #timeOffEditDialog .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #timeOffEditDialog .form-grid .full-width {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 760px) {

@@ -7183,6 +7183,99 @@ function addManualRequestOffRange(employeeId, startKey, endKey) {
   showConflict(`Added ${added} RO day${added === 1 ? "" : "s"} for ${displayName(employeeById(employeeId))}.`);
 }
 
+function updateTimeOffEditTimeControls() {
+  const coverage = $("timeOffEditDaypart")?.value || "allDay";
+  const disabled = coverage !== "custom";
+  ["timeOffEditStart", "timeOffEditEnd"].forEach((id) => {
+    const input = $(id);
+    if (!input) return;
+    input.disabled = disabled;
+    input.closest("label")?.classList.toggle("muted", disabled);
+  });
+}
+
+function openTimeOffEditDialog(requestId = selectedTimeOffRequestId) {
+  const request = (state.timeOffRequests || []).find((item) => item.id === requestId);
+  const dialog = $("timeOffEditDialog");
+  if (!request || !dialog) return;
+  const block = isScheduleBlock(request);
+  const allDay = requestOffIsFullDay(request);
+  const hasExplicitRange = Boolean(request.start || request.end) && !allDay;
+  $("timeOffEditId").value = request.id;
+  $("timeOffEditEmployee").value = displayName(employeeById(request.employeeId));
+  $("timeOffEditDate").value = request.date || "";
+  $("timeOffEditDaypart").value = allDay ? "allDay" : (/^(am|pm)$/i.test(request.daypart || "") ? request.daypart.toUpperCase() : "custom");
+  $("timeOffEditStart").value = hasExplicitRange ? (request.start || "") : "";
+  $("timeOffEditEnd").value = hasExplicitRange ? (request.end || "") : "";
+  $("timeOffEditNote").value = request.note || "";
+  $("timeOffEditTitle").textContent = block ? "Edit Day Block" : "Edit Request Off";
+  $("timeOffEditContext").textContent = block
+    ? `${scheduleBlockType(request)} for ${displayName(employeeById(request.employeeId))}`
+    : `Request off for ${displayName(employeeById(request.employeeId))}`;
+  $("timeOffEditWarnings").innerHTML = "";
+  updateTimeOffEditTimeControls();
+  attachTimePickerInput($("timeOffEditStart"));
+  attachTimePickerInput($("timeOffEditEnd"));
+  dialog.showModal();
+}
+
+function saveTimeOffEdit(event) {
+  event.preventDefault();
+  const requestId = $("timeOffEditId")?.value;
+  const current = (state.timeOffRequests || []).find((item) => item.id === requestId);
+  if (!current) return;
+  const dateKey = $("timeOffEditDate")?.value || "";
+  const coverage = $("timeOffEditDaypart")?.value || "allDay";
+  const allDay = coverage === "allDay";
+  const customTimes = coverage === "custom";
+  const start = customTimes ? normalizeTime($("timeOffEditStart")?.value || "") : "";
+  const end = customTimes ? normalizeTime($("timeOffEditEnd")?.value || "") : "";
+  const warnings = $("timeOffEditWarnings");
+  const errors = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || Number.isNaN(parseDateKey(dateKey).getTime())) {
+    errors.push("Choose a valid date.");
+  }
+  if (customTimes && (!start || !end)) errors.push("Use both a start and end time, or choose All day, AM, or PM.");
+  if (customTimes && start && end) {
+    const startMinutes = minutesFromTime(start);
+    let endMinutes = minutesFromTime(end);
+    if (startMinutes == null || endMinutes == null) errors.push("Use valid times such as 9a or 5p.");
+    else {
+      if (endMinutes <= startMinutes) endMinutes += 1440;
+      if (endMinutes <= startMinutes || endMinutes - startMinutes > 1440) errors.push("The end time must be after the start time.");
+    }
+  }
+  if (errors.length) {
+    if (warnings) warnings.innerHTML = errors.map((error) => `<div>${escapeHtml(error)}</div>`).join("");
+    return;
+  }
+  const editedRequest = {
+    ...current,
+    date: dateKey,
+    allDay: isScheduleBlock(current) ? allDay : current.allDay,
+    daypart: allDay ? "All day" : (coverage === "AM" || coverage === "PM" ? coverage : "Partial day"),
+    start,
+    end,
+    note: cleanCell($("timeOffEditNote")?.value || ""),
+    updatedAt: nowIso(),
+    updatedBy: currentSaveActor()
+  };
+  const duplicate = (state.timeOffRequests || []).some((item) => item.id !== current.id && timeOffRequestMatches(item, editedRequest));
+  if (duplicate) {
+    if (warnings) warnings.innerHTML = "<div>That RO or block already exists for this employee on that date.</div>";
+    return;
+  }
+  pushUndo();
+  state.timeOffRequests = state.timeOffRequests.map((item) => item.id === current.id ? editedRequest : item);
+  selectedTimeOffRequestId = editedRequest.id;
+  selectedCell = { employeeId: editedRequest.employeeId, date: editedRequest.date };
+  pendingDeleteTimeOffRequestId = null;
+  $("timeOffEditDialog")?.close();
+  saveState();
+  renderAllPreservingScheduleScroll();
+  showConflict(`Updated ${isScheduleBlock(editedRequest) ? "day block" : "RO"} for ${displayName(employeeById(editedRequest.employeeId))} on ${displayDate(parseDateKey(editedRequest.date))}.`);
+}
+
 function renderTimeOffBadge(request) {
   const badge = document.createElement("div");
   badge.className = "time-off-badge";
@@ -7231,8 +7324,14 @@ function renderTimeOffBadge(request) {
   badge.ondblclick = (event) => {
     event.stopPropagation();
     selectRequest();
-    pendingDeleteTimeOffRequestId = request.id;
-    renderSchedulePreservingGridScroll();
+    openTimeOffEditDialog(request.id);
+  };
+  badge.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectRequest();
+    openTimeOffEditDialog(request.id);
   };
   badge.querySelector(".delete-start-button")?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -14173,7 +14272,7 @@ function setupTimePicker() {
   picker.className = "time-picker";
   document.body.append(picker);
 
-  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd"].forEach((id) => attachTimePickerInput($(id)));
+  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd", "timeOffEditStart", "timeOffEditEnd"].forEach((id) => attachTimePickerInput($(id)));
 
   document.addEventListener("mousedown", (event) => {
     if (!event.target.closest("#timePicker") && event.target !== activeTimeInput) closeTimePicker();
@@ -14591,6 +14690,9 @@ function wireEvents() {
   $("dayBlockAllDay").onchange = updateDayBlockTimeControls;
   $("dayBlockForm").onsubmit = saveDayBlock;
   $("cancelDayBlockBtn").onclick = () => $("dayBlockDialog").close();
+  $("timeOffEditDaypart").onchange = updateTimeOffEditTimeControls;
+  $("timeOffEditForm").onsubmit = saveTimeOffEdit;
+  $("cancelTimeOffEditBtn").onclick = () => $("timeOffEditDialog").close();
   $("shiftEmployee").onchange = () => {
     $("shiftEmployeeId").value = $("shiftEmployee").value;
     updateRequestOffShiftButton();
@@ -14882,12 +14984,27 @@ function wireEvents() {
       showConflict("Give this availability a name before saving it.");
       return;
     }
+    const currentPatterns = current ? availabilityPatternsForEmployee(current) : [];
+    const selectedExisting = currentPatterns.find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    // Selecting a saved availability loads its values into the editor, but it
+    // must also establish that profile as the save target. Without this, an
+    // edit to a live profile looked like a new profile with a duplicate name.
+    if (selectedExisting && !availabilityEditingPatternId) {
+      const shouldOverwrite = !employeeFormHasUnsavedChanges() || await showAppConfirm({
+        title: "Overwrite Availability?",
+        message: `Save these edited times over "${selectedExisting.name}"? This updates the saved availability wherever it is used.`,
+        confirmText: "Overwrite Availability",
+        cancelText: "Keep Editing"
+      });
+      if (!shouldOverwrite) return;
+      availabilityEditingPatternId = selectedExisting.id;
+    }
     const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
     if (duplicate) {
       showConflict(`The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Choose a unique name.`);
       return;
     }
-    if (!availabilityEditingPatternId) {
+    if (!availabilityEditingPatternId && !selectedExisting) {
       selectedAvailabilityPatternId = "pattern-" + Date.now();
     }
     markEmployeeFormDirty();

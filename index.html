@@ -827,6 +827,45 @@
       </div>
     </form>
   </dialog>
+
+  <dialog id="timeOffEditDialog">
+    <form id="timeOffEditForm" method="dialog" class="editor modal-editor time-off-edit-editor">
+      <h2 id="timeOffEditTitle">Edit Request Off</h2>
+      <p id="timeOffEditContext" class="hint">Adjust the date, time, or note for this entry.</p>
+      <input id="timeOffEditId" type="hidden">
+      <div class="form-grid">
+        <label>Employee
+          <input id="timeOffEditEmployee" type="text" readonly>
+        </label>
+        <label>Date
+          <input id="timeOffEditDate" type="date" required>
+        </label>
+        <label>Time coverage
+          <select id="timeOffEditDaypart">
+            <option value="allDay">All day</option>
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+            <option value="custom">Custom times</option>
+          </select>
+        </label>
+        <label>Start
+          <input id="timeOffEditStart" data-time-picker placeholder="9a">
+        </label>
+        <label>End
+          <input id="timeOffEditEnd" data-time-picker placeholder="5p">
+        </label>
+        <label class="full-width">Note
+          <textarea id="timeOffEditNote" rows="3" placeholder="Optional note"></textarea>
+        </label>
+      </div>
+      <div id="timeOffEditWarnings" class="warnings"></div>
+      <div class="form-actions">
+        <button id="saveTimeOffEditBtn" class="primary" type="submit">Save Changes</button>
+        <button id="cancelTimeOffEditBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="warningConfirmDialog" class="app-confirm-dialog">
     <form method="dialog" class="editor modal-editor app-confirm">
       <div class="app-confirm-icon" aria-hidden="true">!</div>
