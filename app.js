@@ -385,6 +385,7 @@ function defaultState() {
     unassignedShifts: [],
     salesProjections: {},
     timeOffRequests: [],
+    dailyNotes: {},
     coverageRequirements: {},
     scheduleHistory: [],
     localPreferences: {}
@@ -484,6 +485,9 @@ function normalizeLoadedState(parsed = {}) {
     salesProjections: parsed.salesProjections || {},
     unassignedShifts: parsed.unassignedShifts || [],
     timeOffRequests: parsed.timeOffRequests || [],
+    dailyNotes: parsed.dailyNotes && typeof parsed.dailyNotes === "object" && !Array.isArray(parsed.dailyNotes)
+      ? parsed.dailyNotes
+      : {},
     coverageRequirements: parsed.coverageRequirements || {},
     scheduleHistory: parsed.scheduleHistory || [],
     localPreferences: parsed.localPreferences || {}
@@ -505,6 +509,11 @@ function migrateState(loadedState, parsed = {}) {
   ["roles", "employees", "templates", "shifts", "unassignedShifts", "timeOffRequests", "scheduleHistory"].forEach((collection) => {
     loadedState[collection] = normalizeRecordCollection(loadedState[collection] || []);
   });
+  loadedState.dailyNotes = Object.fromEntries(
+    Object.entries(loadedState.dailyNotes || {})
+      .map(([dateKey, note]) => [String(dateKey), String(note || "").trim()])
+      .filter(([dateKey, note]) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey) && note)
+  );
   loadedState.templates = (loadedState.templates || []).map((template) => ({
     ...template,
     shifts: normalizeRecordCollection(template.shifts || [], "templateShift")
@@ -2528,6 +2537,11 @@ function employeeById(id) {
 
 function schedulableEmployees() {
   return state.employees.filter((employee) => employee.active !== false && !employee.archived);
+}
+
+function isPrintableScheduledEmployee(employeeId) {
+  const employee = employeeById(employeeId);
+  return Boolean(employee && employee.active !== false && !employee.archived);
 }
 
 function sortedEmployeesForSelect(employees = schedulableEmployees()) {
@@ -5482,6 +5496,8 @@ function moveFocusedDay(delta) {
 }
 
 function renderDayFocusHeader(date, employees) {
+  const dateKey = formatDateKey(date);
+  const hasDayNote = Boolean(dayNoteForDate(dateKey));
   const head = cell("employee-head day-focus-title-cell", `
     <div class="day-focus-title">
       <div>
@@ -5490,12 +5506,14 @@ function renderDayFocusHeader(date, employees) {
       <div class="day-focus-actions">
         <button type="button" class="icon-button week-nav day-focus-step-button" data-day-focus-prev title="Previous day" aria-label="Previous day">&#8249;</button>
         <button type="button" class="icon-button week-nav day-focus-step-button" data-day-focus-next title="Next day" aria-label="Next day">&#8250;</button>
+        <button type="button" class="small-button day-focus-notes-button${hasDayNote ? " has-notes" : ""}" data-day-notes title="Add or edit floor chart notes for this day">Day Notes</button>
         <button type="button" class="small-button" data-exit-day-focus>Back to Week</button>
       </div>
     </div>
   `);
   head.querySelector("[data-day-focus-prev]").onclick = () => moveFocusedDay(-1);
   head.querySelector("[data-day-focus-next]").onclick = () => moveFocusedDay(1);
+  head.querySelector("[data-day-notes]").onclick = () => openDayNotesDialog(dateKey);
   head.querySelector("[data-exit-day-focus]").onclick = () => {
     exitDayFocus();
   };
@@ -11533,7 +11551,13 @@ function toggleCompactPreview() {
 
 function renderSimpleRolePrintView(sortMode, options = {}) {
   const dates = weekDates();
-  const visible = state.shifts.filter((shift) => visibleShift(shift) && printDepartmentMatches(shift, options.departments));
+  const dateKeys = new Set(dates.map(formatDateKey));
+  const visible = state.shifts.filter((shift) => (
+    dateKeys.has(shift.date) &&
+    isPrintableScheduledEmployee(shift.employeeId) &&
+    visibleShift(shift) &&
+    printDepartmentMatches(shift, options.departments)
+  ));
   const roleGroups = groupPrintShiftsByRole(visible, sortMode, options.departments);
   const openShiftBoxes = options.includeOpenShiftBoxes ? renderOpenShiftPrintBoxes(options.departments) : "";
   const shiftOrder = options.shiftOrder || "time";
@@ -11547,7 +11571,12 @@ function renderSimpleRolePrintView(sortMode, options = {}) {
 function renderSimpleEmployeePrintView(sortMode, options = {}) {
   const dates = weekDates();
   const dateKeys = dates.map(formatDateKey);
-  const visible = state.shifts.filter((shift) => dateKeys.includes(shift.date) && visibleShift(shift) && printDepartmentMatches(shift, options.departments));
+  const visible = state.shifts.filter((shift) => (
+    dateKeys.includes(shift.date) &&
+    isPrintableScheduledEmployee(shift.employeeId) &&
+    visibleShift(shift) &&
+    printDepartmentMatches(shift, options.departments)
+  ));
   const shiftOrder = options.shiftOrder || "time";
   const employeeIds = Array.from(new Set([
     ...visible.map((shift) => shift.employeeId).filter(Boolean),
@@ -11773,6 +11802,7 @@ function shouldBreakBeforeRole(group, previousGroup) {
 function renderSimpleRoleGrid(group, sortMode, breakBefore, shiftOrder = "time") {
   const dates = weekDates();
   const employeeIds = Array.from(group.employeeIds || new Set(group.shifts.map((shift) => shift.employeeId)))
+    .filter(isPrintableScheduledEmployee)
     .sort((a, b) => comparePrintEmployees(a, b, group.shifts, sortMode));
   const roleColor = group.shifts.map((shift) => shiftColor(shift)).find(Boolean) || "#2563eb";
   return `
@@ -11939,11 +11969,56 @@ function renderFloorPlan(options = {}) {
   setFloorText("busser", groups.busser);
   setFloorText("bartender", groups.bartender);
   setFloorText("banquet", groups.banquet);
+  renderFloorPlanDailyNote(dateKey);
   const total = Object.values(groups).reduce((sum, names) => sum + names.length, 0);
   const warningText = noteWarnings.length
     ? ` ${noteWarnings.length} floor-plan note${noteWarnings.length === 1 ? " was" : "s were"} shortened: ${[...new Set(noteWarnings)].slice(0, 3).join("; ")}${noteWarnings.length > 3 ? "..." : ""}`
     : "";
   $("floorPlanSummary").textContent = `${total} scheduled FOH employee${total === 1 ? "" : "s"} found for ${displayDate(parseDateKey(dateKey))} / ${floorPlanPeriodLabel(period)}.${warningText}`;
+}
+
+function dayNoteForDate(dateKey) {
+  return String(state.dailyNotes?.[dateKey] || "").trim();
+}
+
+function renderFloorPlanDailyNote(dateKey) {
+  const target = document.querySelector('[data-floor-output="day-notes"]');
+  if (target) target.textContent = dayNoteForDate(dateKey);
+}
+
+function floorPlanDailyNoteMarkup(dateKey) {
+  return `<div class="floor-overlay floor-day-notes">${escapeHtml(dayNoteForDate(dateKey))}</div>`;
+}
+
+function openDayNotesDialog(dateKey = focusedDateKey || formatDateKey(currentDate)) {
+  const dialog = $("dayNotesDialog");
+  if (!dialog) return;
+  $("dayNotesDate").textContent = `These notes will print on the floor chart for ${displayDate(parseDateKey(dateKey))}.`;
+  $("dayNotesInput").value = dayNoteForDate(dateKey);
+  $("clearDayNotesBtn").onclick = () => {
+    $("dayNotesInput").value = "";
+    $("dayNotesInput").focus();
+  };
+  $("cancelDayNotesBtn").onclick = () => dialog.close();
+  $("dayNotesForm").onsubmit = async (event) => {
+    event.preventDefault();
+    const note = $("dayNotesInput").value.trim();
+    if (note === dayNoteForDate(dateKey)) {
+      dialog.close();
+      return;
+    }
+    pushUndo();
+    state.dailyNotes ||= {};
+    if (note) state.dailyNotes[dateKey] = note;
+    else delete state.dailyNotes[dateKey];
+    dialog.close();
+    if ($("floorPlanDate")?.value === dateKey) renderFloorPlan();
+    if (focusedDateKey === dateKey) renderSchedule();
+    await saveState({ immediate: true });
+  };
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+  window.setTimeout(() => $("dayNotesInput")?.focus(), 50);
 }
 
 function floorPlanGroups(dateKey, period, options = {}) {
@@ -12242,6 +12317,7 @@ function renderFloorPlanSheetMarkup(dateKey, period, options = {}) {
       ${overlay("floor-busser", groups.busser)}
       ${overlay("floor-bartender", groups.bartender)}
       ${overlay("floor-banquet", groups.banquet)}
+      ${floorPlanDailyNoteMarkup(dateKey)}
       ${warning}
     </div>
   `;

@@ -22,6 +22,11 @@ function excludes(source, value, message) {
 function run() {
   includes(app, "function syncFloorPlanDateToActiveWeek", "floor-plan date handoff must exist");
   includes(app, "focusedDateKey || formatDateKey(currentDate)", "floor plans must prefer the focused day");
+  includes(app, "function openDayNotesDialog", "day view must provide date-scoped floor-chart notes");
+  includes(app, "state.dailyNotes", "day notes must be saved with the schedule state");
+  includes(app, "floorPlanDailyNoteMarkup(dateKey)", "weekly floor-plan printing must include the day note");
+  includes(index, 'data-floor-output="day-notes"', "the live floor plan must include a day-notes output area");
+  includes(index, 'id="dayNotesDialog"', "day notes must use the Shift Bay dialog styling instead of a browser prompt");
   excludes(app, "data-day-focus-date=", "redundant per-day buttons should stay removed");
   includes(app, "Double-click the date header to open Day View.", "day-header guidance must remain available");
 

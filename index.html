@@ -479,6 +479,7 @@
         <div class="floor-overlay floor-busser" data-floor-output="busser"></div>
         <div class="floor-overlay floor-bartender" data-floor-output="bartender"></div>
         <div class="floor-overlay floor-banquet" data-floor-output="banquet"></div>
+        <div class="floor-overlay floor-day-notes" data-floor-output="day-notes"></div>
       </div>
       <div id="floorPlanWeekPrint" class="floor-plan-week-print" hidden></div>
     </section>
@@ -891,6 +892,25 @@
       </div>
       <div class="form-actions app-confirm-actions">
         <button id="appAlertCloseBtn" class="primary" type="button">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dayNotesDialog" class="app-alert-dialog">
+    <form id="dayNotesForm" class="editor modal-editor app-confirm day-notes-editor">
+      <div class="app-confirm-icon" aria-hidden="true">i</div>
+      <div>
+        <h2>Day Notes</h2>
+        <p id="dayNotesDate" class="app-confirm-message"></p>
+        <label class="day-notes-field" for="dayNotesInput">Notes for the floor chart
+          <textarea id="dayNotesInput" rows="4" maxlength="320" placeholder="Brief notes for the day"></textarea>
+        </label>
+        <p class="hint">These notes print in the Notes section of this day's floor chart.</p>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="clearDayNotesBtn" type="button">Clear</button>
+        <button id="cancelDayNotesBtn" type="button">Cancel</button>
+        <button id="saveDayNotesBtn" class="primary" type="submit">Save Notes</button>
       </div>
     </form>
   </dialog>

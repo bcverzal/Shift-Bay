@@ -3182,6 +3182,12 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   flex: 0 0 auto;
 }
 
+.day-focus-notes-button.has-notes {
+  border-color: #0f766e;
+  background: #ecfdf5;
+  color: #0f5c55;
+}
+
 .day-focus-step-button {
   flex: 0 0 auto;
   display: grid;
@@ -8512,6 +8518,35 @@ fieldset .checkbox {
   line-height: 1.08;
 }
 
+.floor-day-notes {
+  left: 54.5%;
+  top: 66.2%;
+  width: 9.3%;
+  height: 23.7%;
+  color: #111827;
+  font-size: clamp(8px, 0.82vw, 12px);
+  font-weight: 750;
+  line-height: 1.16;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.day-notes-editor {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.day-notes-field {
+  display: grid;
+  gap: 6px;
+  color: #1e3a8a;
+  font-weight: 800;
+}
+
+.day-notes-field textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
 .floor-host,
 .floor-expo,
 .floor-servers,
@@ -10609,6 +10644,13 @@ dialog .time-picker {
   .schedule-grid.day-focus-grid .day-focus-actions [data-exit-day-focus] {
     min-height: 24px;
     padding: 3px 6px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .schedule-grid.day-focus-grid .day-focus-actions [data-day-notes] {
+    min-height: 24px;
+    padding: 3px 5px;
     font-size: 10px;
     white-space: nowrap;
   }
