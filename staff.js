@@ -100,6 +100,13 @@ function writeStaffAvailabilityPatterns(patterns) {
   localStorage.setItem(staffAvailabilityPatternKey(), JSON.stringify(patterns.slice(0, 4)));
 }
 
+function staffAvailabilityHasWindows(availability = {}) {
+  return Array.from({ length: 7 }, (_, dayIndex) => dayIndex).some((dayIndex) => (
+    Array.isArray(availability?.[dayIndex])
+      && availability[dayIndex].some((range) => String(range?.start || "").trim() && String(range?.end || "").trim())
+  ));
+}
+
 function renderStaffAvailabilityPatterns(selectedId = "") {
   const patterns = readStaffAvailabilityPatterns();
   if (staffAvailabilityPatternSelect) {
@@ -128,10 +135,10 @@ function renderStaffAvailabilityPatterns(selectedId = "") {
 function renderStaffManagerAvailability(employee = null) {
   if (!staffLiveAvailabilitySummary) return;
   const patterns = Array.isArray(employee?.availabilityPatterns)
-    ? employee.availabilityPatterns.filter((pattern) => pattern && pattern.active !== false)
+    ? employee.availabilityPatterns.filter((pattern) => pattern && pattern.active !== false && staffAvailabilityHasWindows(pattern.availability))
     : [];
   const currentDate = employee?.availabilityEffectiveDate || "";
-  if (!patterns.length && !Object.keys(employee?.availability || {}).length) {
+  if (!patterns.length && !staffAvailabilityHasWindows(employee?.availability)) {
     staffLiveAvailabilitySummary.hidden = false;
     staffLiveAvailabilitySummary.innerHTML = `<div><strong>Live availability</strong><small>No approved availability has been set yet.</small></div>`;
     return;

@@ -9100,6 +9100,13 @@ function emptyAvailability() {
   return Object.fromEntries(DAYS.map((_, index) => [index, []]));
 }
 
+function availabilityHasWindows(availability = {}) {
+  return DAYS.some((_, dayIndex) => (
+    Array.isArray(availability?.[dayIndex])
+      && availability[dayIndex].some((range) => String(range?.start || "").trim() && String(range?.end || "").trim())
+  ));
+}
+
 function currentWeekKey() {
   return formatDateKey(startOfWeek(currentDate, state.settings.weekStart));
 }
@@ -9203,9 +9210,7 @@ function findDuplicateAvailabilityPatternName(name, employeeId = "", patternId =
   return null;
 }
 function availabilityPatternsForEmployee(employee = null) {
-  if (!employee) {
-    return [{ id: "draft", name: "Regular availability", availability: emptyAvailability(), repeatWeeks: 1, effectiveDate: currentWeekKey() }];
-  }
+  if (!employee) return [];
   if (Array.isArray(employee.availabilityPatterns) && employee.availabilityPatterns.length) {
     return employee.availabilityPatterns.map((pattern, index) => ({
       id: pattern.id || `pattern-${index + 1}`,
@@ -9221,6 +9226,7 @@ function availabilityPatternsForEmployee(employee = null) {
       approved: pattern.approved === true || String(pattern.approvalStatus || pattern.status || "").toLowerCase() === "approved"
     }));
   }
+  if (!availabilityHasWindows(employee.availability)) return [];
   return [{
     id: "regular",
     name: employee.availabilityPatternName || "Regular availability",
@@ -9287,7 +9293,7 @@ function availabilityPatternsReplacedOnDate(patterns = [], replacementId = "", e
 }
 
 function availabilityPatternConflicts(patterns = []) {
-  const activePatterns = patterns.filter((pattern) => pattern?.active !== false);
+  const activePatterns = patterns.filter((pattern) => pattern?.active !== false && availabilityHasWindows(pattern.availability));
   if (activePatterns.length < 2) return null;
   const effectiveDates = activePatterns.map((pattern) => parseDateKey(normalizeAvailabilityEffectiveDate(pattern.effectiveDate)));
   const latestEffectiveDate = new Date(Math.max(...effectiveDates.map((date) => date.getTime())));
@@ -9338,7 +9344,8 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
   const activePatterns = patterns
-    .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
+    .filter((pattern) => availabilityHasWindows(pattern.availability)
+      && (pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern)))
     .sort((left, right) => {
       const leftFuture = isFutureAvailabilityPattern(left);
       const rightFuture = isFutureAvailabilityPattern(right);
@@ -9409,6 +9416,9 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   if (!list) return;
   const patterns = availabilityPatternsForEmployee(employee);
   if (!patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = patterns[0]?.id || "draft";
+  if (availabilityEditingPatternId && !patterns.some((pattern) => pattern.id === availabilityEditingPatternId)) {
+    availabilityEditingPatternId = "";
+  }
   const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
   renderActiveAvailabilitySummary(employee, patterns, selected);
   const editButton = $("editAvailabilityPatternBtn");
@@ -9442,8 +9452,13 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   }
   const submitButton = $("makeAvailabilityLiveBtn");
   if (submitButton) {
-    submitButton.disabled = !selected;
-    submitButton.textContent = selected?.active ? "Deactivate from Scheduling" : "Make Live for Scheduling";
+    const hasWindows = availabilityHasWindows(selected?.availability);
+    submitButton.disabled = !selected || (!selected.active && !hasWindows);
+    submitButton.textContent = !selected
+      ? "Save an availability first"
+      : selected.active
+      ? "Deactivate from Scheduling"
+      : (hasWindows ? "Make Live for Scheduling" : "Add availability to activate");
     submitButton.classList.toggle("danger", Boolean(selected?.active));
   }
 }
@@ -9762,6 +9777,8 @@ function loadEmployee(id) {
   if (!employee) return;
   employeeFormHydrating = true;
   employeeFormDirty = false;
+  selectedAvailabilityPatternId = "";
+  availabilityEditingPatternId = "";
   employeeNewProfileDraft = false;
   $("employeeId").value = employee.id;
   $("firstName").value = employee.firstName;
@@ -14792,7 +14809,7 @@ function wireEvents() {
     $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
     const parsedAvailability = parseAvailability();
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
-    const selectedPatternId = availabilityEditingPatternId || selectedAvailabilityPatternId || `pattern-${Date.now()}`;
+    const selectedPatternId = (availabilityEditingPatternId || selectedAvailabilityPatternId || "").replace(/^draft$/, "") || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
     const patternName = $("employeeAvailabilityPatternName").value.trim() || selectedPattern?.name || existingEmployee?.availabilityPatternName || "Regular availability";
     // Call Weekly has its own per-week availability records. The regular
@@ -14809,13 +14826,15 @@ function wireEvents() {
       showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
       return;
     }
+    const patternAvailability = saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability);
     const patternActive = availabilityAction
       && !deactivateAvailabilityPattern
+      && availabilityHasWindows(patternAvailability)
       && (activateSubmittedAvailability || selectedPattern?.active === true);
     const updatedPattern = {
       id: selectedPatternId,
       name: patternName,
-      availability: saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability),
+      availability: patternAvailability,
       repeatWeeks: patternActive ? Math.max(1, Math.min(4, Number($("employeeAvailabilityRepeatWeeks").value) || 1)) : null,
       active: patternActive,
       effectiveDate: patternActive ? availabilityEffectiveDate : "",
@@ -14986,10 +15005,17 @@ function wireEvents() {
     }
     const currentPatterns = current ? availabilityPatternsForEmployee(current) : [];
     const selectedExisting = currentPatterns.find((pattern) => pattern.id === selectedAvailabilityPatternId);
+    const editingExisting = currentPatterns.find((pattern) => pattern.id === availabilityEditingPatternId);
+    const storedPatterns = Array.isArray(current?.availabilityPatterns) ? current.availabilityPatterns : [];
+    const selectedIsPersisted = Boolean(selectedExisting
+      && storedPatterns.some((pattern) => String(pattern.id || "") === String(selectedExisting.id || "")));
+    // A profile switch or a new draft can leave an old edit target behind.
+    // Never let that stale id redirect this save to another employee/profile.
+    if (availabilityEditingPatternId && !editingExisting) availabilityEditingPatternId = "";
     // Selecting a saved availability loads its values into the editor, but it
     // must also establish that profile as the save target. Without this, an
     // edit to a live profile looked like a new profile with a duplicate name.
-    if (selectedExisting && !availabilityEditingPatternId) {
+    if (selectedExisting && selectedIsPersisted && !availabilityEditingPatternId) {
       const shouldOverwrite = !employeeFormHasUnsavedChanges() || await showAppConfirm({
         title: "Overwrite Availability?",
         message: `Save these edited times over "${selectedExisting.name}"? This updates the saved availability wherever it is used.`,
@@ -14999,12 +15025,19 @@ function wireEvents() {
       if (!shouldOverwrite) return;
       availabilityEditingPatternId = selectedExisting.id;
     }
+    // Legacy employees without saved pattern rows still have a fallback
+    // availability object. The first explicit Save Availability should create
+    // a real inactive profile instead of silently treating that fallback as a
+    // live saved AV.
+    if (selectedExisting && !selectedIsPersisted) {
+      selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    }
     const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
     if (duplicate) {
       showConflict(`The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Choose a unique name.`);
       return;
     }
-    if (!availabilityEditingPatternId && !selectedExisting) {
+    if (!availabilityEditingPatternId && !selectedExisting && selectedAvailabilityPatternId === "draft") {
       selectedAvailabilityPatternId = "pattern-" + Date.now();
     }
     markEmployeeFormDirty();
