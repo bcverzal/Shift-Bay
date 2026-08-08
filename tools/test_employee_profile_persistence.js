@@ -17,6 +17,10 @@ function run() {
   const availabilitySaveHandler = app.slice(availabilitySaveHandlerStart, availabilitySaveHandlerEnd);
   assert.ok(availabilitySaveHandler.includes("submitEmployeeFormDirectly()"), "Save Availability must use the direct profile save handler");
   assert.ok(!availabilitySaveHandler.includes("requestSubmit()"), "Save Availability must not be silently blocked by native form validation");
+  assert.ok(availabilitySaveHandler.includes("defaultAvailabilityPatternName(current)"), "a legacy fallback must become an employee-specific saved availability name");
+  assert.ok(availabilitySaveHandler.includes('title: "Availability Not Saved"'), "a blocked availability save must show a visible app dialog");
+  includes(app, "function defaultAvailabilityPatternName", "availability drafts must receive an employee-specific default name");
+  includes(app, "defaultAvailabilityPatternName(employee)", "the availability editor must seed the employee-specific default name");
   includes(app, 'saveScope: "employee-profile"', "client profile saves must use a scoped request");
   includes(app, "employeeProfile: employee", "client profile saves must send the selected employee only");
   includes(app, "employeeProfileSavePriority", "profile saves must be prioritized over a queued schedule save");

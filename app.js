@@ -9209,6 +9209,15 @@ function findDuplicateAvailabilityPatternName(name, employeeId = "", patternId =
   }
   return null;
 }
+
+function defaultAvailabilityPatternName(employee = null, patternId = "") {
+  const base = `${displayName(employee || {}) || "Employee"} availability`;
+  if (!findDuplicateAvailabilityPatternName(base, employee?.id || "", patternId)) return base;
+  let suffix = 2;
+  while (findDuplicateAvailabilityPatternName(`${base} ${suffix}`, employee?.id || "", patternId)) suffix += 1;
+  return `${base} ${suffix}`;
+}
+
 function availabilityPatternsForEmployee(employee = null) {
   if (!employee) return [];
   if (Array.isArray(employee.availabilityPatterns) && employee.availabilityPatterns.length) {
@@ -9445,7 +9454,9 @@ function renderAvailabilityPatternWorkspace(employee = null) {
       renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
     };
   });
-  if ($("employeeAvailabilityPatternName")) $("employeeAvailabilityPatternName").value = selected?.name || "";
+  if ($("employeeAvailabilityPatternName")) {
+    $("employeeAvailabilityPatternName").value = selected?.name || defaultAvailabilityPatternName(employee);
+  }
   if ($("employeeAvailabilityRepeatWeeks")) $("employeeAvailabilityRepeatWeeks").value = String(selected?.repeatWeeks || 1);
   if ($("employeeAvailabilityEffectiveDate")) {
     $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
@@ -9795,7 +9806,7 @@ function loadEmployee(id) {
   setCheckedValues("employeeDepartments", normalizeEmployeeDepartments(employee));
   $("employeeCallWeekly").checked = Boolean(employee.callWeekly);
   $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey());
-  $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || "Regular availability";
+  $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || defaultAvailabilityPatternName(employee);
   $("employeeAvailabilityRepeatWeeks").value = String(employee.availabilityRepeatWeeks || 1);
   syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
@@ -14811,7 +14822,10 @@ function wireEvents() {
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
     const selectedPatternId = (availabilityEditingPatternId || selectedAvailabilityPatternId || "").replace(/^draft$/, "") || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
-    const patternName = $("employeeAvailabilityPatternName").value.trim() || selectedPattern?.name || existingEmployee?.availabilityPatternName || "Regular availability";
+    const patternName = $("employeeAvailabilityPatternName").value.trim()
+      || selectedPattern?.name
+      || existingEmployee?.availabilityPatternName
+      || defaultAvailabilityPatternName(existingEmployee || { id, firstName, lastName });
     // Call Weekly has its own per-week availability records. The regular
     // availability editor is hidden in this mode, so its naming and overlap
     // rules must not block or rewrite a Call Weekly profile save.
@@ -14823,7 +14837,11 @@ function wireEvents() {
     if (duplicatePattern) {
       undoStack.pop();
       setEmployeeSaveDebugStatus("Save stopped: duplicate availability name", "failed");
-      showConflict(`The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Choose a unique name.`);
+      showAppAlert({
+        title: "Availability Not Saved",
+        message: `The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Give this availability a different name, then save it again.`,
+        type: "warning"
+      });
       return;
     }
     const patternAvailability = saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability);
@@ -14998,9 +15016,10 @@ function wireEvents() {
     const button = $("saveAvailabilityPatternBtn");
     if (button?.disabled) return;
     const current = employeeById($("employeeId")?.value);
-    const name = $("employeeAvailabilityPatternName")?.value.trim();
+    const nameInput = $("employeeAvailabilityPatternName");
+    let name = nameInput?.value.trim();
     if (!name) {
-      showConflict("Give this availability a name before saving it.");
+      showAppAlert({ title: "Availability Needs a Name", message: "Give this availability a name before saving it.", type: "warning" });
       return;
     }
     const currentPatterns = current ? availabilityPatternsForEmployee(current) : [];
@@ -15031,10 +15050,21 @@ function wireEvents() {
     // live saved AV.
     if (selectedExisting && !selectedIsPersisted) {
       selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+      // A legacy snapshot can expose a generic fallback name even though no
+      // saved availability profile exists yet. Turn it into a clear, unique
+      // first profile name before applying the global duplicate-name rule.
+      if (/^regular availability$/i.test(name || "")) {
+        name = defaultAvailabilityPatternName(current);
+        if (nameInput) nameInput.value = name;
+      }
     }
     const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
     if (duplicate) {
-      showConflict(`The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Choose a unique name.`);
+      showAppAlert({
+        title: "Availability Not Saved",
+        message: `The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Give this availability a different name, then save it again.`,
+        type: "warning"
+      });
       return;
     }
     if (!availabilityEditingPatternId && !selectedExisting && selectedAvailabilityPatternId === "draft") {
@@ -15085,10 +15115,10 @@ function wireEvents() {
     markEmployeeFormDirty();
   });
   $("newAvailabilityPatternBtn").onclick = () => {
-    const patterns = availabilityPatternsForEmployee(employeeById($("employeeId")?.value));
+    const employee = employeeById($("employeeId")?.value);
     selectedAvailabilityPatternId = `pattern-${Date.now()}`;
     availabilityEditingPatternId = "";
-    $("employeeAvailabilityPatternName").value = `Availability ${patterns.length + 1}`;
+    $("employeeAvailabilityPatternName").value = defaultAvailabilityPatternName(employee, selectedAvailabilityPatternId);
     $("employeeAvailabilityRepeatWeeks").value = "1";
     $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
     setAvailabilityInputs("[data-availability-day]", "");
