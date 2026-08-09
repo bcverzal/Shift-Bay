@@ -2693,6 +2693,10 @@ function employeeAvailability(employee, dayIndex, dateKey = "") {
     if (override && Object.prototype.hasOwnProperty.call(employee.weeklyAvailability || {}, weekKey)) return override[dayIndex] || [];
   }
   if (employee.callWeekly) return [];
+  if (dateKey) {
+    const patternAvailability = availabilityFromPatternsForDate(employee, dateKey);
+    if (patternAvailability) return patternAvailability;
+  }
   if (dateKey && Array.isArray(employee.availabilitySchedule)) {
     const version = employee.availabilitySchedule
       .filter((item) => item && item.effectiveDate && item.effectiveDate <= dateKey)
@@ -2866,8 +2870,8 @@ function renderRoleCapabilityStrip(employee) {
   `;
 }
 
-function rangeInsideAvailabilityByDay(employee, dayIndex, start, end) {
-  const ranges = employeeAvailability(employee, dayIndex);
+function rangeInsideAvailabilityByDay(employee, dayIndex, start, end, dateKey = "") {
+  const ranges = employeeAvailability(employee, dayIndex, dateKey);
   if (!ranges.length || start == null || end == null) return false;
   return ranges.some((range) => {
     const availableStart = minutesFromTime(range.start);
@@ -9265,6 +9269,34 @@ function availabilityPatternsForEmployee(employee = null) {
   }];
 }
 
+function availabilityFromPatternsForDate(employee, dateKey) {
+  if (!employee || !dateKey) return null;
+  const date = parseDateKey(dateKey);
+  if (Number.isNaN(date.getTime())) return null;
+  const datedPatterns = availabilityPatternsForEmployee(employee)
+    .filter((pattern) => (
+      (pattern?.active !== false || pattern?.approved === true || pattern?.approvalStatus === "approved")
+      && availabilityHasWindows(pattern.availability)
+      && String(pattern.effectiveDate || "").trim()
+    ));
+  if (!datedPatterns.length) return null;
+
+  // Future profiles must not replace today's availability early. Once a
+  // dated profile has started, an off-cycle repeat week is intentionally
+  // unavailable rather than falling back to the old profile.
+  const startedPatterns = datedPatterns.filter((pattern) => {
+    const effectiveDate = parseDateKey(normalizeAvailabilityEffectiveDate(pattern.effectiveDate));
+    return !Number.isNaN(effectiveDate.getTime()) && effectiveDate <= date;
+  });
+  if (!startedPatterns.length) return null;
+
+  const applicable = startedPatterns.filter((pattern) => availabilityPatternAppliesOnDate(pattern, date));
+  const dayIndex = date.getDay();
+  return applicable.flatMap((pattern) => (
+    Array.isArray(pattern.availability?.[dayIndex]) ? pattern.availability[dayIndex] : []
+  ));
+}
+
 function selectedAvailabilityPattern(employee = null) {
   const patterns = availabilityPatternsForEmployee(employee);
   return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
@@ -10678,7 +10710,7 @@ function staffingRows() {
         const availableEmployees = schedulableEmployees().filter((employee) => (
           employee.roleTraining?.includes(role.id) &&
           employee.mealTraining?.includes(period.name) &&
-          rangeInsideAvailabilityByDay(employee, dayIndex, start, end)
+          rangeInsideAvailabilityByDay(employee, dayIndex, start, end, dateKeyForAvailabilityDay(dayIndex, currentWeekKey()))
         ));
         const target = required + buffer;
         const available = availableEmployees.length;
