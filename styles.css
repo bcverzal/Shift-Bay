@@ -8547,6 +8547,51 @@ fieldset .checkbox {
   resize: vertical;
 }
 
+/* Keep the day-notes form inside its dialog when the shared alert layout is narrow. */
+.day-notes-editor {
+  width: min(620px, calc(100vw - 24px));
+  min-width: 0;
+  grid-template-columns: 42px minmax(0, 1fr);
+}
+
+.day-notes-editor > div,
+.day-notes-editor .day-notes-field,
+.day-notes-editor textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.day-notes-editor textarea {
+  width: 100%;
+}
+
+.day-notes-editor .app-confirm-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.day-notes-editor .app-confirm-actions button {
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .day-notes-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .day-notes-editor .app-confirm-icon {
+    margin-bottom: -4px;
+  }
+
+  .day-notes-editor .app-confirm-actions {
+    justify-content: stretch;
+  }
+
+  .day-notes-editor .app-confirm-actions button {
+    flex: 1 1 auto;
+  }
+}
+
 .floor-host,
 .floor-expo,
 .floor-servers,

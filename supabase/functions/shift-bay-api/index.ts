@@ -14,6 +14,18 @@
 type JsonRecord = Record<string, unknown>;
 const SANDBOX_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
 
+// A stale atomic tab can continue issuing the same request while its UI is
+// waiting for the user to refresh. Remembering a known revision conflict for
+// a short window lets the Edge Function reject those repeats without entering
+// the expensive database transaction again. This is only a best-effort guard;
+// the database revision check remains authoritative.
+const NORMALIZED_ATOMIC_CONFLICT_CACHE_MS = 30_000;
+const normalizedAtomicConflictCache = new Map<string, {
+  expectedRevision: number;
+  currentRevision: number;
+  expiresAt: number;
+}>();
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-shift-bay-location-id",
@@ -400,6 +412,24 @@ function normalizedAtomicCanaryEnabled() {
   return env("SHIFT_BAY_ATOMIC_CANARY_ENABLED") === "true";
 }
 
+function cachedNormalizedAtomicConflict(locationId: string, expectedRevision: number) {
+  const entry = normalizedAtomicConflictCache.get(locationId);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) normalizedAtomicConflictCache.delete(locationId);
+    return null;
+  }
+  if (entry.expectedRevision !== expectedRevision) return null;
+  return entry;
+}
+
+function rememberNormalizedAtomicConflict(locationId: string, expectedRevision: number, currentRevision: number) {
+  normalizedAtomicConflictCache.set(locationId, {
+    expectedRevision,
+    currentRevision,
+    expiresAt: Date.now() + NORMALIZED_ATOMIC_CONFLICT_CACHE_MS
+  });
+}
+
 async function loadNormalizedScheduleRevision(locationId: string) {
   const rows = await supabaseJson(
     `/normalized_schedule_revisions?location_id=eq.${encodeURIComponent(locationId)}&select=revision,updated_at`,
@@ -425,9 +455,8 @@ async function claimNormalizedScheduleRevision(locationId: string, expectedRevis
   return Array.isArray(rows) ? rows[0] || null : null;
 }
 
-// This is intentionally not used by any save route yet. The normal hybrid
-// bridge remains authoritative until the atomic procedure completes a
-// Sandbox-only canary and its rollback checks.
+// The normal hybrid bridge remains authoritative for production. This helper
+// is used only by the opt-in Sandbox atomic canary.
 async function writeNormalizedScheduleAtomically(locationId: string, expectedRevision: number, state: JsonRecord, userId: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
@@ -1999,6 +2028,14 @@ async function handleSaveState(request: Request) {
     if (profileOnlySave || !Number.isInteger(expectedNormalizedScheduleRevision) || expectedNormalizedScheduleRevision < 0) {
       return json(400, { ok: false, error: "A current normalized schedule revision is required for this Sandbox save." });
     }
+    const cachedConflict = cachedNormalizedAtomicConflict(locationId, expectedNormalizedScheduleRevision);
+    if (cachedConflict) {
+      return json(409, {
+        error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
+        expectedNormalizedScheduleRevision,
+        normalizedScheduleRevision: cachedConflict.currentRevision
+      });
+    }
     let normalizedAtomicWrite: any;
     try {
       normalizedAtomicWrite = await writeNormalizedScheduleAtomically(
@@ -2024,6 +2061,11 @@ async function handleSaveState(request: Request) {
       }
       if (errorMessage.includes("Normalized schedule revision conflict")) {
         const currentRevision = await loadNormalizedScheduleRevision(locationId);
+        rememberNormalizedAtomicConflict(
+          locationId,
+          expectedNormalizedScheduleRevision,
+          currentRevision.revision
+        );
         return json(409, {
           error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
           expectedNormalizedScheduleRevision,
@@ -2034,6 +2076,7 @@ async function handleSaveState(request: Request) {
     }
     const savedAt = new Date().toISOString();
     const revision = Number(normalizedAtomicWrite?.revision);
+    normalizedAtomicConflictCache.delete(locationId);
     await logAuditEvent("normalized_schedule_atomic_saved", (validated.user as any).id, {
       savedAt,
       savedByEmail: (validated.user as any).email || "",

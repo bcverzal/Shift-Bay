@@ -53,6 +53,11 @@ function run() {
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
   includes(app, "employeeProfileSavePriority", "employee profile saves must take priority over queued full-schedule writes");
   includes(app, "another large schedule request", "employee profile saves must reserve the next cloud write");
+  includes(app, "function schedulerMutationFingerprint", "scheduler saves must distinguish real state changes from screen redraws");
+  includes(app, "lastConfirmedMutationFingerprint", "scheduler saves must remember the last confirmed mutation");
+  includes(app, "queuedMutationFingerprint", "scheduler save debouncing must coalesce identical pending payloads");
+  includes(app, "if (mutationFingerprint === inFlightMutationFingerprint) return false", "a redraw during an in-flight save must not queue a duplicate atomic write");
+  includes(app, "stateOverride: requestState", "a save response must confirm the snapshot that was actually sent");
   includes(index, 'id="employeeSaveDebugStatus"', "employee profile saves must expose their current stage");
   includes(app, "Save Employee button clicked", "the employee save button must immediately confirm its click handler ran");
   includes(app, "Cloud save confirmed", "employee profile saves must visibly confirm the cloud response");

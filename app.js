@@ -87,6 +87,9 @@ let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
 let serverSaveInFlight = false;
 let serverSavePending = false;
+let queuedMutationFingerprint = "";
+let inFlightMutationFingerprint = "";
+let lastConfirmedMutationFingerprint = "";
 let employeeProfileSavePriority = false;
 let cloudSaveBlockedByStale = false;
 let authRefreshInFlight = null;
@@ -756,6 +759,17 @@ function currentSaveActor() {
     role: currentAccessRole() || "manager"
   } : null;
 }
+
+// Rendering is frequent and often changes only the screen. Keep volatile
+// metadata out of this fingerprint so those redraws do not become full cloud
+// schedule writes.
+function schedulerMutationFingerprint(candidate = state) {
+  if (!candidate || typeof candidate !== "object") return "";
+  const snapshot = { ...candidate };
+  delete snapshot.meta;
+  return JSON.stringify(snapshot);
+}
+
 function saveState(options = {}) {
   if (!canEditScheduler()) {
     if (options.immediate || options.notice) showReadOnlyNotice();
@@ -772,6 +786,7 @@ function saveState(options = {}) {
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (SERVER_STORAGE_ENABLED && serverStorageReady) {
+    const mutationFingerprint = schedulerMutationFingerprint(state);
     // Profile-only saves merge one employee record on the server, so they can
     // safely proceed while this browser's broader schedule snapshot is stale.
     if (cloudSaveBlockedByStale && options.scope !== "employee-profile") {
@@ -781,7 +796,14 @@ function saveState(options = {}) {
     }
     if (options.immediate) {
       clearTimeout(serverSaveTimer);
+      queuedMutationFingerprint = "";
       return persistStateToServer(options);
+    }
+    // renderAll() is also used for navigation, selection, and layout redraws.
+    // Do not write the same schedule snapshot again just because the screen
+    // was repainted.
+    if (mutationFingerprint === lastConfirmedMutationFingerprint && !serverSaveInFlight && !serverSavePending && !serverSaveTimer) {
+      return Promise.resolve(true);
     }
     queueServerSave();
   }
@@ -837,9 +859,10 @@ function updateStorageStatus() {
 }
 
 function serverEnvelope(options = {}) {
+  const sourceState = options.stateOverride || state;
   const employeeId = options.employeeId || "";
   const employeeProfile = options.scope === "employee-profile" && employeeId
-    ? state.employees.find((employee) => String(employee?.id || "") === String(employeeId)) || null
+    ? sourceState.employees.find((employee) => String(employee?.id || "") === String(employeeId)) || null
     : null;
   return {
     app: "restaurant-scheduler",
@@ -861,7 +884,7 @@ function serverEnvelope(options = {}) {
     // Send the exact profile being saved. The server deliberately ignores the
     // rest of the browser's schedule snapshot for this scoped operation.
     employeeProfile,
-    data: state
+    data: sourceState
   };
 }
 
@@ -948,9 +971,18 @@ function queueServerSave() {
     setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
     return;
   }
+  const mutationFingerprint = schedulerMutationFingerprint(state);
+  if (mutationFingerprint === inFlightMutationFingerprint) return;
+  if (mutationFingerprint === lastConfirmedMutationFingerprint) return;
+  if (serverSaveTimer && queuedMutationFingerprint === mutationFingerprint) return;
   clearTimeout(serverSaveTimer);
+  queuedMutationFingerprint = mutationFingerprint;
   setStorageStatus("saving", "Saving to the shared scheduler data file...");
-  serverSaveTimer = setTimeout(() => persistStateToServer(), 500);
+  serverSaveTimer = setTimeout(() => {
+    serverSaveTimer = null;
+    queuedMutationFingerprint = "";
+    persistStateToServer();
+  }, 500);
 }
 
 async function persistStateToServer(options = {}) {
@@ -961,6 +993,7 @@ async function persistStateToServer(options = {}) {
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
   if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
+  const mutationFingerprint = schedulerMutationFingerprint(state);
   if (serverSaveInFlight) {
     // A profile save must not be reported as failed just because a queued
     // scheduler save is already using the connection. Wait for that request,
@@ -972,16 +1005,20 @@ async function persistStateToServer(options = {}) {
       }
       if (!serverSaveInFlight) return persistStateToServer(options);
     }
+    if (mutationFingerprint === inFlightMutationFingerprint) return false;
     serverSavePending = true;
     return false;
   }
+  if (!options.immediate && mutationFingerprint === lastConfirmedMutationFingerprint) return true;
   serverSaveInFlight = true;
+  inFlightMutationFingerprint = mutationFingerprint;
+  const requestState = cloneSchedulerState(state);
   let saved = false;
   try {
     const response = await authFetch("/api/state", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(serverEnvelope(options))
+      body: JSON.stringify(serverEnvelope({ ...options, stateOverride: requestState }))
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
     if (response.status === 403) {
@@ -1019,8 +1056,9 @@ async function persistStateToServer(options = {}) {
       lastKnownServerSavedAt = result.savedAt;
       state.meta = { ...(state.meta || {}), serverSavedAt: result.savedAt };
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
-      lastKnownServerState = cloneSchedulerState(state);
+      lastKnownServerState = requestState;
     }
+    lastConfirmedMutationFingerprint = mutationFingerprint;
     if (Number.isInteger(Number(result.normalizedScheduleRevision))) {
       lastKnownNormalizedScheduleRevision = Number(result.normalizedScheduleRevision);
     }
@@ -1038,6 +1076,7 @@ async function persistStateToServer(options = {}) {
     showConflict(error?.message || "Could not save to the shared scheduler file. Your browser copy is still saved locally.");
   } finally {
     serverSaveInFlight = false;
+    inFlightMutationFingerprint = "";
     // A targeted employee save may be waiting behind this whole-schedule
     // request. Let it run next; it will resume any pending schedule save once
     // the profile is safely confirmed.
@@ -2295,6 +2334,7 @@ async function hydrateStateFromServer() {
         cloudSaveBlockedByStale = false;
         lastKnownServerSavedAt = serverSavedAt;
         lastKnownServerState = cloneSchedulerState(serverState);
+        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
         const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
@@ -2322,6 +2362,7 @@ async function hydrateStateFromServer() {
         serverStorageReady = true;
         cloudSaveBlockedByStale = false;
         lastKnownServerSavedAt = serverSavedAt;
+        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
         setStorageStatus("saved", "Loaded the latest shared schedule. An older browser copy was preserved for recovery.");
         showStaleRecoveryAlert(newerBrowserRecovery);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
@@ -2331,6 +2372,7 @@ async function hydrateStateFromServer() {
       }
       lastKnownServerSavedAt = serverSavedAt;
       lastKnownServerState = cloneSchedulerState(serverState);
+      lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
       cloudSaveBlockedByStale = false;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));

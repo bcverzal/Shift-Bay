@@ -28,6 +28,12 @@ assert.match(sql, /grant execute on function public\.write_normalized_schedule_a
 assert.match(edge, /async function writeNormalizedScheduleAtomically/);
 assert.match(edge, /\/rpc\/write_normalized_schedule_atomically/);
 assert.match(edge, /function normalizedAtomicCanaryEnabled\(\)/);
+assert.match(edge, /NORMALIZED_ATOMIC_CONFLICT_CACHE_MS = 30_000/);
+assert.match(edge, /function cachedNormalizedAtomicConflict\(/);
+assert.match(edge, /function rememberNormalizedAtomicConflict\(/);
+assert.match(edge, /const cachedConflict = cachedNormalizedAtomicConflict\(/);
+assert.match(edge, /rememberNormalizedAtomicConflict\(/);
+assert.match(edge, /normalizedAtomicConflictCache\.delete\(locationId\)/);
 assert.match(edge, /Atomic Sandbox schedule writes are temporarily paused/);
 assert.match(edge, /saveMode === "normalized-sandbox-atomic-revision"/);
 assert.match(edge, /function normalizedAtomicScheduleState/);
