@@ -1,0 +1,42 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  external_node_modules = ["pdfjs-dist"]
+  included_files = ["assets/vendor/pdf.worker.mjs"]
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/app.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/styles.css"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/shift-bay-config.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.html"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/staff.css"
+  [headers.values]
+    Cache-Control = "no-store"

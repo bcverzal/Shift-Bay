@@ -1,0 +1,117 @@
+{
+  "formatVersion": 1,
+  "migrations": [
+    {
+      "id": "core-schema",
+      "file": "schema.sql",
+      "environment": "sandbox-first",
+      "dependsOn": [],
+      "purpose": "Creates the location-scoped normalized schema and the snapshot bridge.",
+      "rollback": "Do not drop tables in a live project; disable normalized reads and return to snapshot mode."
+    },
+    {
+      "id": "employee-profile-overrides",
+      "file": "employee-profile-overrides.sql",
+      "environment": "production-safe",
+      "dependsOn": ["core-schema"],
+      "purpose": "Stores employee profile updates independently of whole-schedule saves.",
+      "rollback": "Keep the rows and disable profile override reads if a rollback is needed."
+    },
+    {
+      "id": "employee-normalization",
+      "file": "employee-normalization-migration.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["core-schema", "employee-profile-overrides"],
+      "purpose": "Adds stable employee legacy identity and ordered default availability windows.",
+      "rollback": "Stop normalized employee writes; the snapshot remains the compatibility source."
+    },
+    {
+      "id": "role-normalization",
+      "file": "role-normalization-migration.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["core-schema", "employee-normalization"],
+      "purpose": "Adds stable role legacy identity and explicit trainer capability support.",
+      "rollback": "Stop normalized role capability writes; do not drop the additive column."
+    },
+    {
+      "id": "employee-scheduling-preferences",
+      "file": "employee-scheduling-preferences-migration.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["employee-normalization", "role-normalization"],
+      "purpose": "Adds employee scheduling preferences, general meal qualifications, and structured weekly work rules.",
+      "rollback": "Stop normalized preference reads/writes; retain additive columns and rows while the snapshot remains active."
+    },
+    {
+      "id": "schedule-normalization-bridge",
+      "file": "schedule-normalization-migration.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["employee-normalization", "role-normalization"],
+      "purpose": "Adds stable legacy identity and metadata bridge columns for shifts, open shifts, request-offs, blocks, templates, and template shifts before Sandbox-only data copy work.",
+      "rollback": "Do not drop additive columns; leave schedule reads on the snapshot and stop normalized schedule writes."
+    },
+    {
+      "id": "normalized-schedule-revisions",
+      "file": "normalized-schedule-revisions.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["schedule-normalization-bridge"],
+      "purpose": "Adds a location-scoped optimistic revision lock before normalized schedule tables become an authoritative write source.",
+      "rollback": "Keep the revision row and disable direct normalized writes; the snapshot bridge remains available."
+    },
+    {
+      "id": "scheduler-state-history",
+      "file": "scheduler-state-history.sql",
+      "environment": "production-safe",
+      "dependsOn": ["core-schema"],
+      "purpose": "Archives the previous complete scheduler snapshot on every whole-schedule update so compatibility rollback has durable restore points.",
+      "rollback": "Disable the archive trigger if necessary; retain existing history rows for recovery."
+    },
+    {
+      "id": "normalized-schedule-atomic-write",
+      "file": "normalized-schedule-atomic-write.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["schedule-normalization-bridge", "normalized-schedule-revisions", "scheduler-state-history"],
+      "purpose": "Adds an inactive service-only PostgreSQL procedure that writes one complete normalized schedule and its revision in a single transaction.",
+      "rollback": "Do not call the procedure; continue using the snapshot bridge while retaining the additive function for audit and recovery."
+    },
+    {
+      "id": "staff-accounts",
+      "file": "staff-accounts-mvp.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["core-schema", "employee-normalization"],
+      "purpose": "Links staff authentication accounts to employees.",
+      "rollback": "Disable staff account routes and leave account rows intact for auditability."
+    },
+    {
+      "id": "staff-profile",
+      "file": "staff-profile-mvp.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["staff-accounts"],
+      "purpose": "Adds staff-owned contact and communication preferences.",
+      "rollback": "Disable staff profile writes; preserve saved contact data."
+    },
+    {
+      "id": "availability-patterns",
+      "file": "staff-portal-schema-plan.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["staff-accounts", "employee-normalization"],
+      "purpose": "Creates saved availability definitions, their time windows, effective-dated week assignments, and reminder history.",
+      "rollback": "Keep pattern records intact and return availability reads to the snapshot bridge if verification fails."
+    },
+    {
+      "id": "staff-workflow",
+      "file": "staff-workflow-mvp.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["staff-accounts", "staff-profile", "availability-patterns"],
+      "purpose": "Adds staff request-off and compatibility submission queues while saved availability is normalized through pattern assignments.",
+      "rollback": "Disable approval routes and preserve workflow records."
+    },
+    {
+      "id": "availability-normalization-bridge",
+      "file": "availability-normalization-bridge.sql",
+      "environment": "sandbox-first",
+      "dependsOn": ["availability-patterns", "staff-workflow", "employee-normalization"],
+      "purpose": "Separates reusable availability profiles from effective-dated repeat and approval assignments without changing the snapshot read path.",
+      "rollback": "Leave the additive columns and indexes in place, disable normalized availability reads and writes, and continue using the snapshot bridge."
+    }
+  ]
+}

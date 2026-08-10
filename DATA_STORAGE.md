@@ -65,15 +65,38 @@ Backups are exported as a JSON envelope:
 
 Restore accepts both this envelope format and older raw state backups.
 
+## Storage Modes
+
+The migration branch has a server-side storage adapter. The browser app still uses `/api/state`, while the Node server chooses where that state is stored.
+
+Default local JSON mode:
+
+```text
+SHIFT_BAY_STORAGE_MODE=local-json
+```
+
+Future Supabase mode:
+
+```text
+SHIFT_BAY_STORAGE_MODE=supabase
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SHIFT_BAY_LOCATION_ID=...
+SHIFT_BAY_DOCUMENT_KEY=primary
+```
+
+Use `.env.example` as the template for local environment settings. Never commit a real `.env` file or a Supabase service-role key.
+
 ## Storage Roadmap
 
 The current server mode is intentionally simple: one shared JSON file, automatic backups, no database dependency. It is a good bridge between the prototype and a packaged desktop app.
 
 The likely next steps are:
 
-1. Add a visible server/storage status indicator in the app.
-2. Add import/export tools for moving the first shared data file onto the office PC.
-3. Package the app so the server starts like a normal desktop program.
-4. Move from whole-file saves to SQLite or record-level sync when multiple people might edit at once.
+1. Keep local JSON mode stable for restaurant use.
+2. Add Supabase state-document mode for laptop/office-PC shared cloud storage.
+3. Add manager login and location selection.
+4. Migrate copied local data into the Supabase state document.
+5. Move from whole-document saves to normalized tables once the cloud connection is proven.
 
 Records should keep stable IDs and timestamps so sync/conflict handling can compare changes by record instead of replacing the whole schedule blindly.

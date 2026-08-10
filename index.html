@@ -4,17 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shift Bay</title>
-  <link rel="stylesheet" href="styles.css?v=shiftbay-20260702-day-tooltip">
+    <link rel="stylesheet" href="styles.css?v=shiftbay-20260727-narrow-day-header-fix">
 </head>
 <body>
   <nav class="tabs" aria-label="Main sections">
     <button class="tab active" type="button" data-tab="schedule">Schedule</button>
-    <button class="tab" type="button" data-tab="monthly">Monthly</button>
     <button class="tab" type="button" data-tab="employees">Employees</button>
     <button class="tab" type="button" data-tab="templates">Templates</button>
-    <button class="tab" type="button" data-tab="history">History</button>
     <button class="tab" type="button" data-tab="roles">Roles</button>
-    <button class="tab" type="button" data-tab="staffing">Staffing</button>
     <button class="tab" type="button" data-tab="floorplans">Floor Plans</button>
     <button class="tab" type="button" data-tab="settings">Settings</button>
     <div class="header-actions">
@@ -30,11 +27,30 @@
         <span class="storage-dot"></span>
         <span id="storageStatusText">Local</span>
       </button>
-      <button id="saveNowBtn" class="save-now-button" type="button" title="Save now" aria-label="Save now">Save Now</button>
+      <span id="sandboxBadge" class="sandbox-badge" hidden>Sandbox</span>
+      <span id="normalizedReadBadge" class="normalized-read-badge" hidden>Normalized Read</span>
+      <button id="printBtn" class="icon-button header-print-button" type="button" title="Print" aria-label="Print">&#128424;</button>
       <button id="issueBtn" class="issue-button" type="button" title="No schedule issues" aria-label="Schedule issues" hidden>!<span id="issueCount">0</span></button>
       <div id="issuePopover" class="issue-popover" hidden></div>
-      <button id="compactViewBtn" class="save-now-button" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
-      <button id="printBtn" class="icon-button" type="button" title="Print" aria-label="Print">&#128424;</button>
+      <details id="accountMenu" class="account-menu">
+        <summary title="Account and sync" aria-label="Account and sync">
+          <span id="accountAvatar" class="account-avatar">?</span>
+        </summary>
+        <div class="account-menu-panel">
+          <strong id="accountMenuTitle">Shift Bay Account</strong>
+          <span id="accountMenuStatus">Checking login...</span>
+          <label id="accountLocationLabel" class="account-location-label" hidden>Location
+            <select id="locationSwitcher"></select>
+          </label>
+          <button id="signInMenuBtn" class="account-menu-action" type="button">Sign in</button>
+          <button id="recentActivityBtn" class="account-menu-action" type="button">Recent activity</button>
+          <button id="manageManagersBtn" class="account-menu-action" type="button">Managers</button>
+          <button id="staffRequestsBtn" class="account-menu-action" type="button">Staff requests</button>
+          <button id="sandboxStaffPortalBtn" class="account-menu-action sandbox-reset-action" type="button" hidden>Employee portal preview</button>
+          <button id="resetDemoDataBtn" class="account-menu-action sandbox-reset-action" type="button" hidden>Reset Demo Data</button>
+          <button id="signOutBtn" class="account-menu-action account-menu-action-muted" type="button">Sign out</button>
+        </div>
+      </details>
     </div>
   </nav>
 
@@ -79,9 +95,24 @@
         </div>
       </div>
       <div id="stagedShiftInfo" class="staged-shift-info" hidden></div>
+      <div class="mobile-access-notice" role="note">
+        <strong>Schedule building works best on a larger screen.</strong>
+        <span>Use Day View or Compact View here to review schedules and make quick checks.</span>
+        <div class="mobile-access-actions">
+          <button type="button" data-mobile-view="day">Open Day View</button>
+          <button type="button" data-mobile-view="compact">Open Compact View</button>
+        </div>
+      </div>
 
-      <div id="printFilters" class="filters"></div>
-      <div id="roleJumpStrip" class="role-jump-strip" hidden></div>
+      <div id="scheduleRail" class="schedule-rail" aria-label="Schedule tools">
+        <div id="scheduleViewToggle" class="schedule-view-toggle" aria-label="Schedule view mode">
+          <button id="weekViewBtn" type="button">Week</button>
+          <button id="dayViewBtn" type="button">Day</button>
+        </div>
+        <div id="printFilters" class="filters"></div>
+        <div id="dayFocusToolRail" class="day-focus-tool-rail" hidden></div>
+        <div id="roleJumpStrip" class="role-jump-strip" hidden></div>
+      </div>
       <div id="conflictBanner" class="conflict-banner" hidden></div>
       <div id="appNotice" class="app-notice" hidden role="status" aria-live="polite"></div>
       <div id="printView" class="print-view" hidden></div>
@@ -111,6 +142,7 @@
             <input id="showArchivedEmployees" type="checkbox"> Show archived
           </label>
           <button id="newEmployeeBtn" type="button">New Employee</button>
+          <button id="staffAccessBtn" type="button">Staff Access</button>
           <button id="requestOffImportBtn" type="button">Import ROs</button>
           <button id="printCallWeeklyBtn" type="button">Print Call Weekly Sheet</button>
           <details class="employee-advanced-tools">
@@ -141,49 +173,120 @@
           <div id="employeeRosterList" class="employee-roster-list"></div>
         </aside>
         <form id="employeeForm" class="editor employee-editor">
-          <h2>Employee Profile</h2>
+          <h2 id="employeeProfileTitle">Unsaved employee</h2>
           <input id="employeeId" type="hidden">
+          <div class="employee-profile-tabs" role="tablist" aria-label="Employee profile sections">
+            <button type="button" class="active" data-employee-profile-tab="profile">Profile</button>
+            <button type="button" data-employee-profile-tab="availability">Availability</button>
+            <button type="button" data-employee-profile-tab="roles">Roles</button>
+            <button type="button" data-employee-profile-tab="training">Training</button>
+            <button type="button" data-employee-profile-tab="pay">Pay</button>
+            <button type="button" data-employee-profile-tab="rules">Rules</button>
+            <button type="button" data-employee-profile-tab="notes">Notes</button>
+            <span class="employee-profile-tab-spacer" aria-hidden="true"></span>
+            <button id="archiveEmployeeBtn" class="employee-profile-header-action" type="button">Archive</button>
+            <button id="restoreEmployeeBtn" class="employee-profile-header-action" type="button" hidden>Restore</button>
+            <button id="deleteEmployeeBtn" class="employee-profile-header-action danger" type="button" hidden>Delete</button>
+          </div>
+          <div class="employee-profile-panel employee-profile-basics" data-employee-profile-panel="profile">
           <label>First name <input id="firstName" required></label>
           <label>Last name <input id="lastName" required></label>
           <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
           <label>Birthday <input id="employeeBirthday" type="date"></label>
           <label>Phone <input id="employeePhone" inputmode="tel"></label>
-          <label>Manager notes <textarea id="employeeManagerNotes" rows="3" placeholder="Imported notes or manual reminders"></textarea></label>
           <div class="checkbox checkbox-direct"><input id="employeeActive" type="checkbox" checked><span>Active</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanClose" type="checkbox"><span>Trained closer</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanLunchClose" type="checkbox"><span>Lunch closer available</span></div>
+          <div class="checkbox checkbox-direct"><input id="employeeNoDoubles" type="checkbox"><span>No doubles</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeAlwaysPrintEndTime" type="checkbox"><span>Always print end time on floor plans</span></div>
           <fieldset>
             <legend>Departments</legend>
             <div id="employeeDepartmentChecks" class="inline-checks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-availability" data-employee-profile-panel="availability" hidden>
           <div class="checkbox checkbox-direct call-weekly-control">
             <input id="employeeCallWeekly" type="checkbox"><span>Call weekly for availability</span>
             <button id="toggleWeeklyAvailabilityBtn" class="small-button" type="button">This Week</button>
           </div>
           <fieldset id="regularAvailabilityFieldset" class="employee-availability-panel">
-            <legend>Availability</legend>
-            <div class="availability-actions">
-              <button id="openAllAvailabilityBtn" class="small-button" type="button">Open All</button>
-              <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear All</button>
+    <legend>Availability</legend>
+            <div class="availability-workspace">
+              <div class="availability-editor-column">
+                <section class="active-availability-summary" aria-label="Active availability patterns">
+                  <div class="active-availability-heading">
+                    <div><strong>Active availability</strong><small>Choose a saved pattern to view or edit it below.</small></div>
+                  </div>
+                  <div id="activeAvailabilityTabs" class="active-availability-tabs"></div>
+                  <div id="activeAvailabilityConflict" class="availability-conflict-notice" role="alert" hidden></div>
+                </section>
+                <div class="availability-editor-toolbar">
+                  <strong>Weekly editor</strong>
+                  <div class="availability-editor-save">
+                    <label class="availability-name-field">
+                      <span>Availability name</span>
+                      <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Name this availability" aria-label="Availability name">
+                    </label>
+                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save Availability</button>
+                  </div>
+                  <div class="availability-actions">
+                    <button id="openAllAvailabilityBtn" class="small-button" type="button">Open all days</button>
+                    <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear all days</button>
+                  </div>
+                </div>
+                <div id="availabilityEditor"></div>
+              </div>
+              <aside class="availability-pattern-workspace" aria-label="Saved availability patterns">
+                <div class="availability-pattern-details">
+                  <div class="availability-pattern-heading">
+                    <div><strong>Make Availability Live</strong><small>Select a saved availability and make it active for scheduling.</small></div>
+                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" disabled>Edit</button>
+                  </div>
+                  <label>Repeat pattern
+                    <select id="employeeAvailabilityRepeatWeeks" title="How often this availability repeats when no week-specific override is assigned.">
+                      <option value="1">Every week</option>
+                      <option value="2">Every 2 weeks</option>
+                      <option value="3">Every 3 weeks</option>
+                      <option value="4">Every 4 weeks</option>
+                    </select>
+                  </label>
+                  <label>Availability change takes effect on
+            <input id="employeeAvailabilityEffectiveDate" type="date" title="Choose the exact date this availability should begin. This is intentionally not limited to the first day of a work week.">
+                  </label>
+                  <div class="availability-pattern-actions">
+                    <button id="deleteAvailabilityPatternBtn" class="small-button danger" type="button" disabled>Delete Saved Availability</button>
+                    <button id="makeAvailabilityLiveBtn" class="small-button primary-action" type="button" disabled>Make Live for Scheduling</button>
+                  </div>
+                </div>
+                <div class="availability-pattern-heading availability-saved-heading">
+                  <div><strong>Saved availabilities</strong><small>Inactive patterns stay here until you activate or submit them.</small></div>
+                  <button id="newAvailabilityPatternBtn" class="small-button" type="button">New</button>
+                </div>
+                <div id="availabilityPatternList" class="availability-pattern-list"></div>
+              </aside>
             </div>
-            <div id="availabilityEditor"></div>
           </fieldset>
           <fieldset id="weeklyAvailabilityFieldset" class="employee-availability-panel" hidden>
             <legend>Schedule Week Availability</legend>
-            <p class="hint">Use this after you call/text for the schedule week you are building. Blank days are unavailable.</p>
+            <p class="availability-help">Enter availability for one restaurant work week. The selected date is always saved as the week beginning on the restaurant's configured week-start day.</p>
             <div class="weekly-availability-week">
-              <label>Availability week
-                <input id="weeklyAvailabilityWeek" type="date">
+              <label>Work week beginning
+                <input id="weeklyAvailabilityWeek" type="date" title="Choose a date in the work week. It will be aligned to the restaurant's configured week-start day.">
               </label>
               <button id="useActiveScheduleWeekBtn" class="small-button" type="button">Use Grid Week</button>
             </div>
-            <div class="availability-actions">
-              <button id="openAllWeeklyAvailabilityBtn" class="small-button" type="button">Open All</button>
-              <button id="clearAllWeeklyAvailabilityBtn" class="small-button" type="button">Clear All</button>
+            <div class="weekly-availability-week-summary" id="weeklyAvailabilityWeekSummary" role="status"></div>
+            <div class="availability-editor-toolbar">
+              <strong>Weekly editor</strong>
+              <div class="availability-actions">
+                <button id="openAllWeeklyAvailabilityBtn" class="small-button" type="button">Open All</button>
+                <button id="clearAllWeeklyAvailabilityBtn" class="small-button" type="button">Clear All</button>
+              </div>
             </div>
-            <div id="weeklyAvailabilityEditor"></div>
+            <div id="weeklyAvailabilityEditor" class="availability-day-list weekly-availability-day-list"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-roles" data-employee-profile-panel="roles" hidden>
           <fieldset id="employeeMealTrainingSection">
             <legend>Meal Training</legend>
             <label class="checkbox"><input type="checkbox" name="mealTraining" value="Breakfast"> Breakfast</label>
@@ -196,37 +299,42 @@
             <p class="hint">Use Emergency only for roles they can work in a pinch but should not be recommended for. Meal boxes under a role override the broad meal training for that role.</p>
             <div id="employeeRoleChecks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-training" data-employee-profile-panel="training" hidden>
           <fieldset id="trainerRoles">
             <legend>Trainer Eligibility</legend>
             <div id="employeeTrainerChecks"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-pay" data-employee-profile-panel="pay" hidden>
           <fieldset>
             <legend>Pay Rates</legend>
             <p class="hint">Role defaults apply automatically unless an override is checked.</p>
             <div id="employeePayRates" class="pay-rate-editor"></div>
           </fieldset>
+          </div>
+          <div class="employee-profile-panel employee-profile-rules" data-employee-profile-panel="rules" hidden>
           <fieldset>
             <legend>Weekly Work Rules</legend>
             <p class="hint">Use these for requests like “needs one weekend day off.” Multiple shifts on one date count as one worked day.</p>
             <div id="weeklyRuleEditor"></div>
             <button id="addWeeklyRuleBtn" type="button">Add Rule</button>
           </fieldset>
-          <div class="form-actions">
-            <button type="submit">Save Employee</button>
-            <button id="archiveEmployeeBtn" type="button">Archive</button>
-            <button id="restoreEmployeeBtn" type="button" hidden>Restore</button>
-            <button id="deleteEmployeeBtn" class="danger" type="button">Delete</button>
+          </div>
+          <div class="employee-profile-panel employee-profile-notes" data-employee-profile-panel="notes" hidden>
+          <label>Manager notes <textarea id="employeeManagerNotes" rows="7" placeholder="Imported notes or manual reminders"></textarea></label>
+          </div>
+          <div class="employee-sticky-actions">
+            <div>
+              <strong>Employee Profile</strong>
+              <span id="stickyEmployeeName">Unsaved employee</span>
+              <span id="employeeSaveDebugStatus" class="employee-save-debug-status" aria-live="polite" hidden></span>
+            </div>
+            <button id="stickySaveEmployeeBtn" type="button">Save Employee</button>
           </div>
         </form>
         <div id="callWeeklySheet" class="print-view" hidden></div>
         <div id="employeeSaveToast" class="employee-save-toast" hidden>Employee saved</div>
-        <div class="employee-sticky-actions">
-          <div>
-            <strong>Employee Profile</strong>
-            <span id="stickyEmployeeName">Unsaved employee</span>
-          </div>
-          <button id="stickySaveEmployeeBtn" type="button">Save Employee</button>
-        </div>
       </div>
     </section>
 
@@ -371,6 +479,7 @@
         <div class="floor-overlay floor-busser" data-floor-output="busser"></div>
         <div class="floor-overlay floor-bartender" data-floor-output="bartender"></div>
         <div class="floor-overlay floor-banquet" data-floor-output="banquet"></div>
+        <div class="floor-overlay floor-day-notes" data-floor-output="day-notes"></div>
       </div>
       <div id="floorPlanWeekPrint" class="floor-plan-week-print" hidden></div>
     </section>
@@ -498,6 +607,16 @@
         <fieldset>
           <legend>Weekly Floor Plan Print <span class="settings-help" tabindex="0" aria-label="Weekly floor plan print help" data-help="Choose which floor plan sheets print for each day, and choose which roles show short notes when an employee is also working another role that day.">?</span></legend>
           <p class="hint">Choose which floor plan sheets print when using Print Week.</p>
+          <label title="A shift may extend beyond a meal's service cutoff for cleanup. It stays off the next meal's floor plan until it extends beyond this allowance. Flex and Until Volume shifts are still shown on the PM plan.">Floor plan cleanup allowance
+            <select id="floorPlanCleanupMinutes">
+              <option value="0">No allowance</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="90">1.5 hours</option>
+              <option value="120">2 hours</option>
+              <option value="180">3 hours</option>
+            </select>
+          </label>
           <div id="floorPlanPrintRulesEditor" class="coverage-defaults"></div>
           <div class="floor-plan-note-settings">
             <div class="settings-subheading">
@@ -571,8 +690,57 @@
     </section>
   </main>
 
+  <div id="loginOverlay" class="login-overlay" hidden>
+    <form id="loginForm" class="login-card">
+      <div class="login-logo"><span class="open-bay-icon" aria-hidden="true"></span><strong>Shift Bay</strong></div>
+      <label>Email
+        <input id="loginEmail" type="email" autocomplete="email" required>
+      </label>
+      <label>Password
+        <span class="password-input-wrap">
+          <input id="loginPassword" type="password" autocomplete="current-password" required>
+          <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-pressed="false">Show</button>
+        </span>
+      </label>
+      <button id="loginSubmitBtn" type="submit">Sign In</button>
+      <p id="loginMessage" class="login-message"></p>
+      <details class="login-diagnostics">
+        <summary>Connection details</summary>
+        <pre id="loginDiagnostics"></pre>
+      </details>
+    </form>
+  </div>
+
+  <dialog id="passwordChangeDialog" class="app-alert-dialog">
+    <form id="passwordChangeForm" class="editor modal-editor password-change-editor">
+      <div class="app-confirm-icon" aria-hidden="true">!</div>
+      <div>
+        <h2>Create Your Password</h2>
+        <p class="app-confirm-message">This login was created with a temporary password. Create a permanent password before opening Shift Bay.</p>
+        <label>New password
+          <span class="password-input-wrap">
+            <input id="newManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button type="button" class="password-toggle" data-password-toggle="newManagerPassword" aria-pressed="false">Show</button>
+          </span>
+        </label>
+        <label>Confirm password
+          <span class="password-input-wrap">
+            <input id="confirmManagerPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button type="button" class="password-toggle" data-password-toggle="confirmManagerPassword" aria-pressed="false">Show</button>
+          </span>
+        </label>
+        <p id="passwordChangeMessage" class="login-message"></p>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="passwordChangeSubmitBtn" class="primary" type="submit">Save Password</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="zoomControls" class="zoom-controls" aria-label="Schedule zoom controls">
-    <button id="toggleUnavailablePanelBtn" class="zoom-side-toggle" type="button" title="Show unavailable this week">Unavailable</button>
+    <button id="compactViewBtn" class="zoom-side-toggle" type="button" title="Compact schedule preview" aria-label="Compact schedule preview">Compact</button>
+    <button id="toggleRoleSummaryBtn" class="zoom-side-toggle" type="button" title="Show or hide role summary bubbles" aria-label="Show or hide role summary bubbles">Roles</button>
+    <button id="toggleUnavailablePanelBtn" class="zoom-side-toggle" type="button" title="Show unavailable this week" aria-label="Show unavailable this week" hidden>Unavail</button>
     <button id="zoomOutBtn" type="button" title="Zoom out">-</button>
     <span id="zoomLabel">100%</span>
     <button id="zoomInBtn" type="button" title="Zoom in">+</button>
@@ -617,6 +785,10 @@
           <label>Notes <textarea id="shiftNotes" rows="3"></textarea></label>
         </section>
       </div>
+      <details id="shiftMetadataDetails" class="shift-metadata-details" hidden>
+        <summary>Change history</summary>
+        <div id="shiftMetadataBody" class="shift-metadata-body"></div>
+      </details>
       <div id="shiftWarnings" class="warnings"></div>
       <div class="form-actions">
         <button id="saveShiftBtn" type="submit">Save</button>
@@ -656,6 +828,45 @@
       </div>
     </form>
   </dialog>
+
+  <dialog id="timeOffEditDialog">
+    <form id="timeOffEditForm" method="dialog" class="editor modal-editor time-off-edit-editor">
+      <h2 id="timeOffEditTitle">Edit Request Off</h2>
+      <p id="timeOffEditContext" class="hint">Adjust the date, time, or note for this entry.</p>
+      <input id="timeOffEditId" type="hidden">
+      <div class="form-grid">
+        <label>Employee
+          <input id="timeOffEditEmployee" type="text" readonly>
+        </label>
+        <label>Date
+          <input id="timeOffEditDate" type="date" required>
+        </label>
+        <label>Time coverage
+          <select id="timeOffEditDaypart">
+            <option value="allDay">All day</option>
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+            <option value="custom">Custom times</option>
+          </select>
+        </label>
+        <label>Start
+          <input id="timeOffEditStart" data-time-picker placeholder="9a">
+        </label>
+        <label>End
+          <input id="timeOffEditEnd" data-time-picker placeholder="5p">
+        </label>
+        <label class="full-width">Note
+          <textarea id="timeOffEditNote" rows="3" placeholder="Optional note"></textarea>
+        </label>
+      </div>
+      <div id="timeOffEditWarnings" class="warnings"></div>
+      <div class="form-actions">
+        <button id="saveTimeOffEditBtn" class="primary" type="submit">Save Changes</button>
+        <button id="cancelTimeOffEditBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="warningConfirmDialog" class="app-confirm-dialog">
     <form method="dialog" class="editor modal-editor app-confirm">
       <div class="app-confirm-icon" aria-hidden="true">!</div>
@@ -681,6 +892,25 @@
       </div>
       <div class="form-actions app-confirm-actions">
         <button id="appAlertCloseBtn" class="primary" type="button">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dayNotesDialog" class="app-alert-dialog">
+    <form id="dayNotesForm" class="editor modal-editor app-confirm day-notes-editor">
+      <div class="app-confirm-icon" aria-hidden="true">i</div>
+      <div>
+        <h2>Day Notes</h2>
+        <p id="dayNotesDate" class="app-confirm-message"></p>
+        <label class="day-notes-field" for="dayNotesInput">Notes for the floor chart
+          <textarea id="dayNotesInput" rows="4" maxlength="320" placeholder="Brief notes for the day"></textarea>
+        </label>
+        <p class="hint">These notes print in the Notes section of this day's floor chart.</p>
+      </div>
+      <div class="form-actions app-confirm-actions">
+        <button id="clearDayNotesBtn" type="button">Clear</button>
+        <button id="cancelDayNotesBtn" type="button">Cancel</button>
+        <button id="saveDayNotesBtn" class="primary" type="submit">Save Notes</button>
       </div>
     </form>
   </dialog>
@@ -739,6 +969,7 @@
           <option value="simpleEmployee">Compact weekly grid by employee</option>
           <option value="simpleRoleWithBay">Compact grid + open shift boxes</option>
           <option value="ctuitEntry">Ctuit entry list</option>
+          <option value="currentPage">Current page</option>
         </select>
       </label>
       <label>Sort by
@@ -768,6 +999,11 @@
           <div id="compactPrintRoleOrderEditor"></div>
         </div>
       </details>
+      <fieldset id="printDepartmentFilters" class="print-department-filters" hidden>
+        <legend>Departments to print</legend>
+        <div id="printDepartmentOptions"></div>
+        <p class="hint">Choose which departments appear in compact reports.</p>
+      </fieldset>
       <div id="printWarningChecklist" class="print-warning-checklist"></div>
       <div class="form-actions">
         <button id="runPrintBtn" type="submit">Print</button>
@@ -786,6 +1022,80 @@
     </form>
   </dialog>
 
+  <dialog id="recentActivityDialog">
+    <form method="dialog" class="editor modal-editor">
+      <div class="recent-activity-heading">
+        <h2>Recent Activity</h2>
+        <button id="toggleRecentActivityDetailsBtn" type="button" aria-expanded="false" title="Show advanced audit details">+</button>
+      </div>
+      <div id="recentActivityBody" class="recent-activity-list"></div>
+      <div class="form-actions">
+        <button id="closeRecentActivityBtn" type="button">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="managerAccessDialog">
+    <form id="managerInviteForm" method="dialog" class="editor modal-editor manager-access-editor">
+      <h2>Manager Access</h2>
+      <p class="hint">Create manager logins here. When Resend is configured, the invitation includes the login details and first-login password change instructions.</p>
+      <div class="manager-invite-grid">
+        <label>Email
+          <input id="managerInviteEmail" type="email" placeholder="manager@example.com" autocomplete="off">
+        </label>
+        <label>Role
+          <select id="managerInviteRole">
+            <option value="manager">Manager</option>
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
+          </select>
+        </label>
+        <button id="sendManagerInviteBtn" type="submit">Create Login</button>
+      </div>
+      <div id="managerTempLogin" class="manager-temp-login" hidden></div>
+      <div id="managerAccessMessage" class="hint"></div>
+      <div id="managerAccessList" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="closeManagerAccessBtn" type="button">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="staffAccessDialog">
+    <form id="staffInviteForm" method="dialog" class="editor modal-editor manager-access-editor">
+      <button id="closeStaffAccessBtn" class="modal-close-button" type="button" aria-label="Close" onclick="this.closest('dialog')?.close()">&times;</button>
+      <h2>Staff Access</h2>
+      <p class="hint">Link staff logins to employee profiles. When Resend is configured, the invitation includes the login details and first-login password change instructions.</p>
+      <div class="manager-invite-grid staff-invite-grid">
+        <label>Employee
+          <select id="staffInviteEmployee"></select>
+        </label>
+        <label>Email
+          <input id="staffInviteEmail" type="email" placeholder="staff@example.com" autocomplete="off">
+        </label>
+        <button id="sendStaffInviteBtn" type="submit">Create Login</button>
+      </div>
+      <div id="staffTempLogin" class="manager-temp-login" hidden></div>
+      <div id="staffAccessMessage" class="hint"></div>
+      <div id="staffAccessList" class="analysis-table"></div>
+    </form>
+  </dialog>
+
+  <dialog id="staffRequestsDialog">
+    <form id="staffRequestsForm" method="dialog" class="editor modal-editor manager-access-editor">
+      <h2>Staff Requests</h2>
+      <p class="hint">Review request-offs and see weekly availability submissions for this location.</p>
+      <div id="staffRequestsMessage" class="hint"></div>
+      <h3>Request-offs</h3>
+      <div id="staffRequestsList" class="analysis-table"></div>
+      <h3>Availability submissions</h3>
+      <div id="staffAvailabilityReviewList" class="analysis-table"></div>
+      <div class="form-actions">
+        <button id="closeStaffRequestsBtn" type="button">Close</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="pasteEmployeesDialog">
     <form id="pasteEmployeesForm" method="dialog" class="editor modal-editor">
       <h2>Paste Employees</h2>
@@ -800,8 +1110,9 @@
     </form>
   </dialog>
 
+  <script src="shift-bay-config.js?v=shiftbay-public-config"></script>
   <script src="manager-notes-data.js?v=shiftbay-20260615-employeeadvanced"></script>
-  <script src="app.js?v=shiftbay-20260702-day-tooltip"></script>
+  <script src="app.js?v=shiftbay-20260806-read-source-hydration"></script>
 </body>
 </html>
 

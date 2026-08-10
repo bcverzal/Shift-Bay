@@ -9,9 +9,15 @@
 manager-notes-data.js
 manager-notes-import.json
 ctuit-entry-list-*.html
+.env
+.env.*
+!.env.example
 
 # Temporary working files
 /tmp/
+/runtime/
+/tools/supabase-cli/
+/supabase/.temp/
 *.tmp
 *.log
 __pycache__/
