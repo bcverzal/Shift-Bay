@@ -9318,7 +9318,6 @@ function availabilityFromPatternsForDate(employee, dateKey) {
   const datedPatterns = availabilityPatternsForEmployee(employee)
     .filter((pattern) => (
       (pattern?.active !== false || pattern?.approved === true || pattern?.approvalStatus === "approved")
-      && availabilityHasWindows(pattern.availability)
       && String(pattern.effectiveDate || "").trim()
     ));
   if (!datedPatterns.length) return null;
@@ -9445,8 +9444,7 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
   const activePatterns = patterns
-    .filter((pattern) => availabilityHasWindows(pattern.availability)
-      && (pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern)))
+    .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
     .sort((left, right) => {
       const leftFuture = isFutureAvailabilityPattern(left);
       const rightFuture = isFutureAvailabilityPattern(right);
@@ -9555,13 +9553,12 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   }
   const submitButton = $("makeAvailabilityLiveBtn");
   if (submitButton) {
-    const hasWindows = availabilityHasWindows(selected?.availability);
-    submitButton.disabled = !selected || (!selected.active && !hasWindows);
+    submitButton.disabled = !selected;
     submitButton.textContent = !selected
       ? "Save an availability first"
       : selected.active
       ? "Deactivate from Scheduling"
-      : (hasWindows ? "Make Live for Scheduling" : "Add availability to activate");
+      : "Make Live for Scheduling";
     submitButton.classList.toggle("danger", Boolean(selected?.active));
   }
 }
@@ -15000,7 +14997,6 @@ function wireEvents() {
     const patternAvailability = saveAvailability ? parsedAvailability : (selectedPattern?.availability || parsedAvailability);
     const patternActive = availabilityAction
       && !deactivateAvailabilityPattern
-      && availabilityHasWindows(patternAvailability)
       && (activateSubmittedAvailability || selectedPattern?.active === true);
     const updatedPattern = {
       id: selectedPatternId,
@@ -15304,6 +15300,21 @@ function wireEvents() {
       // Invoke the existing save path without native form validation blocking
       // the availability action on an unrelated employee field.
       submitEmployeeFormDirectly();
+      return;
+    }
+    if (!availabilityHasWindows(selected.availability)) {
+      showAppConfirm({
+        title: "No availability in this AV",
+        message: `Every day in "${selected.name}" is marked Not available. Making it live will tell scheduling that this employee is unavailable for the selected period. Continue?`,
+        confirmText: "Make Unavailable",
+        cancelText: "Go Back"
+      }).then((confirmed) => {
+        if (!confirmed) return;
+        markEmployeeFormDirty();
+        submitAvailabilityPatternRequested = true;
+        availabilityEditingPatternId = selected.id;
+        submitEmployeeFormDirectly();
+      });
       return;
     }
     const guidance = availabilityPatternGuidance(selected);
