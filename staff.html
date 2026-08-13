@@ -166,7 +166,7 @@
           <p class="staff-panel-subtitle">Update your contact details. Scheduling roles and training remain manager-controlled.</p>
           <div id="staffVisibleProfile" class="staff-visible-profile"></div>
           <label>Preferred name<input id="staffPreferredName" type="text" maxlength="80"></label>
-          <label>Phone number<input id="staffPhoneNumber" type="tel" maxlength="40"></label>
+          <label>Phone number<input id="staffPhoneNumber" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" data-phone-input></label>
           <label>Contact preference<select id="staffContactPreference"><option value="in_app">In-app</option><option value="sms">SMS</option><option value="email">Email</option></select></label>
           <button type="button" id="saveStaffProfile" class="staff-primary">Save profile</button>
           <div id="staffProfileMessage" class="staff-inline-message" role="status" hidden></div>

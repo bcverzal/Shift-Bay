@@ -471,7 +471,7 @@ async function staffProfileUpdateForUser(request) {
   let body = {};
   try { body = JSON.parse(await readRequestBody(request) || "{}"); } catch { body = {}; }
   const preferredName = String(body.preferredName || "").trim().slice(0, 80);
-  const phone = String(body.phone || "").trim().slice(0, 40);
+  const phone = formatPhoneNumber(body.phone || "");
   const contactPreference = String(body.contactPreference || "in_app").trim();
   if (!["sms", "email", "in_app"].includes(contactPreference)) return { ok: false, status: 400, error: "Choose a valid contact preference." };
   const config = supabaseServerConfig();
@@ -480,7 +480,7 @@ async function staffProfileUpdateForUser(request) {
     method: "PATCH", headers, body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() })
   });
   const account = Array.isArray(rows) ? rows[0] : null;
-  return { ok: true, profile: { preferredName: account?.preferred_name || preferredName, phone: account?.phone || phone, contactPreference: account?.contact_preference || contactPreference } };
+  return { ok: true, profile: { preferredName: account?.preferred_name || preferredName, phone: formatPhoneNumber(account?.phone || phone), contactPreference: account?.contact_preference || contactPreference } };
 }
 
 async function staffRequestOffsForUser(request) {
@@ -536,7 +536,7 @@ async function staffDirectoryForUser(request) {
       const id = String(employee.id || "");
       const account = accounts.get(id) || {};
       const visible = id === currentId || account.phone_visibility === "all_staff";
-      return { displayName: [employee.nickname || employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee", phone: visible ? String(account.phone || employee.phone || "") : "", phoneVisible: visible };
+      return { displayName: [employee.nickname || employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee", phone: visible ? formatPhoneNumber(account.phone || employee.phone || "") : "", phoneVisible: visible };
     })
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   return { ok: true, entries };
@@ -1093,6 +1093,14 @@ async function loadPdfJs() {
 
 function cleanCell(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function formatPhoneNumber(value) {
+  const raw = cleanCell(value);
+  const digits = raw.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (ten.length !== 10) return raw.slice(0, 40);
+  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
 }
 
 function normalizeImportDate(value) {

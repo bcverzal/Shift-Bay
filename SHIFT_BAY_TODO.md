@@ -16,6 +16,8 @@
 
 ## Core Workflow Polish
 
+- [ ] Add a concise Help / FAQ area: searchable answers for the availability workflow, scheduling, publishing, employee setup, imports, printing, backups, and common troubleshooting. Keep the first version brief and link to deeper walkthroughs only when needed.
+- [ ] Add an in-app Help & Feedback surface where users can choose Bug, Suggestion, or Question, describe the issue, and send relevant context (app version, page, location, and optional screenshot) to the owner/support destination. Decide the support email, retention, privacy notice, and notification workflow before enabling delivery.
 - [ ] Run a dedicated UI/UX simplification pass using Design Parser/Mobbin/Emil-style principles: reduce competing colors, reduce simultaneous information density, respect Miller's Law, make one primary action obvious per surface, and treat animation as functional feedback rather than decoration.
 - [ ] Revisit top-level navigation: evaluate whether Templates and Roles should remain permanent tabs or move into an onboarding/setup area or Settings after initial configuration, while keeping occasional maintenance easy to find.
 - [ ] Make warning notifications fully reliable: next/previous arrows, Show, dismiss, restore dismissed warnings, and shortcut-to-fix.

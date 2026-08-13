@@ -6803,6 +6803,63 @@ fieldset .checkbox {
   gap: 7px;
 }
 
+.availability-day-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.availability-day-select {
+  display: grid;
+  min-width: 0;
+  min-height: 40px;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  background: #f3f4f6;
+  color: #1e293b;
+  text-align: left;
+  box-shadow: none;
+}
+
+.availability-day-select:hover {
+  border-color: #a9c7f1;
+  background: #eef5ff;
+}
+
+.availability-day-select.selected {
+  border-color: #4f83e6;
+  background: #e8f1ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.availability-day-select strong {
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.availability-day-select span {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.availability-day-editor-stack {
+  min-width: 0;
+}
+
+#availabilityEditor .availability-day:not(.selected) {
+  display: none;
+}
+
 .availability-day {
   display: block;
   margin: 0;
@@ -6880,6 +6937,13 @@ fieldset .checkbox {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.availability-saved-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .availability-pattern-actions {
@@ -7225,6 +7289,10 @@ fieldset .checkbox {
   .availability-shared-presets {
     width: 100%;
     min-width: 0;
+  }
+
+  .availability-day-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

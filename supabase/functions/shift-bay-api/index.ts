@@ -150,6 +150,14 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#39;");
 }
 
+function formatPhoneNumber(value: unknown) {
+  const raw = String(value ?? "").replace(/\s+/g, " ").trim();
+  const digits = raw.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (ten.length !== 10) return raw.slice(0, 40);
+  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+}
+
 async function sendInviteEmail({
   email,
   displayName,
@@ -2418,7 +2426,7 @@ async function handleIssueStaffTemporaryPassword(request: Request) {
   });
 }
 
-async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request, true); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = String(body.phone || "").trim().slice(0, 40); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && account.phone || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
+async function handleStaffProfileUpdate(request: Request) { const profileResponse = await handleStaffMe(request, true); const profile = await profileResponse.json(); if (!profile.ok) return json(profile.status || 401, profile); if (!profile.linked || !profile.account || !profile.account.id) return json(403, { ok: false, error: "This login is not linked to a staff profile yet." }); const body = await request.json().catch(() => ({})); const preferredName = String(body.preferredName || "").trim().slice(0, 80); const phone = formatPhoneNumber(body.phone || ""); const contactPreference = String(body.contactPreference || "in_app").trim(); if (!["sms", "email", "in_app"].includes(contactPreference)) return json(400, { ok: false, error: "Choose a valid contact preference." }); const rows = await supabaseJson("/staff_accounts?id=eq." + encodeURIComponent(profile.account.id), { method: "PATCH", headers: serviceHeaders({ Prefer: "return=representation" }), body: JSON.stringify({ preferred_name: preferredName, phone, contact_preference: contactPreference, updated_at: new Date().toISOString() }) }); const account = Array.isArray(rows) ? rows[0] : null; await logAuditEvent("staff_profile_updated", profile.user.id, { contactPreference }, profile.locationId); return json(200, { ok: true, profile: { preferredName: account && account.preferred_name || preferredName, phone: account && formatPhoneNumber(account.phone) || phone, contactPreference: account && account.contact_preference || contactPreference } }); }
 
 async function handleStaffDirectory(request: Request) {
   const profileResponse = await handleStaffMe(request, true);
@@ -2443,7 +2451,7 @@ async function handleStaffDirectory(request: Request) {
       const phoneVisible = id === currentEmployeeId || account.phone_visibility === "all_staff";
       return {
         displayName: [employee.nickname || employee.firstName, employee.lastName].filter(Boolean).join(" ").trim() || account.display_name || "Employee",
-        phone: phoneVisible ? String(account.phone || employee.phone || "") : "",
+        phone: phoneVisible ? formatPhoneNumber(account.phone || employee.phone || "") : "",
         phoneVisible
       };
     })
