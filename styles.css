@@ -6805,9 +6805,9 @@ fieldset .checkbox {
 
 .availability-day-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 6px;
-  margin-bottom: 7px;
+  margin-top: 7px;
 }
 
 .availability-day-select {
@@ -6846,7 +6846,7 @@ fieldset .checkbox {
 .availability-day-select span {
   overflow: hidden;
   color: #64748b;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7292,7 +7292,7 @@ fieldset .checkbox {
   }
 
   .availability-day-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
