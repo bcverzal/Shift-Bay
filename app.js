@@ -3585,6 +3585,8 @@ function focusScheduleIssue(issue, number, total, options = {}) {
 }
 
 function renderAll(options = {}) {
+  normalizeSavedEmployeePhones();
+  bindPhoneFormatters();
   renderTabs();
   renderSettings();
   renderRoles();
@@ -6783,7 +6785,7 @@ function renderEmployeeHoverCard(employee) {
   return `
     <div class="employee-hover-card">
       <strong>${fullEmployeeName(employee)}</strong>
-      <span>${employee.phone || "No phone"}</span>
+      <span>${formatPhoneNumber(employee.phone || "No phone")}</span>
       <span>${roles}</span>
       <span>${meals}</span>
       ${employee.callWeekly ? `<span>Call weekly</span>` : ""}
@@ -6794,7 +6796,7 @@ function renderEmployeeHoverCard(employee) {
 
 function employeeHoverText(employee) {
   const roles = (employee.roleTraining || []).map((roleId) => roleById(roleId)?.name).filter(Boolean).join(", ") || "No roles set";
-  return `${fullEmployeeName(employee)}\n${employee.phone || "No phone"}\n${roles}${employee.callWeekly ? "\nCall weekly for availability" : ""}${employee.managerNotes ? `\n${employee.managerNotes}` : ""}`;
+  return `${fullEmployeeName(employee)}\n${formatPhoneNumber(employee.phone || "No phone")}\n${roles}${employee.callWeekly ? "\nCall weekly for availability" : ""}${employee.managerNotes ? `\n${employee.managerNotes}` : ""}`;
 }
 
 function estimatedGridShiftCardHeight(shift, { ghost = false } = {}) {
@@ -6986,7 +6988,7 @@ function renderUnavailableEmployeesList(employees) {
           <button type="button" class="unavailable-employee-card" data-unavailable-employee="${employee.id}">
             <strong>${displayName(employee)}</strong>
             ${renderRoleCapabilityStrip(employee)}
-            <span>${employee.phone || "No phone listed"}</span>
+            <span>${formatPhoneNumber(employee.phone || "No phone listed")}</span>
             <small>Double-click to edit this week</small>
           </button>
         `).join("")}
@@ -8854,6 +8856,12 @@ function applyFlexDoubleEndTimeDefault() {
   setShiftEndTimeDefault(state.settings.flexDoubleEndTime || "7:00 PM");
 }
 
+function applyTemplateFlexDoubleEndTimeDefault() {
+  if (!$("templateFlexDouble")?.checked) return;
+  if ($("templateUntilVolume")) $("templateUntilVolume").checked = false;
+  $("templateEnd").value = normalizeTime(state.settings.flexDoubleEndTime || "7:00 PM");
+}
+
 function applyLunchCloserEndTimeDefault() {
   if (!$("shiftIsLunchCloser")?.checked) return;
   setShiftEndTimeDefault(state.settings.lunchCloserEndTime || "5:00 PM");
@@ -9082,7 +9090,7 @@ function renderEmployeeRoster(employees, selectedEmployee) {
       <button type="button" class="employee-roster-card ${employee.id === selectedEmployee?.id ? "selected" : ""}" data-roster-employee="${employee.id}">
         <strong>${displayName(employee)}</strong>
         <span>${fullEmployeeName(employee)}</span>
-        <small>${[departments, roles, employee.phone || ""].filter(Boolean).join(" | ")}</small>
+        <small>${[departments, roles, formatPhoneNumber(employee.phone || "")].filter(Boolean).join(" | ")}</small>
       </button>
     `;
   }).join("");
@@ -9264,18 +9272,22 @@ function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = curren
 
 function findDuplicateAvailabilityPatternName(name, employeeId = "", patternId = "") {
   const normalizedName = String(name || "").trim().toLocaleLowerCase();
-  if (!normalizedName) return null;
-  for (const employee of state.employees || []) {
-    for (const pattern of Array.isArray(employee.availabilityPatterns) ? employee.availabilityPatterns : []) {
-      if (employee.id === employeeId && pattern.id === patternId) continue;
-      if (String(pattern.name || "").trim().toLocaleLowerCase() === normalizedName) return { employee, pattern };
-    }
+  if (!normalizedName || !employeeId) return null;
+  const employee = (state.employees || []).find((item) => String(item?.id || "") === String(employeeId));
+  if (!employee) return null;
+  for (const pattern of Array.isArray(employee.availabilityPatterns) ? employee.availabilityPatterns : []) {
+    if (String(pattern.id || "") === String(patternId)) continue;
+    if (String(pattern.name || "").trim().toLocaleLowerCase() === normalizedName) return { employee, pattern };
   }
   return null;
 }
 
 function defaultAvailabilityPatternName(employee = null, patternId = "") {
   const base = `${displayName(employee || {}) || "Employee"} availability`;
+  return nextAvailabilityPatternName(employee, base, patternId);
+}
+
+function nextAvailabilityPatternName(employee = null, base = "Availability", patternId = "") {
   if (!findDuplicateAvailabilityPatternName(base, employee?.id || "", patternId)) return base;
   let suffix = 2;
   while (findDuplicateAvailabilityPatternName(`${base} ${suffix}`, employee?.id || "", patternId)) suffix += 1;
@@ -9340,7 +9352,8 @@ function availabilityFromPatternsForDate(employee, dateKey) {
 
 function selectedAvailabilityPattern(employee = null) {
   const patterns = availabilityPatternsForEmployee(employee);
-  return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+  if (!selectedAvailabilityPatternId || selectedAvailabilityPatternId === "draft") return null;
+  return patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || null;
 }
 
 function availabilityRepeatLabel(repeatWeeks) {
@@ -9514,14 +9527,19 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   const list = $("availabilityPatternList");
   if (!list) return;
   const patterns = availabilityPatternsForEmployee(employee);
-  if (!patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = patterns[0]?.id || "draft";
+  if (selectedAvailabilityPatternId && !patterns.some((pattern) => pattern.id === selectedAvailabilityPatternId)) selectedAvailabilityPatternId = "";
   if (availabilityEditingPatternId && !patterns.some((pattern) => pattern.id === availabilityEditingPatternId)) {
     availabilityEditingPatternId = "";
   }
-  const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || patterns[0];
+  const selected = patterns.find((pattern) => pattern.id === selectedAvailabilityPatternId) || null;
   renderActiveAvailabilitySummary(employee, patterns, selected);
   const editButton = $("editAvailabilityPatternBtn");
-  if (editButton) editButton.disabled = !selected;
+  if (editButton) {
+    editButton.disabled = !selected || selected.active;
+    editButton.title = selected?.active
+      ? "Use Copy Live to start a replacement without changing the active availability."
+      : "Load the selected saved availability into the editor.";
+  }
   const deleteButton = $("deleteAvailabilityPatternBtn");
   const selectedStatus = String(selected?.approvalStatus || "").toLowerCase();
   const canDelete = Boolean(selected && !selected.active && !["submitted", "pending", "awaiting_approval"].includes(selectedStatus));
@@ -9544,26 +9562,33 @@ function renderAvailabilityPatternWorkspace(employee = null) {
       renderAvailabilityPatternWorkspace(employeeById($("employeeId")?.value));
     };
   });
-  if ($("employeeAvailabilityPatternName")) {
-    $("employeeAvailabilityPatternName").value = selected?.name || defaultAvailabilityPatternName(employee);
+  if ($("employeeAvailabilityPatternName") && availabilityEditingPatternId) {
+    $("employeeAvailabilityPatternName").value = selected?.name || defaultAvailabilityPatternName(employee, availabilityEditingPatternId);
   }
-  if ($("employeeAvailabilityRepeatWeeks")) $("employeeAvailabilityRepeatWeeks").value = String(selected?.repeatWeeks || 1);
-  if ($("employeeAvailabilityEffectiveDate")) {
-    $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected?.effectiveDate || currentWeekKey());
-  }
+  if ($("employeeAvailabilityRepeatWeeks") && selected) $("employeeAvailabilityRepeatWeeks").value = String(selected.repeatWeeks || 1);
+  if ($("employeeAvailabilityEffectiveDate") && selected) $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(selected.effectiveDate || currentWeekKey());
   const submitButton = $("makeAvailabilityLiveBtn");
   if (submitButton) {
     submitButton.disabled = !selected;
     submitButton.textContent = !selected
-      ? "Save an availability first"
+      ? "Apply"
       : selected.active
-      ? "Deactivate from Scheduling"
-      : "Make Live for Scheduling";
+      ? "Stop"
+      : "Apply";
+     submitButton.title = !selected
+       ? "Select a saved availability before applying it."
+       : selected.active
+         ? "Stop using this availability for future scheduling."
+         : "Use this saved availability for scheduling from the chosen date.";
     submitButton.classList.toggle("danger", Boolean(selected?.active));
   }
 }
 function renderAvailabilityEditor(employee = null) {
-  const availability = selectedAvailabilityPattern(employee)?.availability || emptyAvailability();
+  const availability = availabilityEditingPatternId
+    ? selectedAvailabilityPattern(employee)?.availability || emptyAvailability()
+    : emptyAvailability();
+  const editorTitle = $("availabilityEditorTitle");
+  if (editorTitle) editorTitle.textContent = availabilityEditingPatternId ? "Edit availability" : "New availability";
   selectedAvailabilityDayIndex = Math.max(0, Math.min(DAYS.length - 1, Number(selectedAvailabilityDayIndex) || 0));
   const selectedDay = selectedAvailabilityDayIndex;
   const summaryForDay = (ranges) => {
@@ -9588,14 +9613,18 @@ function renderAvailabilityEditor(employee = null) {
         <button type="button" class="small-button availability-unavailable-button" data-availability-editor-preset="unavailable" data-availability-preset="unavailable">Unavailable</button>
       </div>
     </div>
-    <div class="availability-day-list">
-      ${[selectedDay, ...DAYS.map((_, index) => index).filter((index) => index !== selectedDay)].map((index) => {
-    const day = DAYS[index];
+    <div class="availability-day-strip" role="tablist" aria-label="Choose a day to edit">
+      ${DAYS.map((day, index) => {
+        const ranges = availability[index] || [];
+        return `<button type="button" class="availability-day-select${index === selectedDay ? " selected" : ""}" data-availability-day-select="${index}" role="tab" aria-selected="${index === selectedDay}">
+          <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
+        </button>`;
+      }).join("")}
+    </div>
+    <div class="availability-day-editor-stack">
+      ${DAYS.map((day, index) => {
     const ranges = availability[index] || [];
     return `<section class="availability-day${index === selectedDay ? " selected" : ""}" data-availability-row="${index}">
-      <button type="button" class="availability-day-heading" data-availability-day-select="${index}">
-        <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
-      </button>
       <div class="availability-day-editor">
         <div class="availability-input-stack">${windowMarkupForDay(day, index, ranges)}<button type="button" class="availability-add-window" data-add-availability-window="${index}">+ Add another time</button></div>
         <small>Leave both times blank if unavailable.</small>
@@ -9607,6 +9636,11 @@ function renderAvailabilityEditor(employee = null) {
     button.onclick = () => {
       selectedAvailabilityDayIndex = Number(button.dataset.availabilityDaySelect) || 0;
       document.querySelectorAll("[data-availability-row]").forEach((row) => row.classList.toggle("selected", Number(row.dataset.availabilityRow) === selectedAvailabilityDayIndex));
+      document.querySelectorAll("[data-availability-day-select]").forEach((dayButton) => {
+        const selected = Number(dayButton.dataset.availabilityDaySelect) === selectedAvailabilityDayIndex;
+        dayButton.classList.toggle("selected", selected);
+        dayButton.setAttribute("aria-selected", String(selected));
+      });
       const label = $("availabilityEditor").querySelector(".availability-day-toolbar strong");
       if (label) label.textContent = DAYS[selectedAvailabilityDayIndex];
     };
@@ -9620,8 +9654,7 @@ function renderAvailabilityEditor(employee = null) {
         selectedAvailabilityDayIndex,
         button.dataset.availabilityEditorPreset
       );
-      const row = document.querySelector(`[data-availability-row="${selectedAvailabilityDayIndex}"]`);
-      const summary = row?.querySelector(".availability-day-heading span");
+      const summary = document.querySelector(`[data-availability-day-select="${selectedAvailabilityDayIndex}"] span`);
       if (summary) summary.textContent = button.dataset.availabilityEditorPreset === "unavailable" ? "Not available" : button.textContent;
       refreshAvailabilityDayCardSummaries();
     };
@@ -9822,7 +9855,7 @@ function refreshAvailabilityDayCardSummaries() {
       start: window.querySelector('[data-availability-slot]')?.value.trim() || "",
       end: window.querySelector('[data-availability-end-slot]')?.value.trim() || ""
     })).filter((range) => range.start && range.end);
-    const summary = row.querySelector(".availability-day-heading span");
+    const summary = document.querySelector(`[data-availability-day-select="${row.dataset.availabilityRow}"] span`);
     if (!summary) return;
     summary.textContent = !windows.length
       ? "Not available"
@@ -9861,6 +9894,23 @@ function parseAvailability() {
   return availability;
 }
 
+function populateAvailabilityEditor(availability = {}) {
+  setAvailabilityInputs("[data-availability-day]", "");
+  Object.entries(availability || {}).forEach(([day, ranges]) => {
+    (ranges || []).forEach((range, index) => {
+      if (index === 0) setAvailabilityPreset(`[data-availability-day="${day}"][data-availability-slot="0"]`, Number(day), "open");
+      const row = document.querySelector(`[data-availability-row="${day}"]`);
+      const add = row?.querySelector("[data-add-availability-window]");
+      while (row && row.querySelectorAll(".availability-window").length <= index && add) add.click();
+      const window = row?.querySelectorAll(".availability-window")[index];
+      if (!window) return;
+      window.querySelector("[data-availability-slot]").value = toNativeTimeValue(range.start);
+      window.querySelector("[data-availability-end-slot]").value = toNativeTimeValue(range.end);
+    });
+  });
+  refreshAvailabilityDayCardSummaries();
+}
+
 function parseWeeklyAvailability() {
   const availability = emptyAvailability();
   document.querySelectorAll("[data-weekly-availability-day][data-availability-slot]").forEach((input) => {
@@ -9885,7 +9935,8 @@ function loadEmployee(id) {
   $("lastName").value = employee.lastName;
   $("employeeNickname").value = employee.nickname || "";
   $("employeeBirthday").value = employee.birthday || "";
-  $("employeePhone").value = employee.phone || "";
+  $("employeePhone").value = formatPhoneNumber(employee.phone || "");
+  bindPhoneFormatter($("employeePhone"));
   $("employeeManagerNotes").value = employee.managerNotes || "";
   $("employeeActive").checked = employee.active !== false;
   $("employeeCanClose").checked = Boolean(employee.canClose);
@@ -9895,7 +9946,7 @@ function loadEmployee(id) {
   setCheckedValues("employeeDepartments", normalizeEmployeeDepartments(employee));
   $("employeeCallWeekly").checked = Boolean(employee.callWeekly);
   $("employeeAvailabilityEffectiveDate").value = normalizeAvailabilityEffectiveDate(employee.availabilityEffectiveDate || currentWeekKey());
-  $("employeeAvailabilityPatternName").value = employee.availabilityPatternName || defaultAvailabilityPatternName(employee);
+  $("employeeAvailabilityPatternName").value = defaultAvailabilityPatternName(employee);
   $("employeeAvailabilityRepeatWeeks").value = String(employee.availabilityRepeatWeeks || 1);
   syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
@@ -12461,7 +12512,7 @@ function printCallWeeklySheet() {
         ${employees.map((employee) => `
           <tr>
             <th>${fullEmployeeName(employee)}${employee.nickname ? `<br><small>${employee.nickname}</small>` : ""}</th>
-            <td>${employee.phone || ""}</td>
+            <td>${formatPhoneNumber(employee.phone || "")}</td>
             ${weekDates().map(() => `<td class="write-box"></td>`).join("")}
           </tr>
         `).join("") || `<tr><td colspan="9">No active employees are marked Call Weekly.</td></tr>`}
@@ -13808,10 +13859,13 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
         const items = content.items || [];
-        const pageRequests = [
-          ...roPdfParsePageItems(items, fileName),
-          ...roPdfParseRequestedDateRows(items, fileName)
-        ];
+        const dateColumnRequests = roPdfParseRequestedDateRows(items, fileName);
+        const primaryRequests = roPdfParsePageItems(items, fileName);
+        // CTUIT's compact report includes submitted-date rows and requested-date
+        // rows. For this layout, the submitted-date pass can manufacture partial
+        // rows, so prefer the requested-date recovery pass whenever it found
+        // complete rows. Keep the primary pass as a fallback for other exports.
+        const pageRequests = dateColumnRequests.length ? dateColumnRequests : primaryRequests;
         const pageSeen = new Set();
         pageRequests.forEach((request) => {
           if (!roPdfPlausibleRequest(request)) return;
@@ -14400,6 +14454,38 @@ function normalizePhone(value) {
   return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
 }
 
+function formatPhoneNumber(value) {
+  return normalizePhone(value);
+}
+
+function normalizeSavedEmployeePhones() {
+  let changed = false;
+  (state.employees || []).forEach((employee) => {
+    const formatted = formatPhoneNumber(employee.phone || "");
+    if (formatted !== (employee.phone || "")) {
+      employee.phone = formatted;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function bindPhoneFormatter(input) {
+  if (!input || input.dataset.phoneFormatterBound === "true") return;
+  input.dataset.phoneFormatterBound = "true";
+  const apply = () => {
+    const formatted = formatPhoneNumber(input.value);
+    if (formatted && input.value !== formatted) input.value = formatted;
+  };
+  input.addEventListener("input", apply);
+  input.addEventListener("blur", apply);
+  apply();
+}
+
+function bindPhoneFormatters(root = document) {
+  root.querySelectorAll("[data-phone-input], input[type=tel]").forEach(bindPhoneFormatter);
+}
+
 function parseCsv(text) {
   const rows = [];
   let row = [];
@@ -14883,6 +14969,7 @@ function wireEvents() {
   $("shiftIsCloser").addEventListener("change", applyCloserEndTimeDefault);
   $("shiftFlexDouble").addEventListener("change", applyFlexDoubleEndTimeDefault);
   $("shiftIsLunchCloser").addEventListener("change", applyLunchCloserEndTimeDefault);
+  $("templateFlexDouble").addEventListener("change", applyTemplateFlexDoubleEndTimeDefault);
   $("shiftDate").addEventListener("change", applyCloserEndTimeDefault);
   $("stagedShiftDate").addEventListener("change", applyCloserEndTimeDefault);
   $("shiftDate").addEventListener("change", updateShiftDialogContext);
@@ -14951,7 +15038,7 @@ function wireEvents() {
     const importMatch = !existingEmployee ? findEmployeeImportMatch({
       firstName,
       lastName,
-      phone: $("employeePhone").value.trim()
+      phone: formatPhoneNumber($("employeePhone").value.trim())
     }) : { employee: null, possible: [] };
     const duplicateEmployee = importMatch.employee || importMatch.possible?.[0];
     if (duplicateEmployee) {
@@ -14967,7 +15054,7 @@ function wireEvents() {
     $("employeeAvailabilityEffectiveDate").value = availabilityEffectiveDate;
     const parsedAvailability = parseAvailability();
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
-    const selectedPatternId = (availabilityEditingPatternId || selectedAvailabilityPatternId || "").replace(/^draft$/, "") || `pattern-${Date.now()}`;
+    const selectedPatternId = (availabilityEditingPatternId || (saveAvailability ? "" : selectedAvailabilityPatternId) || "").replace(/^draft$/, "") || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
     const patternName = $("employeeAvailabilityPatternName").value.trim()
       || selectedPattern?.name
@@ -14986,7 +15073,7 @@ function wireEvents() {
       setEmployeeSaveDebugStatus("Save stopped: duplicate availability name", "failed");
       showAppAlert({
         title: "Availability Not Saved",
-        message: `The availability name "${patternName}" is already used by ${displayName(duplicatePattern.employee)}. Give this availability a different name, then save it again.`,
+        message: `This employee already has a saved availability named "${patternName}". Give this availability a different name, then save it again.`,
         type: "warning"
       });
       return;
@@ -15015,7 +15102,7 @@ function wireEvents() {
         title: "Replace Availability?",
         message: `This availability will take over for scheduling starting ${replacementDate}. The prior availability stays saved in this profile.`,
         items: replacedPatterns.map((pattern) => `${pattern.name} stops applying on ${replacementDate}`),
-        confirmText: "Replace Availability",
+        confirmText: "Replace",
         cancelText: "Keep Current"
       });
       if (!shouldReplace) {
@@ -15069,7 +15156,7 @@ function wireEvents() {
       lastName,
       nickname: $("employeeNickname").value.trim(),
       birthday: $("employeeBirthday").value,
-      phone: $("employeePhone").value.trim(),
+      phone: formatPhoneNumber($("employeePhone").value.trim()),
       managerNotes: $("employeeManagerNotes").value.trim(),
       active: existingEmployee ? $("employeeActive").checked : true,
       canClose: $("employeeCanClose").checked,
@@ -15171,44 +15258,16 @@ function wireEvents() {
     const currentPatterns = current ? availabilityPatternsForEmployee(current) : [];
     const selectedExisting = currentPatterns.find((pattern) => pattern.id === selectedAvailabilityPatternId);
     const editingExisting = currentPatterns.find((pattern) => pattern.id === availabilityEditingPatternId);
-    const storedPatterns = Array.isArray(current?.availabilityPatterns) ? current.availabilityPatterns : [];
-    const selectedIsPersisted = Boolean(selectedExisting
-      && storedPatterns.some((pattern) => String(pattern.id || "") === String(selectedExisting.id || "")));
     // A profile switch or a new draft can leave an old edit target behind.
     // Never let that stale id redirect this save to another employee/profile.
     if (availabilityEditingPatternId && !editingExisting) availabilityEditingPatternId = "";
-    // Selecting a saved availability loads its values into the editor, but it
-    // must also establish that profile as the save target. Without this, an
-    // edit to a live profile looked like a new profile with a duplicate name.
-    if (selectedExisting && selectedIsPersisted && !availabilityEditingPatternId) {
-      const shouldOverwrite = !employeeFormHasUnsavedChanges() || await showAppConfirm({
-        title: "Overwrite Availability?",
-        message: `Save these edited times over "${selectedExisting.name}"? This updates the saved availability wherever it is used.`,
-        confirmText: "Overwrite Availability",
-        cancelText: "Keep Editing"
-      });
-      if (!shouldOverwrite) return;
-      availabilityEditingPatternId = selectedExisting.id;
-    }
-    // Legacy employees without saved pattern rows still have a fallback
-    // availability object. The first explicit Save Availability should create
-    // a real inactive profile instead of silently treating that fallback as a
-    // live saved AV.
-    if (selectedExisting && !selectedIsPersisted) {
-      selectedAvailabilityPatternId = `pattern-${Date.now()}`;
-      // A legacy snapshot can expose a generic fallback name even though no
-      // saved availability profile exists yet. Turn it into a clear, unique
-      // first profile name before applying the global duplicate-name rule.
-      if (/^regular availability$/i.test(name || "")) {
-        name = defaultAvailabilityPatternName(current);
-        if (nameInput) nameInput.value = name;
-      }
-    }
+    // Selecting a card only selects it for review or Apply. It never turns a
+    // Save click into an overwrite; explicit Edit is required for that.
     const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");
     if (duplicate) {
       showAppAlert({
         title: "Availability Not Saved",
-        message: `The availability name "${name}" is already used by ${displayName(duplicate.employee)}. Give this availability a different name, then save it again.`,
+        message: `This employee already has a saved availability named "${name}". Give this availability a different name, then save it again.`,
         type: "warning"
       });
       return;
@@ -15224,8 +15283,8 @@ function wireEvents() {
     // profile-save path.
     if (button) {
       button.disabled = true;
-      button.dataset.originalLabel = button.textContent || "Save Availability";
-      button.textContent = "Saving Availability...";
+      button.dataset.originalLabel = button.textContent || "Save";
+      button.textContent = "Saving...";
     }
     try {
       await submitEmployeeFormDirectly();
@@ -15233,7 +15292,7 @@ function wireEvents() {
       const currentButton = $("saveAvailabilityPatternBtn");
       if (currentButton) {
         currentButton.disabled = false;
-        currentButton.textContent = currentButton.dataset.originalLabel || "Save Availability";
+        currentButton.textContent = currentButton.dataset.originalLabel || "Save";
         delete currentButton.dataset.originalLabel;
       }
     }
@@ -15241,35 +15300,57 @@ function wireEvents() {
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
-    if (!selected) return;
-    availabilityEditingPatternId = selected.id;
-    renderAvailabilityEditor(employee);
-    setAvailabilityInputs("[data-availability-day]", "");
-    Object.entries(selected.availability || {}).forEach(([day, ranges]) => {
-      (ranges || []).forEach((range, index) => {
-        if (index === 0) setAvailabilityPreset(`[data-availability-day="${day}"][data-availability-slot="0"]`, Number(day), "open");
-        const row = document.querySelector(`[data-availability-row="${day}"]`);
-        const add = row?.querySelector("[data-add-availability-window]");
-        while (row && row.querySelectorAll(".availability-window").length <= index && add) add.click();
-        const window = row?.querySelectorAll(".availability-window")[index];
-        if (window) {
-          window.querySelector("[data-availability-slot]").value = toNativeTimeValue(range.start);
-          window.querySelector("[data-availability-end-slot]").value = toNativeTimeValue(range.end);
-        }
+    if (!selected || selected.active) return;
+    const openSelected = () => {
+      availabilityEditingPatternId = selected.id;
+      $("employeeAvailabilityPatternName").value = selected.name;
+      renderAvailabilityEditor(employee);
+      populateAvailabilityEditor(selected.availability);
+      markEmployeeFormClean();
+    };
+    if (employeeFormHasUnsavedChanges()) {
+      showAppConfirm({
+        title: "Discard Draft?",
+        message: "Opening this saved availability will replace the unsaved availability currently in the editor.",
+        confirmText: "Open",
+        cancelText: "Keep Draft"
+      }).then((confirmed) => {
+        if (confirmed) openSelected();
       });
-    });
-    markEmployeeFormDirty();
+      return;
+    }
+    openSelected();
   });
   $("newAvailabilityPatternBtn").onclick = () => {
     const employee = employeeById($("employeeId")?.value);
-    selectedAvailabilityPatternId = `pattern-${Date.now()}`;
+    selectedAvailabilityPatternId = "";
     availabilityEditingPatternId = "";
-    $("employeeAvailabilityPatternName").value = defaultAvailabilityPatternName(employee, selectedAvailabilityPatternId);
+    $("employeeAvailabilityPatternName").value = defaultAvailabilityPatternName(employee);
     $("employeeAvailabilityRepeatWeeks").value = "1";
     $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
-    setAvailabilityInputs("[data-availability-day]", "");
+    renderAvailabilityPatternWorkspace(employee);
+    renderAvailabilityEditor(employee);
     markEmployeeFormDirty();
   };
+  $("copyLiveAvailabilityBtn")?.addEventListener("click", () => {
+    const employee = employeeById($("employeeId")?.value);
+    const live = availabilityPatternsForEmployee(employee)
+      .filter((pattern) => pattern.active && !isFutureAvailabilityPattern(pattern))
+      .sort((left, right) => String(right.effectiveDate || "").localeCompare(String(left.effectiveDate || "")))[0];
+    if (!employee || !live) {
+      $("newAvailabilityPatternBtn").click();
+      return;
+    }
+    selectedAvailabilityPatternId = "";
+    availabilityEditingPatternId = "";
+    $("employeeAvailabilityPatternName").value = nextAvailabilityPatternName(employee, `${live.name} copy`);
+    $("employeeAvailabilityRepeatWeeks").value = "1";
+    $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
+    renderAvailabilityPatternWorkspace(employee);
+    renderAvailabilityEditor(employee);
+    populateAvailabilityEditor(live.availability);
+    markEmployeeFormDirty();
+  });
   $("deleteAvailabilityPatternBtn")?.addEventListener("click", () => {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);

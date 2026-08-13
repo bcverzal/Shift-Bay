@@ -193,7 +193,7 @@
           <label>Last name <input id="lastName" required></label>
           <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
           <label>Birthday <input id="employeeBirthday" type="date"></label>
-          <label>Phone <input id="employeePhone" inputmode="tel"></label>
+          <label>Phone <input id="employeePhone" type="tel" inputmode="tel" autocomplete="tel" data-phone-input></label>
           <div class="checkbox checkbox-direct"><input id="employeeActive" type="checkbox" checked><span>Active</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanClose" type="checkbox"><span>Trained closer</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanLunchClose" type="checkbox"><span>Lunch closer available</span></div>
@@ -221,17 +221,17 @@
                   <div id="activeAvailabilityConflict" class="availability-conflict-notice" role="alert" hidden></div>
                 </section>
                 <div class="availability-editor-toolbar">
-                  <strong>Weekly editor</strong>
+                  <strong id="availabilityEditorTitle">New availability</strong>
                   <div class="availability-editor-save">
                     <label class="availability-name-field">
                       <span>Availability name</span>
                       <input id="employeeAvailabilityPatternName" type="text" maxlength="60" placeholder="Name this availability" aria-label="Availability name">
                     </label>
-                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button">Save Availability</button>
+                    <button id="saveAvailabilityPatternBtn" class="small-button" type="button" title="Save this availability profile without changing what is used for scheduling.">Save</button>
                   </div>
                   <div class="availability-actions">
-                    <button id="openAllAvailabilityBtn" class="small-button" type="button">Open all days</button>
-                    <button id="clearAllAvailabilityBtn" class="small-button" type="button">Clear all days</button>
+                    <button id="openAllAvailabilityBtn" class="small-button" type="button" title="Mark every day as available all day.">Open All</button>
+                    <button id="clearAllAvailabilityBtn" class="small-button" type="button" title="Mark every day as unavailable.">Clear All</button>
                   </div>
                 </div>
                 <div id="availabilityEditor"></div>
@@ -239,8 +239,8 @@
               <aside class="availability-pattern-workspace" aria-label="Saved availability patterns">
                 <div class="availability-pattern-details">
                   <div class="availability-pattern-heading">
-                    <div><strong>Make Availability Live</strong><small>Select a saved availability and make it active for scheduling.</small></div>
-                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" disabled>Edit</button>
+                    <div><strong>Use for Scheduling</strong><small>Select a saved availability, then choose when it starts.</small></div>
+                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" title="Load the selected saved availability into the editor." disabled>Edit</button>
                   </div>
                   <label>Repeat pattern
                     <select id="employeeAvailabilityRepeatWeeks" title="How often this availability repeats when no week-specific override is assigned.">
@@ -254,13 +254,16 @@
             <input id="employeeAvailabilityEffectiveDate" type="date" title="Choose the exact date this availability should begin. This is intentionally not limited to the first day of a work week.">
                   </label>
                   <div class="availability-pattern-actions">
-                    <button id="deleteAvailabilityPatternBtn" class="small-button danger" type="button" disabled>Delete Saved Availability</button>
-                    <button id="makeAvailabilityLiveBtn" class="small-button primary-action" type="button" disabled>Make Live for Scheduling</button>
+                    <button id="deleteAvailabilityPatternBtn" class="small-button danger" type="button" title="Delete the selected saved availability. Active and pending availability cannot be deleted." disabled>Delete</button>
+                    <button id="makeAvailabilityLiveBtn" class="small-button primary-action" type="button" title="Use the selected saved availability for scheduling from the chosen date." disabled>Apply</button>
                   </div>
                 </div>
                 <div class="availability-pattern-heading availability-saved-heading">
                   <div><strong>Saved availabilities</strong><small>Inactive patterns stay here until you activate or submit them.</small></div>
-                  <button id="newAvailabilityPatternBtn" class="small-button" type="button">New</button>
+                  <div class="availability-saved-actions">
+                    <button id="copyLiveAvailabilityBtn" class="small-button" type="button" title="Start a new availability using the current live availability as a starting point.">Copy</button>
+                    <button id="newAvailabilityPatternBtn" class="small-button" type="button" title="Start a blank saved availability without changing an existing one.">New</button>
+                  </div>
                 </div>
                 <div id="availabilityPatternList" class="availability-pattern-list"></div>
               </aside>
@@ -362,7 +365,7 @@
           <label>Start <input id="templateStart" placeholder="7a" required></label>
           <label>End <input id="templateEnd" placeholder="until volume or 4p"></label>
           <label class="checkbox"><input id="templateUntilVolume" type="checkbox"> Until Volume</label>
-          <label class="checkbox"><input id="templateFlexDouble" type="checkbox"> Flex Double</label>
+          <label class="checkbox" title="Sets this template shift's end time to the Flex double end configured in Settings."><input id="templateFlexDouble" type="checkbox"> Flex Double</label>
           <label class="checkbox"><input id="templateIsCloser" type="checkbox"> Closer shift</label>
           <label>Color <input id="templateColor" type="color" value="#2563eb"></label>
           <div class="form-actions">

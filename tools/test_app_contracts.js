@@ -10,6 +10,7 @@ const staff = fs.readFileSync(path.join(root, "staff.js"), "utf8");
 const staffHtml = fs.readFileSync(path.join(root, "staff.html"), "utf8");
 const edgeFunction = fs.readFileSync(path.join(root, "supabase", "functions", "shift-bay-api", "index.ts"), "utf8");
 const employeeMigration = fs.readFileSync(path.join(root, "supabase", "employee-normalization-migration.sql"), "utf8");
+const phoneMigration = fs.readFileSync(path.join(root, "supabase", "format-phone-numbers.sql"), "utf8");
 
 function includes(source, value, message) {
   assert.ok(source.includes(value), message || `Expected source to include ${value}`);
@@ -70,6 +71,17 @@ function run() {
   includes(edgeFunction, "employee_id=eq.${encodeURIComponent(employeeId)}&source=eq.snapshot_bridge", "availability reconciliation must stay scoped to the saved employee");
   includes(employeeMigration, "employees_location_legacy_unique", "employee migration must provide a stable legacy identity");
   includes(employeeMigration, "availability_rules_employee_day_idx", "employee migration must index availability windows");
+  includes(app, "function formatPhoneNumber", "manager employee phones must have a shared formatter");
+  includes(app, "function applyTemplateFlexDoubleEndTimeDefault", "template Flex Double shifts must use the configured end-time default");
+  includes(app, '$("templateFlexDouble").addEventListener("change", applyTemplateFlexDoubleEndTimeDefault)', "template Flex Double toggle must apply its configured end-time default");
+  includes(app, "normalizeSavedEmployeePhones", "existing scheduler employee phones must be normalized on load");
+  includes(index, 'id="employeePhone" type="tel"', "manager phone input must be typed as a phone field");
+  includes(staff, "function formatPhoneNumber", "staff portal phones must have a shared formatter");
+  includes(staffHtml, 'id="staffPhoneNumber" type="tel"', "staff portal phone input must be typed as a phone field");
+  includes(server, "function formatPhoneNumber", "local staff API must normalize phone values");
+  includes(edgeFunction, "function formatPhoneNumber", "hosted staff API must normalize phone values");
+  includes(phoneMigration, "public.scheduler_state_documents", "phone cleanup must normalize the compatibility schedule copy");
+  includes(phoneMigration, "public.staff_accounts", "phone cleanup must normalize staff account phones");
   includes(app, "const regularAvailabilityMode = !callWeekly", "Call Weekly saves must use a separate availability-validation branch");
   includes(app, "const duplicatePattern = saveAvailability", "Only explicit availability saves may be blocked by duplicate availability names");
   includes(app, "availabilitySaveRequested = true", "Save Availability must explicitly request availability validation");

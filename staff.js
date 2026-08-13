@@ -65,6 +65,33 @@ let currentStaffProfile = null;
 let currentStaffLoginEmail = readSession()?.email || "";
 let activeStaffTimeInput = null;
 
+function phoneDigits(value = "") {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatPhoneNumber(value = "") {
+  const digits = phoneDigits(value);
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (ten.length !== 10) return String(value || "");
+  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+}
+
+function bindPhoneFormatter(input) {
+  if (!input || input.dataset.phoneFormatterBound === "true") return;
+  input.dataset.phoneFormatterBound = "true";
+  const apply = () => {
+    const formatted = formatPhoneNumber(input.value);
+    if (formatted && input.value !== formatted) input.value = formatted;
+  };
+  input.addEventListener("input", apply);
+  input.addEventListener("blur", apply);
+  apply();
+}
+
+function bindPhoneFormatters(root = document) {
+  root.querySelectorAll("[data-phone-input], input[type=tel]").forEach(bindPhoneFormatter);
+}
+
 function wirePasswordToggles(root = document) {
   root.querySelectorAll("[data-password-toggle]").forEach((button) => {
     if (button.dataset.passwordToggleBound === "true") return;
@@ -81,6 +108,7 @@ function wirePasswordToggles(root = document) {
 }
 
 wirePasswordToggles();
+bindPhoneFormatters();
 
 function staffAvailabilityPatternKey() {
   const account = currentStaffProfile?.account || {};
@@ -408,7 +436,10 @@ function showSignedIn(profile) {
   renderStaffAvailabilityWorkspace(profile?.employee?.availability || {});
  setPhoneVisibility(profile?.account?.phone_visibility || "managers_only");
   if (staffPreferredName) staffPreferredName.value = profile?.account?.preferred_name || "";
-  if (staffPhoneNumber) staffPhoneNumber.value = profile?.account?.phone || "";
+  if (staffPhoneNumber) {
+    staffPhoneNumber.value = formatPhoneNumber(profile?.account?.phone || "");
+    bindPhoneFormatter(staffPhoneNumber);
+  }
   if (staffContactPreference) staffContactPreference.value = profile?.account?.contact_preference || "in_app";
  setPrivacyMessage("");
   const email = profile?.user?.email || "Signed in";
@@ -441,7 +472,7 @@ function renderVisibleProfile({ employee = null, profile = null } = {}) {
   if (!staffVisibleProfile) return;
   const account = profile?.account || {};
   const displayName = employee ? employeeName(employee) : account.display_name || account.preferred_name || profile?.user?.email || "Employee";
-  const phone = employee ? (employee.phone || account.phone || "") : account.phone || "";
+  const phone = employee ? formatPhoneNumber(employee.phone || account.phone || "") : formatPhoneNumber(account.phone || "");
   const contactPreference = account.contact_preference || "";
   const rows = [
     ["Name", displayName],
@@ -1040,7 +1071,7 @@ deleteStaffAvailabilityPatternButton?.addEventListener("click", () => {
 });
 
 async function loadStaffDirectory() {
-saveStaffProfileButton && saveStaffProfileButton.addEventListener("click", async function () { const result = await staffFetch("/api/staff/profile", { method: "PATCH", body: JSON.stringify({ preferredName: staffPreferredName ? staffPreferredName.value : "", phone: staffPhoneNumber ? staffPhoneNumber.value : "", contactPreference: staffContactPreference ? staffContactPreference.value : "in_app" }) }); if (currentStaffProfile && currentStaffProfile.account && result.profile) { currentStaffProfile.account.preferred_name = result.profile.preferredName; currentStaffProfile.account.phone = result.profile.phone; currentStaffProfile.account.contact_preference = result.profile.contactPreference; } if (staffProfileMessage) { staffProfileMessage.hidden = false; staffProfileMessage.textContent = "Profile saved."; } await loadStaffDirectory(); });
+saveStaffProfileButton && saveStaffProfileButton.addEventListener("click", async function () { const phone = formatPhoneNumber(staffPhoneNumber ? staffPhoneNumber.value : ""); if (staffPhoneNumber) staffPhoneNumber.value = phone; const result = await staffFetch("/api/staff/profile", { method: "PATCH", body: JSON.stringify({ preferredName: staffPreferredName ? staffPreferredName.value : "", phone, contactPreference: staffContactPreference ? staffContactPreference.value : "in_app" }) }); if (currentStaffProfile && currentStaffProfile.account && result.profile) { currentStaffProfile.account.preferred_name = result.profile.preferredName; currentStaffProfile.account.phone = formatPhoneNumber(result.profile.phone || phone); currentStaffProfile.account.contact_preference = result.profile.contactPreference; } if (staffProfileMessage) { staffProfileMessage.hidden = false; staffProfileMessage.textContent = "Profile saved."; } await loadStaffDirectory(); });
   if (!staffDirectoryList || !currentStaffProfile || !currentStaffProfile.linked) return;
   try {
     const result = await staffFetch("/api/staff/directory");
@@ -1051,7 +1082,7 @@ saveStaffProfileButton && saveStaffProfileButton.addEventListener("click", async
       const name = document.createElement("strong");
       name.textContent = entry.displayName || "Employee";
       const phone = document.createElement("span");
-      phone.textContent = entry.phoneVisible && entry.phone ? entry.phone : "Phone hidden";
+      phone.textContent = entry.phoneVisible && entry.phone ? formatPhoneNumber(entry.phone) : "Phone hidden";
       row.append(name, phone);
       staffDirectoryList.appendChild(row);
     });
