@@ -9593,8 +9593,16 @@ function renderAvailabilityEditor(employee = null) {
   const selectedDay = selectedAvailabilityDayIndex;
   const summaryForDay = (ranges) => {
     if (!ranges.length) return "Not available";
-    if (ranges.length > 1) return `${ranges.length} availability windows`;
-    return `${toNativeTimeValue(ranges[0].start) || "Not available"} to ${toNativeTimeValue(ranges[0].end) || "Not available"}`;
+    if (ranges.length > 1) return `${ranges.length} windows`;
+    const compactTime = (value) => {
+      const time = toNativeTimeValue(value);
+      return time
+        .replace(/^0/, "")
+        .replace(/:00(?=\s)/, "")
+        .replace(/\sAM$/, "a")
+        .replace(/\sPM$/, "p");
+    };
+    return `${compactTime(ranges[0].start) || "Not available"} - ${compactTime(ranges[0].end) || "Not available"}`;
   };
   const windowMarkupForDay = (day, index, ranges) => (ranges.length ? ranges : [{}]).map((range, windowIndex) => `
         <div class="availability-window" data-availability-window="${windowIndex}">
@@ -9613,14 +9621,6 @@ function renderAvailabilityEditor(employee = null) {
         <button type="button" class="small-button availability-unavailable-button" data-availability-editor-preset="unavailable" data-availability-preset="unavailable">Unavailable</button>
       </div>
     </div>
-    <div class="availability-day-strip" role="tablist" aria-label="Choose a day to edit">
-      ${DAYS.map((day, index) => {
-        const ranges = availability[index] || [];
-        return `<button type="button" class="availability-day-select${index === selectedDay ? " selected" : ""}" data-availability-day-select="${index}" role="tab" aria-selected="${index === selectedDay}">
-          <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
-        </button>`;
-      }).join("")}
-    </div>
     <div class="availability-day-editor-stack">
       ${DAYS.map((day, index) => {
     const ranges = availability[index] || [];
@@ -9628,9 +9628,17 @@ function renderAvailabilityEditor(employee = null) {
       <div class="availability-day-editor">
         <div class="availability-input-stack">${windowMarkupForDay(day, index, ranges)}<button type="button" class="availability-add-window" data-add-availability-window="${index}">+ Add another time</button></div>
         <small>Leave both times blank if unavailable.</small>
-      </div>
+  </div>
     </section>`;
   }).join("")}
+    </div>
+    <div class="availability-day-strip" role="tablist" aria-label="Choose a day to edit">
+      ${DAYS.map((day, index) => {
+        const ranges = availability[index] || [];
+        return `<button type="button" class="availability-day-select${index === selectedDay ? " selected" : ""}" data-availability-day-select="${index}" role="tab" aria-selected="${index === selectedDay}">
+          <strong>${day}</strong><span>${escapeHtml(summaryForDay(ranges))}</span>
+        </button>`;
+      }).join("")}
     </div>`;
   document.querySelectorAll("[data-availability-day-select]").forEach((button) => {
     button.onclick = () => {
