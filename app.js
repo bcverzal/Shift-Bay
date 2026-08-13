@@ -13811,10 +13811,13 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
         const items = content.items || [];
-        const pageRequests = [
-          ...roPdfParsePageItems(items, fileName),
-          ...roPdfParseRequestedDateRows(items, fileName)
-        ];
+        const dateColumnRequests = roPdfParseRequestedDateRows(items, fileName);
+        const primaryRequests = roPdfParsePageItems(items, fileName);
+        // CTUIT's compact report includes submitted-date rows and requested-date
+        // rows. For this layout, the submitted-date pass can manufacture partial
+        // rows, so prefer the requested-date recovery pass whenever it found
+        // complete rows. Keep the primary pass as a fallback for other exports.
+        const pageRequests = dateColumnRequests.length ? dateColumnRequests : primaryRequests;
         const pageSeen = new Set();
         pageRequests.forEach((request) => {
           if (!roPdfPlausibleRequest(request)) return;
