@@ -156,6 +156,7 @@ let availabilityEditingPatternId = "";
 let availabilitySaveRequested = false;
 let submitAvailabilityPatternRequested = false;
 let deactivateAvailabilityPatternRequested = false;
+let availabilityReplacementConfirmed = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
 let employeeFormHydrating = false;
@@ -3163,7 +3164,6 @@ function showAppConfirm({ title = "Warning", message = "This change has warnings
       $("warningConfirmProceedBtn").onclick = null;
       $("warningConfirmCancelBtn").onclick = null;
       dialog.oncancel = null;
-      dialog.onclose = null;
       if (dialog.open) dialog.close();
       resolve(value);
     };
@@ -3173,7 +3173,6 @@ function showAppConfirm({ title = "Warning", message = "This change has warnings
       event.preventDefault();
       cleanup(false);
     };
-    dialog.onclose = () => cleanup(false);
     dialog.showModal();
   });
 }
@@ -3194,7 +3193,6 @@ function showAppChoice({ title = "Choose Action", message = "", items = [], choi
   return new Promise((resolve) => {
     const cleanup = (value) => {
       dialog.oncancel = null;
-      dialog.onclose = null;
       actions.innerHTML = original;
       if (dialog.open) dialog.close();
       resolve(value);
@@ -3206,7 +3204,6 @@ function showAppChoice({ title = "Choose Action", message = "", items = [], choi
       event.preventDefault();
       cleanup("");
     };
-    dialog.onclose = () => cleanup("");
     dialog.showModal();
   });
 }
@@ -9344,10 +9341,17 @@ function availabilityFromPatternsForDate(employee, dateKey) {
   if (!startedPatterns.length) return null;
 
   const applicable = startedPatterns.filter((pattern) => availabilityPatternAppliesOnDate(pattern, date));
+  // A dated pattern replaces older patterns once it starts. Do not merge
+  // windows from an older profile into a newer one, especially when the new
+  // profile intentionally marks every day unavailable.
+  if (!applicable.length) return [];
+  const selectedPattern = applicable
+    .slice()
+    .sort((left, right) => String(right.effectiveDate || "").localeCompare(String(left.effectiveDate || "")))[0];
   const dayIndex = date.getDay();
-  return applicable.flatMap((pattern) => (
-    Array.isArray(pattern.availability?.[dayIndex]) ? pattern.availability[dayIndex] : []
-  ));
+  return Array.isArray(selectedPattern.availability?.[dayIndex])
+    ? selectedPattern.availability[dayIndex]
+    : [];
 }
 
 function selectedAvailabilityPattern(employee = null) {
@@ -9380,6 +9384,25 @@ function isApprovedFutureAvailabilityPattern(pattern) {
 function isFutureAvailabilityPattern(pattern) {
   const effectiveDate = normalizeAvailabilityEffectiveDate(pattern?.effectiveDate);
   return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
+}
+
+function isUnavailableAvailabilityPattern(pattern) {
+  return Boolean(pattern && !availabilityHasWindows(pattern.availability));
+}
+
+function availabilityEffectiveDateLabel(dateKey) {
+  const normalized = normalizeAvailabilityEffectiveDate(dateKey || "");
+  const parsed = parseDateKey(normalized);
+  return Number.isNaN(parsed.getTime()) ? (dateKey || "Not set") : displayDate(parsed);
+}
+
+function availabilityPatternStateLabel(pattern) {
+  if (isUnavailableAvailabilityPattern(pattern)) {
+    return isFutureAvailabilityPattern(pattern)
+      ? `Unavailable from ${availabilityEffectiveDateLabel(pattern.effectiveDate)}`
+      : "Unavailable now";
+  }
+  return isFutureAvailabilityPattern(pattern) ? "Will be live soon" : "Live";
 }
 
 function availabilityPatternAppliesOnDate(pattern, date) {
@@ -9467,8 +9490,9 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const pendingSubmissions = pendingAvailabilitySubmissionsForEmployee(employee);
   const activeTabMarkup = activePatterns.map((pattern) => {
     const future = isFutureAvailabilityPattern(pattern);
-    const stateLabel = future ? "Will be live soon" : "Live";
-    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${future ? " future-availability" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
+    const unavailable = isUnavailableAvailabilityPattern(pattern);
+    const stateLabel = availabilityPatternStateLabel(pattern);
+    return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${future ? " future-availability" : ""}${unavailable ? " unavailable-availability" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
       <span>${stateLabel}</span>
     </button>`;
@@ -9478,10 +9502,13 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
     <span>Awaiting approval</span>
   </button>`).join("");
   const selectedActivePattern = activePatterns.find((pattern) => pattern.id === selected?.id);
-  const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content">
+  const selectedUnavailable = isUnavailableAvailabilityPattern(selectedActivePattern);
+  const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content${selectedUnavailable ? " unavailable-availability-content" : ""}">
     <strong>${escapeHtml(selectedActivePattern.name)}</strong>
-    <span>${isFutureAvailabilityPattern(selectedActivePattern) ? "Will be live soon" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(selectedActivePattern.effectiveDate || "Not set")}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(selectedActivePattern.endsOn)}` : ""}</span>
-    <div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>
+    <span>${selectedUnavailable
+      ? `${escapeHtml(availabilityPatternStateLabel(selectedActivePattern))}${selectedActivePattern.endsOn ? ` - available again ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`
+      : `${isFutureAvailabilityPattern(selectedActivePattern) ? "Will be live soon" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.effectiveDate))}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`}</span>
+    ${selectedUnavailable ? "<p>Every day is marked Not available. This employee will not be suggested or scheduled during this period.</p>" : `<div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>`}
   </div>` : "";
   tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
   if (!activePatterns.length && !pendingSubmissions.length) tabs.innerHTML = `<div class="active-availability-empty">No availability patterns are active for scheduling.</div>`;
@@ -9570,16 +9597,21 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   const submitButton = $("makeAvailabilityLiveBtn");
   if (submitButton) {
     submitButton.disabled = !selected;
+    const selectedUnavailable = isUnavailableAvailabilityPattern(selected);
     submitButton.textContent = !selected
-      ? "Apply"
+      ? "Make Live"
       : selected.active
       ? "Stop"
-      : "Apply";
+      : selectedUnavailable
+        ? "Make Unavailable"
+        : "Make Live";
     submitButton.title = !selected
-      ? "Select a saved availability before applying it."
+      ? "Select a saved availability before making it live."
       : selected.active
         ? "Stop using this availability for future scheduling."
-        : "Use this saved availability for scheduling from the chosen date.";
+        : selectedUnavailable
+          ? "Use this saved availability to mark the employee unavailable from the chosen date."
+          : "Use this saved availability for scheduling from the chosen date.";
     submitButton.classList.toggle("danger", Boolean(selected?.active));
   }
 }
@@ -15035,9 +15067,11 @@ function wireEvents() {
     const saveAvailability = availabilitySaveRequested;
     const activateSubmittedAvailability = submitAvailabilityPatternRequested;
     const deactivateAvailabilityPattern = deactivateAvailabilityPatternRequested;
+    const replacementAlreadyConfirmed = availabilityReplacementConfirmed;
     availabilitySaveRequested = false;
     submitAvailabilityPatternRequested = false;
     deactivateAvailabilityPatternRequested = false;
+    availabilityReplacementConfirmed = false;
     pushUndo();
     const id = $("employeeId").value || uid("employee");
     const existingEmployee = state.employees.find((item) => item.id === id);
@@ -15104,7 +15138,7 @@ function wireEvents() {
     const replacedPatterns = availabilityAction && patternActive && !deactivateAvailabilityPattern
       ? availabilityPatternsReplacedOnDate(existingPatterns, selectedPatternId, availabilityEffectiveDate)
       : [];
-    if (replacedPatterns.length) {
+    if (replacedPatterns.length && !replacementAlreadyConfirmed) {
       const replacementDate = displayDate(parseDateKey(availabilityEffectiveDate));
       const shouldReplace = await showAppConfirm({
         title: "Replace Availability?",
@@ -15210,10 +15244,26 @@ function wireEvents() {
     const saved = SERVER_STORAGE_ENABLED
       ? await persistEmployeeProfileToServer(employee)
       : (saveState(), true);
+    // Keep the availability that was just saved or activated selected after
+    // the profile reload. Without this, the reload clears the selection and
+    // makes a successful future/unavailable change look like a no-op.
+    const availabilitySelectionAfterSave = availabilityAction ? selectedPatternId : "";
+    const availabilityEffectiveDateAfterSave = availabilityAction ? availabilityEffectiveDate : "";
     // The scoped employee save already completed above. Do not let this render
     // immediately enqueue a stale whole-schedule write behind it.
     renderAll({ skipSave: true });
     loadEmployee(id);
+    if (saved && availabilitySelectionAfterSave) {
+      selectedAvailabilityPatternId = availabilitySelectionAfterSave;
+      availabilityEditingPatternId = "";
+      const savedEmployee = employeeById(id);
+      renderAvailabilityPatternWorkspace(savedEmployee);
+      renderAvailabilityEditor(savedEmployee);
+      const effectiveDateInput = $("employeeAvailabilityEffectiveDate");
+      if (effectiveDateInput && availabilityEffectiveDateAfterSave) {
+        effectiveDateInput.value = availabilityEffectiveDateAfterSave;
+      }
+    }
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
     if (saved || !SERVER_STORAGE_ENABLED) {
       markEmployeeFormClean();
@@ -15397,6 +15447,10 @@ function wireEvents() {
       }).then((confirmed) => {
         if (!confirmed) return;
         markEmployeeFormDirty();
+        // The first confirmation already explains that this all-unavailable
+        // profile will replace the current availability. Do not immediately
+        // ask the same replacement question again through the shared dialog.
+        availabilityReplacementConfirmed = true;
         submitAvailabilityPatternRequested = true;
         availabilityEditingPatternId = selected.id;
         submitEmployeeFormDirectly();

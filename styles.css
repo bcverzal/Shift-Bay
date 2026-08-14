@@ -6620,6 +6620,36 @@ legend {
   color: #8a641e;
 }
 
+.active-availability-tab.unavailable-availability,
+.active-availability-tab.unavailable-availability.selected {
+  border-color: #d98664;
+  background: #fff0eb;
+  color: #7c2d12;
+}
+
+.active-availability-tab.unavailable-availability span,
+.active-availability-tab.unavailable-availability small {
+  color: #9a3412;
+}
+
+.active-availability-tab-content.unavailable-availability-content {
+  border-color: #d98664;
+  border-top-color: #fff8f5;
+  background: #fff8f5;
+  color: #7c2d12;
+}
+
+.active-availability-tab-content.unavailable-availability-content > span,
+.active-availability-tab-content.unavailable-availability-content p {
+  color: #9a3412;
+}
+
+.active-availability-tab-content.unavailable-availability-content p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 650;
+}
+
 .availability-conflict-notice {
   margin-top: 8px;
   padding: 7px 9px;
