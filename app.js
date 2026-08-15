@@ -3247,6 +3247,102 @@ function markEmployeeFormDirty() {
   updateStickyEmployeeSaveAction();
 }
 
+function availabilityShiftConflictDetails(employee, effectiveDate = "") {
+  const startsOn = normalizeAvailabilityEffectiveDate(effectiveDate);
+  if (!employee || !startsOn) return [];
+  return state.shifts
+    .filter((shift) => String(shift.employeeId || "") === String(employee.id || ""))
+    .filter((shift) => String(shift.date || "") >= startsOn)
+    .filter((shift) => !rangeInsideAvailability(employee, shift.date, shift))
+    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")) || String(left.start || "").localeCompare(String(right.start || "")))
+    .map((shift) => {
+      const role = state.roles.find((item) => item.id === shift.roleId);
+      const date = parseDateKey(shift.date);
+      const time = shift.untilVolume ? `${shift.start || "Time not set"} - volume` : `${shift.start || "Time not set"} - ${shift.end || "End not set"}`;
+      return {
+        id: shift.id,
+        label: `${Number.isNaN(date.getTime()) ? shift.date : displayDate(date)} · ${role?.name || "Shift"}`,
+        detail: time
+      };
+    });
+}
+
+function showAvailabilityShiftConflictReview({ employee, effectiveDate, conflicts = [] } = {}) {
+  const dialog = $("warningConfirmDialog");
+  if (!dialog || !conflicts.length) return Promise.resolve({ action: "keep", shiftIds: [] });
+  const list = $("warningConfirmList");
+  const actions = dialog.querySelector(".app-confirm-actions");
+  const originalList = list.innerHTML;
+  const originalActions = actions.innerHTML;
+  const date = parseDateKey(effectiveDate);
+  $("warningConfirmTitle").textContent = "Availability Conflicts";
+  $("warningConfirmMessage").textContent = `${displayName(employee)} has ${conflicts.length} scheduled ${conflicts.length === 1 ? "shift" : "shifts"} outside this availability from ${Number.isNaN(date.getTime()) ? effectiveDate : displayDate(date)} onward. Existing shifts stay assigned unless you choose otherwise.`;
+  list.innerHTML = conflicts.map((conflict) => `
+    <label class="availability-conflict-review-item">
+      <input type="checkbox" value="${escapeHtml(conflict.id)}">
+      <span><strong>${escapeHtml(conflict.label)}</strong><em>${escapeHtml(conflict.detail)}</em></span>
+    </label>
+  `).join("");
+  actions.innerHTML = `
+    <button type="button" data-availability-conflict-action="cancel">Cancel</button>
+    <button type="button" class="primary" data-availability-conflict-action="keep">Keep Shifts</button>
+    <button type="button" class="danger" data-availability-conflict-action="unassign" disabled>Move Selected to Shift Bay</button>
+  `;
+  return new Promise((resolve) => {
+    const selectedIds = () => Array.from(list.querySelectorAll("input:checked")).map((input) => input.value);
+    const moveButton = actions.querySelector('[data-availability-conflict-action="unassign"]');
+    const updateMoveButton = () => {
+      const selectedCount = selectedIds().length;
+      moveButton.disabled = !selectedCount;
+      moveButton.textContent = selectedCount ? `Move ${selectedCount} to Shift Bay` : "Move Selected to Shift Bay";
+    };
+    const cleanup = (result) => {
+      dialog.oncancel = null;
+      list.innerHTML = originalList;
+      actions.innerHTML = originalActions;
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    list.querySelectorAll("input").forEach((input) => input.addEventListener("change", updateMoveButton));
+    actions.querySelector('[data-availability-conflict-action="cancel"]').onclick = () => cleanup({ action: "cancel", shiftIds: [] });
+    actions.querySelector('[data-availability-conflict-action="keep"]').onclick = () => cleanup({ action: "keep", shiftIds: [] });
+    moveButton.onclick = () => cleanup({ action: "unassign", shiftIds: selectedIds() });
+    dialog.oncancel = (event) => {
+      event.preventDefault();
+      cleanup({ action: "cancel", shiftIds: [] });
+    };
+    dialog.showModal();
+  });
+}
+
+function moveAssignedShiftsToBay(shiftIds = []) {
+  const ids = new Set(shiftIds.map(String));
+  if (!ids.size) return [];
+  const moved = state.shifts.filter((shift) => ids.has(String(shift.id || "")));
+  if (!moved.length) return [];
+  const staged = moved.map((shift) => ({
+    id: uid("unassigned"),
+    templateId: shift.templateId || "",
+    templateShiftId: shift.templateShiftId || "",
+    date: shift.date,
+    shiftLabel: shift.shiftLabel || "",
+    department: shift.department,
+    roleId: shift.roleId,
+    start: shift.start,
+    end: shift.end,
+    untilVolume: shift.untilVolume,
+    isCloser: Boolean(shift.isCloser),
+    isLunchCloser: Boolean(shift.isLunchCloser),
+    isFlexDouble: Boolean(shift.isFlexDouble),
+    notes: shift.notes || "",
+    training: normalizeShiftTraining(shift.training),
+    color: shiftColor(shift)
+  }));
+  state.shifts = state.shifts.filter((shift) => !ids.has(String(shift.id || "")));
+  state.unassignedShifts = [...(state.unassignedShifts || []), ...staged];
+  return moved;
+}
+
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
   employeeFormDirty = false;
@@ -15344,6 +15440,23 @@ function wireEvents() {
       weeklyAvailability,
       weeklyRules: parseWeeklyRules()
     };
+    let availabilityConflictShiftIds = [];
+    if (activateSubmittedAvailability && patternActive) {
+      const schedulingConflicts = availabilityShiftConflictDetails(employee, availabilityEffectiveDate);
+      if (schedulingConflicts.length) {
+        const review = await showAvailabilityShiftConflictReview({
+          employee,
+          effectiveDate: availabilityEffectiveDate,
+          conflicts: schedulingConflicts
+        });
+        if (review.action === "cancel") {
+          undoStack.pop();
+          setEmployeeSaveDebugStatus("Availability activation cancelled while reviewing scheduled shifts", "idle");
+          return false;
+        }
+        availabilityConflictShiftIds = review.action === "unassign" ? review.shiftIds : [];
+      }
+    }
     const isExisting = state.employees.some((item) => item.id === id);
     state.employees = isExisting ? state.employees.map((item) => item.id === id ? employee : item) : [...state.employees, employee];
     // Employee profile edits should be durable before the user switches
@@ -15363,6 +15476,16 @@ function wireEvents() {
     const saved = SERVER_STORAGE_ENABLED
       ? await persistEmployeeProfileToServer(employee)
       : (saveState(), true);
+    let conflictShiftsSaved = true;
+    let movedConflictingShifts = [];
+    if (saved && availabilityConflictShiftIds.length) {
+      movedConflictingShifts = moveAssignedShiftsToBay(availabilityConflictShiftIds);
+      if (movedConflictingShifts.length) {
+        conflictShiftsSaved = SERVER_STORAGE_ENABLED
+          ? await saveState({ immediate: true })
+          : (saveState(), true);
+      }
+    }
     // Keep the availability that was just saved or activated selected after
     // the profile reload. Without this, the reload clears the selection and
     // makes a successful future/unavailable change look like a no-op.
@@ -15384,13 +15507,18 @@ function wireEvents() {
       }
     }
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
-    if (saved || !SERVER_STORAGE_ENABLED) {
+    if ((saved && conflictShiftsSaved) || !SERVER_STORAGE_ENABLED) {
       availabilityEditorTouched = false;
       markEmployeeFormClean();
       showEmployeeSavedToast(displayName(employee));
+      if (movedConflictingShifts.length) {
+        showConflict(`${movedConflictingShifts.length} conflicting ${movedConflictingShifts.length === 1 ? "shift was" : "shifts were"} returned to the Shift Bay.`);
+      }
       return true;
     } else {
-      showConflict("The employee profile was kept in this browser, but the shared save did not confirm. Refresh before continuing schedule edits.");
+      showConflict(saved
+        ? "Availability was saved, but the selected shifts could not be returned to the shared Shift Bay. Your browser copy is preserved; refresh before more schedule changes."
+        : "The employee profile was kept in this browser, but the shared save did not confirm. Refresh before continuing schedule edits.");
       return false;
     }
   };

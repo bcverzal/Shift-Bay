@@ -9465,6 +9465,42 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .modal-editor > .form-action
   font-weight: 750;
 }
 
+.availability-conflict-review-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #7c2d12;
+  cursor: pointer;
+}
+
+.availability-conflict-review-item input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+}
+
+.availability-conflict-review-item span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.availability-conflict-review-item strong {
+  font-size: 13px;
+}
+
+.availability-conflict-review-item em {
+  color: #9a3412;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
 .app-alert .app-confirm-icon {
   border-color: #bfdbfe;
   background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);

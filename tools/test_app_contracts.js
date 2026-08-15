@@ -52,6 +52,11 @@ function run() {
   includes(app, 'data-availability-end-slot', "manager availability needs paired start/end time controls");
   includes(app, 'data-add-availability-window', "manager availability needs an add-window action");
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
+  includes(app, "function availabilityShiftConflictDetails", "availability activation must identify already-scheduled conflicts");
+  includes(app, "function showAvailabilityShiftConflictReview", "availability activation must provide a manager conflict review");
+  includes(app, "Move Selected to Shift Bay", "availability conflict review must offer an explicit unassign action");
+  includes(app, "Keep Shifts", "availability conflict review must preserve scheduled shifts by default");
+  includes(app, "function moveAssignedShiftsToBay", "selected availability conflicts must move to Shift Bay without deleting shifts");
   includes(app, "employeeProfileSavePriority", "employee profile saves must take priority over queued full-schedule writes");
   includes(app, "another large schedule request", "employee profile saves must reserve the next cloud write");
   includes(app, "function schedulerMutationFingerprint", "scheduler saves must distinguish real state changes from screen redraws");
