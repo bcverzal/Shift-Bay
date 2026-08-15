@@ -7263,6 +7263,13 @@ fieldset .checkbox {
   white-space: nowrap;
 }
 
+.availability-editor-save > .small-button.availability-save-ready {
+  border-color: #1d4ed8;
+  background: linear-gradient(180deg, #397cff, #2059d9);
+  color: #ffffff;
+  font-weight: 800;
+}
+
 .availability-actions {
   grid-area: actions;
   display: grid;

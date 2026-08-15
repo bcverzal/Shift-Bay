@@ -157,6 +157,7 @@ let availabilitySaveRequested = false;
 let submitAvailabilityPatternRequested = false;
 let deactivateAvailabilityPatternRequested = false;
 let availabilityReplacementConfirmed = false;
+let availabilityEditorTouched = false;
 let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
 let employeeFormHydrating = false;
@@ -3243,11 +3244,13 @@ function employeeFormSnapshot() {
 function markEmployeeFormDirty() {
   if (employeeFormHydrating) return;
   employeeFormDirty = true;
+  updateStickyEmployeeSaveAction();
 }
 
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
   employeeFormDirty = false;
+  updateStickyEmployeeSaveAction();
 }
 
 async function submitEmployeeFormDirectly() {
@@ -5802,6 +5805,26 @@ function beginDayFocusTimelineDrag(event, bar) {
   bar.classList.add("timebar-dragging");
   window.addEventListener("pointermove", moveDayFocusTimelineDrag);
   window.addEventListener("pointerup", finishDayFocusTimelineDrag, { once: true });
+}
+
+function updateStickyEmployeeSaveAction() {
+  const button = $("stickySaveEmployeeBtn");
+  const savingAvailability = availabilityEditorTouched && !$("employeeCallWeekly")?.checked;
+  if (button) {
+    button.textContent = savingAvailability ? "Save Availability" : "Save Employee";
+    button.title = savingAvailability
+      ? "Save the availability currently being edited before saving other profile changes."
+      : "Save this employee profile.";
+    button.dataset.saveAction = savingAvailability ? "availability" : "employee";
+  }
+  const availabilityButton = $("saveAvailabilityPatternBtn");
+  if (availabilityButton && !availabilityButton.disabled) {
+    availabilityButton.textContent = savingAvailability ? "Save Availability" : "Save";
+    availabilityButton.title = savingAvailability
+      ? "Save the availability hours currently in the weekly editor."
+      : "Save this availability profile without changing what is used for scheduling.";
+    availabilityButton.classList.toggle("availability-save-ready", savingAvailability);
+  }
 }
 
 function beginDayFocusUnassignedShiftDrag(event, bar) {
@@ -9324,6 +9347,7 @@ function availabilityPresetForDay(dayIndex, preset, weekKey = currentWeekKey()) 
 function setAvailabilityPreset(inputSelector, dayIndex, preset, weekKey = currentWeekKey()) {
   const input = document.querySelector(inputSelector);
   if (!input) return;
+  if (input.matches("[data-availability-day]")) availabilityEditorTouched = true;
   markEmployeeFormDirty();
   const row = input.closest(".availability-day");
   const value = preset === "unavailable" ? "" : availabilityPresetForDay(dayIndex, preset, weekKey);
@@ -9770,6 +9794,7 @@ function renderAvailabilityEditor(employee = null) {
       const summary = document.querySelector(`[data-availability-day-select="${selectedAvailabilityDayIndex}"] span`);
       if (summary) summary.textContent = button.dataset.availabilityEditorPreset === "unavailable" ? "Not available" : button.textContent;
       refreshAvailabilityDayCardSummaries();
+      updateStickyEmployeeSaveAction();
     };
   });
   document.querySelectorAll("#availabilityEditor [data-time-picker]").forEach(attachTimePickerInput);
@@ -9787,6 +9812,8 @@ function renderAvailabilityEditor(employee = null) {
         button.hidden = false;
       });
       row.querySelectorAll("[data-time-picker]").forEach(attachTimePickerInput);
+      availabilityEditorTouched = true;
+      updateStickyEmployeeSaveAction();
       wireAvailabilityTabFlow("[data-availability-day]");
       wireAvailabilityDaySummaryUpdates();
       if (row.querySelectorAll(".availability-window").length >= 4) button.hidden = true;
@@ -9801,6 +9828,8 @@ function renderAvailabilityEditor(employee = null) {
       const addButton = row.querySelector("[data-add-availability-window]");
       if (addButton) addButton.hidden = false;
       refreshAvailabilityDayCardSummaries();
+      availabilityEditorTouched = true;
+      updateStickyEmployeeSaveAction();
     };
   });
   wireAvailabilityTabFlow("[data-availability-day]");
@@ -10040,6 +10069,7 @@ function loadEmployee(id) {
   if (!employee) return;
   employeeFormHydrating = true;
   employeeFormDirty = false;
+  availabilityEditorTouched = false;
   selectedAvailabilityPatternId = "";
   availabilityEditingPatternId = "";
   employeeNewProfileDraft = false;
@@ -10106,6 +10136,7 @@ function activateEmployeeProfileTab(tabName = "profile") {
 function resetEmployeeForm() {
   employeeFormHydrating = true;
   employeeFormDirty = false;
+  availabilityEditorTouched = false;
   employeeNewProfileDraft = true;
   $("employeeForm").reset();
   $("employeeId").value = "";
@@ -15129,9 +15160,15 @@ function wireEvents() {
   };
 
   $("employeeForm").addEventListener("input", (event) => {
+    if (event.target?.closest?.("#availabilityEditor") || event.target?.id === "employeeAvailabilityPatternName") {
+      availabilityEditorTouched = true;
+    }
     if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
   });
   $("employeeForm").addEventListener("change", (event) => {
+    if (event.target?.closest?.("#availabilityEditor") || event.target?.id === "employeeAvailabilityPatternName") {
+      availabilityEditorTouched = true;
+    }
     if (event.target?.id !== "weeklyAvailabilityWeek") markEmployeeFormDirty();
   });
   $("employeeForm").onsubmit = async (event) => {
@@ -15348,6 +15385,7 @@ function wireEvents() {
     }
     if (callWeekly || weeklyPanelOpen) setWeeklyAvailabilityWeek(weeklyAvailabilityWeekKey);
     if (saved || !SERVER_STORAGE_ENABLED) {
+      availabilityEditorTouched = false;
       markEmployeeFormClean();
       showEmployeeSavedToast(displayName(employee));
       return true;
@@ -15435,6 +15473,7 @@ function wireEvents() {
         currentButton.textContent = currentButton.dataset.originalLabel || "Save";
         delete currentButton.dataset.originalLabel;
       }
+      updateStickyEmployeeSaveAction();
     }
   };
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
@@ -15446,6 +15485,7 @@ function wireEvents() {
       $("employeeAvailabilityPatternName").value = selected.name;
       renderAvailabilityEditor(employee);
       populateAvailabilityEditor(selected.availability);
+      availabilityEditorTouched = false;
       markEmployeeFormClean();
     };
     if (employeeFormHasUnsavedChanges()) {
@@ -15465,6 +15505,7 @@ function wireEvents() {
     const employee = employeeById($("employeeId")?.value);
     selectedAvailabilityPatternId = "";
     availabilityEditingPatternId = "";
+    availabilityEditorTouched = false;
     $("employeeAvailabilityPatternName").value = defaultAvailabilityPatternName(employee);
     $("employeeAvailabilityRepeatWeeks").value = "1";
     $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
@@ -15483,6 +15524,7 @@ function wireEvents() {
     }
     selectedAvailabilityPatternId = "";
     availabilityEditingPatternId = "";
+    availabilityEditorTouched = false;
     $("employeeAvailabilityPatternName").value = nextAvailabilityPatternName(employee, `${live.name} copy`);
     $("employeeAvailabilityRepeatWeeks").value = "1";
     $("employeeAvailabilityEffectiveDate").value = currentWeekKey();
@@ -15569,6 +15611,11 @@ function wireEvents() {
     markEmployeeFormDirty();
   };
   $("stickySaveEmployeeBtn").onclick = () => {
+    if (availabilityEditorTouched && !$("employeeCallWeekly")?.checked) {
+      setEmployeeSaveDebugStatus("Save Availability action routed from the profile save button");
+      $("saveAvailabilityPatternBtn")?.click();
+      return;
+    }
     setEmployeeSaveDebugStatus("Save Employee button clicked");
     submitEmployeeFormDirectly();
   };
