@@ -15098,6 +15098,15 @@ function wireEvents() {
     const existingPatterns = existingEmployee ? availabilityPatternsForEmployee(existingEmployee) : [];
     const selectedPatternId = (availabilityEditingPatternId || (saveAvailability ? "" : selectedAvailabilityPatternId) || "").replace(/^draft$/, "") || `pattern-${Date.now()}`;
     const selectedPattern = existingPatterns.find((pattern) => pattern.id === selectedPatternId);
+    // An all-unavailable AV has already been confirmed by the dedicated
+    // "Make Unavailable" dialog. Do not send it through a second replacement
+    // confirmation that can silently cancel the action.
+    const unavailableActivationConfirmed = Boolean(
+      activateSubmittedAvailability &&
+      selectedPattern &&
+      !availabilityHasWindows(selectedPattern.availability)
+    );
+    const replacementConfirmationSatisfied = replacementAlreadyConfirmed || unavailableActivationConfirmed;
     const patternName = $("employeeAvailabilityPatternName").value.trim()
       || selectedPattern?.name
       || existingEmployee?.availabilityPatternName
@@ -15138,7 +15147,7 @@ function wireEvents() {
     const replacedPatterns = availabilityAction && patternActive && !deactivateAvailabilityPattern
       ? availabilityPatternsReplacedOnDate(existingPatterns, selectedPatternId, availabilityEffectiveDate)
       : [];
-    if (replacedPatterns.length && !replacementAlreadyConfirmed) {
+    if (replacedPatterns.length && !replacementConfirmationSatisfied) {
       const replacementDate = displayDate(parseDateKey(availabilityEffectiveDate));
       const shouldReplace = await showAppConfirm({
         title: "Replace Availability?",
