@@ -1891,7 +1891,20 @@ async function handleSaveState(request: Request) {
   const employeeProfile = payload?.employeeProfile as JsonRecord | null;
   const baseServerSavedAt = payload?.baseServerSavedAt || (state.meta as any)?.serverSavedAt || "";
   const incomingTime = dataUpdatedAt(payload);
-  const profileRequested = saveScope === "employee-profile" && Boolean(employeeId);
+  // Treat a payload carrying one employee profile as a scoped profile write
+  // even when an older frontend omitted saveScope. A partial profile payload
+  // must never be allowed to replace the full scheduler document.
+  const hasValidEmployeeProfile = Boolean(
+    employeeId &&
+    employeeProfile &&
+    String(employeeProfile?.id || "") === employeeId
+  );
+  const looksLikeProfilePayload = hasValidEmployeeProfile && (
+    saveScope === "employee-profile" ||
+    !Array.isArray(state?.employees) ||
+    (!state.employees.length && !Array.isArray(state?.shifts))
+  );
+  const profileRequested = Boolean(looksLikeProfilePayload && employeeId);
   if (profileRequested && (!employeeProfile || String(employeeProfile?.id || "") !== employeeId)) {
     return json(400, { ok: false, error: "Employee profile save did not include a valid employee record." });
   }
@@ -1935,6 +1948,20 @@ async function handleSaveState(request: Request) {
     saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
     locationId
   );
+  const existingEmployees = Array.isArray(existingRow?.state?.employees) ? existingRow.state.employees : [];
+  const incomingEmployees = Array.isArray(state?.employees) ? state.employees : [];
+  if (
+    !profileOnlySave &&
+    saveMode === "snapshot-bridge" &&
+    existingEmployees.length > 0 &&
+    Array.isArray(state?.employees) &&
+    incomingEmployees.length === 0
+  ) {
+    return json(409, {
+      ok: false,
+      error: "Rejected an empty employee roster because the shared schedule already contains employees. Refresh before saving again."
+    });
+  }
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
     return json(409, {
