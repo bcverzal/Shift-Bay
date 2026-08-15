@@ -9755,10 +9755,11 @@ function renderAvailabilityPatternWorkspace(employee = null) {
   renderActiveAvailabilitySummary(employee, patterns, selected);
   const editButton = $("editAvailabilityPatternBtn");
   if (editButton) {
-    editButton.disabled = !selected || selected.active;
-    editButton.title = selected?.active
-      ? "Use Copy Live to start a replacement without changing the active availability."
-      : "Load the selected saved availability into the editor.";
+    editButton.disabled = !selected;
+    editButton.setAttribute("aria-disabled", String(!selected));
+    editButton.title = selected
+      ? `Edit ${selected.name}.`
+      : "Select a saved availability to edit.";
   }
   const deleteButton = $("deleteAvailabilityPatternBtn");
   const selectedStatus = String(selected?.approvalStatus || "").toLowerCase();
@@ -15607,12 +15608,14 @@ function wireEvents() {
   $("editAvailabilityPatternBtn")?.addEventListener("click", () => {
     const employee = employeeById($("employeeId")?.value);
     const selected = availabilityPatternsForEmployee(employee).find((pattern) => pattern.id === selectedAvailabilityPatternId);
-    if (!selected || selected.active) return;
+    if (!selected) return;
     const openSelected = () => {
+      selectedAvailabilityPatternId = selected.id;
       availabilityEditingPatternId = selected.id;
       $("employeeAvailabilityPatternName").value = selected.name;
       renderAvailabilityEditor(employee);
       populateAvailabilityEditor(selected.availability);
+      renderAvailabilityPatternWorkspace(employee);
       availabilityEditorTouched = false;
       markEmployeeFormClean();
     };

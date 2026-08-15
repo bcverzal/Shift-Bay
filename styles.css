@@ -6976,6 +6976,13 @@ fieldset .checkbox {
   justify-content: flex-end;
 }
 
+.availability-saved-actions .small-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 .availability-pattern-actions {
   flex-wrap: wrap;
 }
