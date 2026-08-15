@@ -5450,11 +5450,13 @@ function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
     timelineCell.dataset.openShiftId = openShift.id;
     grid.append(labelCell);
     grid.append(timelineCell);
-    timelineCell.querySelector("[data-day-open-edit]")?.addEventListener("dblclick", (event) => {
+    const openShiftBar = timelineCell.querySelector("[data-day-open-edit]");
+    openShiftBar?.addEventListener("dblclick", (event) => {
       event.stopPropagation();
       selectedUnassignedShiftId = openShift.id;
       openShiftDialog(openShift);
     });
+    openShiftBar?.addEventListener("pointerdown", (event) => beginDayFocusUnassignedShiftDrag(event, openShiftBar));
     labelCell.querySelector("[data-day-open-toggle-eligible]")?.addEventListener("click", () => {
       if (dayFocusExpandedEligibleShiftIds.has(openShift.id)) dayFocusExpandedEligibleShiftIds.delete(openShift.id);
       else dayFocusExpandedEligibleShiftIds.add(openShift.id);
@@ -5496,7 +5498,9 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
         <div class="day-focus-timebar-track" style="--timeline-lanes:1;">
           ${renderDayFocusTimelineBackdrop(openShift.date, window, true)}
           <div class="day-focus-timebar-shift day-focus-open-shift ${selectedUnassignedShiftId === openShift.id ? "selected" : ""}" data-day-open-edit data-unassigned-shift-id="${openShift.id}" style="--shift-color:${role.color || shiftColor(openShift)}; left:${left}%; width:${Math.min(width, 100 - left)}%;" title="Open ${escapeHtml(role?.name || "shift")}: ${escapeHtml(openShift.start)} - ${escapeHtml(openShift.untilVolume ? "Until Volume" : openShift.end)}">
+            <span class="timebar-resize-handle timebar-start" data-timeline-resize="start" aria-hidden="true"></span>
             <span class="timebar-shift-label"><strong>Open ${escapeHtml(role?.name || "Shift")}</strong><em>${escapeHtml(timeLabel)}</em></span>
+            <span class="timebar-resize-handle timebar-end" data-timeline-resize="end" aria-hidden="true"></span>
           </div>
         </div>
       </div>
@@ -5800,6 +5804,45 @@ function beginDayFocusTimelineDrag(event, bar) {
   window.addEventListener("pointerup", finishDayFocusTimelineDrag, { once: true });
 }
 
+function beginDayFocusUnassignedShiftDrag(event, bar) {
+  if (event.button !== 0) return;
+  const openShift = state.unassignedShifts.find((item) => item.id === bar.dataset.unassignedShiftId);
+  const track = bar.closest(".day-focus-timebar-track");
+  const timebar = bar.closest(".day-focus-timebar");
+  if (!openShift || !track || !timebar) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const mode = event.target.closest("[data-timeline-resize]")?.dataset.timelineResize || "move";
+  const start = minutesFromTime(openShift.start);
+  const end = openShift.untilVolume ? estimatedUntilVolumeEnd(openShift) : minutesFromTime(openShift.end);
+  if (start == null || end == null) return;
+  pushUndo();
+  dayFocusTimelineDrag = {
+    unassignedShiftId: openShift.id,
+    isUnassigned: true,
+    mode,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - bar.getBoundingClientRect().left,
+    offsetY: event.clientY - bar.getBoundingClientRect().top,
+    originalStart: start,
+    originalEnd: end <= start ? end + 1440 : end,
+    timelineStart: Number(timebar.dataset.timelineStart) || 0,
+    timelineEnd: Number(timebar.dataset.timelineEnd) || 1440,
+    track,
+    bar,
+    labelTime: bar.querySelector(".timebar-shift-label em"),
+    ghostLabelTime: null,
+    originalLabelText: bar.querySelector(".timebar-shift-label em")?.textContent || "",
+    moved: false,
+    wasUntilVolume: Boolean(openShift.untilVolume)
+  };
+  bar.setPointerCapture?.(event.pointerId);
+  bar.classList.add("timebar-dragging");
+  window.addEventListener("pointermove", moveDayFocusTimelineDrag);
+  window.addEventListener("pointerup", finishDayFocusTimelineDrag, { once: true });
+}
+
 function ensureDayFocusTimelineDragGhost(event) {
   const drag = dayFocusTimelineDrag;
   if (!drag || drag.mode !== "move" || drag.ghost) return;
@@ -5955,6 +5998,19 @@ async function finishDayFocusTimelineDrag(event) {
   cleanupDayFocusTimelineDragVisual(drag);
   if (!drag.moved) {
     undoStack.pop();
+    if (drag.isUnassigned) {
+      const openShift = state.unassignedShifts.find((item) => item.id === drag.unassignedShiftId);
+      if (openShift) {
+        selectedUnassignedShiftId = openShift.id;
+        selectedShiftId = null;
+        selectedCell = null;
+        pendingDeleteShiftId = null;
+        document.querySelectorAll(".day-focus-timebar-shift.selected").forEach((item) => item.classList.remove("selected"));
+        drag.bar.classList.add("selected");
+      }
+      dayFocusTimelineDrag = null;
+      return;
+    }
     const shift = state.shifts.find((item) => item.id === drag.shiftId);
     const hadPendingDelete = Boolean(pendingDeleteShiftId);
     if (shift) {
@@ -5972,6 +6028,23 @@ async function finishDayFocusTimelineDrag(event) {
   }
   const times = dayFocusTimelineDragTimes(event.clientX);
   dayFocusTimelineDrag = null;
+  if (drag.isUnassigned) {
+    const openShift = state.unassignedShifts.find((item) => item.id === drag.unassignedShiftId);
+    if (!times || !openShift) return;
+    const nextOpenShift = {
+      ...openShift,
+      start: timeFromMinutes(times.start),
+      end: (drag.mode !== "move" || !drag.wasUntilVolume) ? timeFromMinutes(times.end) : openShift.end,
+      untilVolume: (drag.mode !== "move" || !drag.wasUntilVolume) ? false : openShift.untilVolume
+    };
+    state.unassignedShifts = state.unassignedShifts.map((item) => item.id === openShift.id ? nextOpenShift : item);
+    selectedUnassignedShiftId = nextOpenShift.id;
+    selectedShiftId = null;
+    selectedCell = null;
+    saveState();
+    renderSchedulePreservingGridScroll();
+    return;
+  }
   const shift = state.shifts.find((item) => item.id === drag.shiftId);
   if (!times || !shift) return;
   const targetCell = document.elementFromPoint(event.clientX, event.clientY)?.closest?.(".day-focus-employee-timeline-cell[data-employee-id]");
