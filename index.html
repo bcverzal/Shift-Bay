@@ -752,7 +752,14 @@
   <dialog id="shiftDialog">
     <form id="shiftForm" method="dialog" class="editor modal-editor">
       <h2 id="shiftDialogTitle">Edit Shift</h2>
-      <div id="shiftDialogContext" class="shift-dialog-context">No date selected</div>
+      <div id="shiftDialogContext" class="shift-dialog-context">
+        <label id="stagedShiftDateLabel" class="shift-dialog-date-control" hidden>
+          <span>Shift date</span>
+          <span class="shift-dialog-date-value"><input id="stagedShiftDate" type="date" required><strong id="shiftDialogDateDisplay">Choose a date</strong></span>
+          <small>This determines where the open shift appears in Shift Bay.</small>
+        </label>
+        <div id="shiftDialogContextText">No date selected</div>
+      </div>
       <input id="shiftDialogMode" type="hidden" value="assigned">
       <input id="shiftId" type="hidden">
       <input id="shiftDate" type="hidden">
@@ -760,7 +767,6 @@
       <div class="shift-dialog-grid">
         <section class="shift-dialog-card shift-dialog-main">
           <h3>Shift</h3>
-          <label id="stagedShiftDateLabel" hidden>Date <input id="stagedShiftDate" type="date"></label>
           <label id="shiftEmployeeLabel">Employee <select id="shiftEmployee"></select></label>
           <label id="shiftLabelControl">Shift name <input id="shiftLabel" placeholder="Dinner, Fish Fry, Brunch"></label>
           <label>Department <select id="shiftDepartment"></select></label>

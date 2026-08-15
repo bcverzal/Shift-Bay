@@ -169,6 +169,9 @@ function run() {
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
   includes(index, "id=\"unassignedShiftTray\"", "Shift Bay tray must remain present");
+  includes(index, "id=\"stagedShiftDateLabel\" class=\"shift-dialog-date-control\"", "unassigned shift dates must be a prominent top-level control");
+  includes(index, "This determines where the open shift appears in Shift Bay.", "unassigned shift dates must explain their scheduling effect");
+  includes(app, "Choose the shift date before setting its role and times.", "unassigned shift creation must foreground the date before shift details");
   includes(index, "class=\"mobile-access-notice\"", "narrow-screen access guidance must remain present");
   includes(index, 'data-mobile-view="day"', "narrow-screen day review action must remain present");
   includes(index, 'data-mobile-view="compact"', "narrow-screen compact review action must remain present");

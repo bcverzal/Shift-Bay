@@ -8820,15 +8820,23 @@ function updateShiftUntilVolumeControl() {
 }
 
 function updateShiftDialogContext() {
-  const target = $("shiftDialogContext");
+  const target = $("shiftDialogContextText") || $("shiftDialogContext");
   if (!target) return;
-  const dateKey = $("shiftDialogMode")?.value === "staged"
+  const isStaged = $("shiftDialogMode")?.value === "staged";
+  const dateKey = isStaged
     ? ($("stagedShiftDate")?.value || $("shiftDate")?.value)
     : $("shiftDate")?.value;
   const parsed = parseDateKey(dateKey || "");
   const dateText = Number.isNaN(parsed.getTime())
     ? "No date selected"
     : parsed.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+  const dateDisplay = $("shiftDialogDateDisplay");
+  if (dateDisplay) dateDisplay.textContent = dateText;
+  if (isStaged) {
+    target.textContent = "Choose the shift date before setting its role and times.";
+    updateShiftNameVisibility();
+    return;
+  }
   const employeeId = $("shiftEmployee")?.value || $("shiftEmployeeId")?.value;
   const employee = employeeById(employeeId);
   const employeeText = employee ? ` | ${displayName(employee)}` : "";

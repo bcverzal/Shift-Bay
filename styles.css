@@ -9640,12 +9640,62 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .password-change-editor {
 }
 
 .shift-dialog-context {
+  display: grid;
+  gap: 6px;
   padding: 0 18px 12px;
   border-bottom: 1px solid rgba(191, 219, 254, 0.82);
   color: #334155;
   font-size: 13px;
   font-weight: 850;
   background: linear-gradient(180deg, rgba(219, 234, 254, 0.78) 0%, rgba(239, 246, 255, 0.86) 100%);
+}
+
+.shift-dialog-date-control {
+  display: grid;
+  grid-template-columns: auto minmax(240px, 1fr);
+  gap: 3px 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #8db4ef;
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 3px 9px rgba(37, 99, 235, 0.1);
+}
+
+.shift-dialog-date-control > span:first-child {
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.shift-dialog-date-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.shift-dialog-date-value input {
+  width: min(180px, 100%);
+  min-height: 36px;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.shift-dialog-date-value strong {
+  min-width: 0;
+  color: #1d4ed8;
+  font-size: 14px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.shift-dialog-date-control small {
+  grid-column: 2;
+  color: #526581;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .shift-dialog-grid {
@@ -9786,6 +9836,15 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .password-change-editor {
 @media (max-width: 760px) {
   .shift-dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .shift-dialog-date-control {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .shift-dialog-date-control small {
+    grid-column: auto;
   }
 
   .shift-dialog-checks {
