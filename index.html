@@ -240,7 +240,6 @@
                 <div class="availability-pattern-details">
                   <div class="availability-pattern-heading">
                     <div><strong>Use for Scheduling</strong><small>Select a saved availability, then choose when it starts.</small></div>
-                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" title="Load the selected saved availability into the editor." disabled>Edit</button>
                   </div>
                   <label>Repeat pattern
                     <select id="employeeAvailabilityRepeatWeeks" title="How often this availability repeats when no week-specific override is assigned.">
@@ -261,8 +260,9 @@
                 <div class="availability-pattern-heading availability-saved-heading">
                   <div><strong>Saved availabilities</strong><small>Inactive patterns stay here until you activate or submit them.</small></div>
                   <div class="availability-saved-actions">
-                    <button id="copyLiveAvailabilityBtn" class="small-button" type="button" title="Start a new availability using the current live availability as a starting point.">Copy</button>
                     <button id="newAvailabilityPatternBtn" class="small-button" type="button" title="Start a blank saved availability without changing an existing one.">New</button>
+                    <button id="copyLiveAvailabilityBtn" class="small-button" type="button" title="Start a new availability using the current live availability as a starting point.">Copy</button>
+                    <button id="editAvailabilityPatternBtn" class="small-button" type="button" title="Load the selected saved availability into the editor." disabled>Edit</button>
                   </div>
                 </div>
                 <div id="availabilityPatternList" class="availability-pattern-list"></div>
