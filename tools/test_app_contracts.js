@@ -30,6 +30,9 @@ function run() {
   includes(index, 'id="dayNotesDialog"', "day notes must use the Shift Bay dialog styling instead of a browser prompt");
   excludes(app, "data-day-focus-date=", "redundant per-day buttons should stay removed");
   includes(app, "Double-click the date header to open Day View.", "day-header guidance must remain available");
+  includes(app, "repeat click on it return to the weekly grid", "the active Schedule tab must provide a forgiving return from Day View");
+  includes(app, "Week Grid", "Day View must label its direct return action as the weekly grid");
+  includes(app, "day-focus-view-label", "Day View must identify the currently active schedule mode");
 
   includes(app, "const RECOMMENDATION_FACTORS", "recommendation factors must be explicit");
   includes(app, "minimumWeeks: 2", "one historical occurrence must not drive a recommendation");

@@ -3722,6 +3722,12 @@ function renderSchedulePreservingGridScroll() {
 function renderTabs() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.onclick = async () => {
+      // Schedule is already the active top-level section in Day View. Let a
+      // repeat click on it return to the weekly grid instead of doing nothing.
+      if (tab.dataset.tab === "schedule" && document.querySelector(".tab.active")?.dataset.tab === "schedule" && focusedDateKey) {
+        exitDayFocus();
+        return;
+      }
       if (!(await requestActivateTab(tab.dataset.tab))) return;
       if (tab.dataset.tab === "monthly") renderMonthly();
       if (tab.dataset.tab === "floorplans") {
@@ -5649,13 +5655,13 @@ function renderDayFocusHeader(date, employees) {
   const head = cell("employee-head day-focus-title-cell", `
     <div class="day-focus-title">
       <div>
-        <strong>${displayDate(date)}</strong>
+        <strong>${displayDate(date)} <span class="day-focus-view-label">Day View</span></strong>
       </div>
       <div class="day-focus-actions">
         <button type="button" class="icon-button week-nav day-focus-step-button" data-day-focus-prev title="Previous day" aria-label="Previous day">&#8249;</button>
         <button type="button" class="icon-button week-nav day-focus-step-button" data-day-focus-next title="Next day" aria-label="Next day">&#8250;</button>
         <button type="button" class="small-button day-focus-notes-button${hasDayNote ? " has-notes" : ""}" data-day-notes title="Add or edit floor chart notes for this day">Day Notes</button>
-        <button type="button" class="small-button" data-exit-day-focus>Back to Week</button>
+        <button type="button" class="small-button day-focus-week-grid-button" data-exit-day-focus title="Return to the weekly schedule grid">Week Grid</button>
       </div>
     </div>
   `);

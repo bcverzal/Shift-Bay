@@ -4326,6 +4326,26 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
   background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
 }
 
+.day-focus-view-label {
+  display: inline-block;
+  margin-left: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.day-focus-week-grid-button {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.day-focus-week-grid-button:hover {
+  background: #dbeafe;
+}
+
 .closer-day-indicator {
   grid-column: 2;
   justify-self: end;
