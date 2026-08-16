@@ -8663,63 +8663,91 @@ fieldset .checkbox {
   white-space: pre-wrap;
 }
 
-.day-notes-editor {
-  width: min(560px, calc(100vw - 32px));
+#dayNotesDialog {
+  width: min(620px, calc(100vw - 24px));
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* Day notes use a stable, self-contained grid instead of inheriting the
+   scrolling alert-dialog footer. This keeps the note field and Save action
+   visible together. */
+#dayNotesDialog .day-notes-editor {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px 14px;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: calc(100vh - 28px);
+  padding: 18px;
+  overflow: auto;
+}
+
+.day-notes-content,
+.day-notes-field,
+.day-notes-field textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.day-notes-content {
+  display: grid;
+  gap: 10px;
 }
 
 .day-notes-field {
   display: grid;
   gap: 6px;
+  margin: 0;
   color: #1e3a8a;
   font-weight: 800;
 }
 
 .day-notes-field textarea {
+  box-sizing: border-box;
+  width: 100%;
   min-height: 112px;
+  margin: 0;
   resize: vertical;
 }
 
-/* Keep the day-notes form inside its dialog when the shared alert layout is narrow. */
-.day-notes-editor {
-  width: min(620px, calc(100vw - 24px));
+.day-notes-hint {
+  margin: 0;
+  color: #526581;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#dayNotesDialog .day-notes-editor .app-confirm-actions {
+  position: static;
+  grid-column: 1 / -1;
   min-width: 0;
-  grid-template-columns: 42px minmax(0, 1fr);
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(191, 219, 254, 0.92);
+  background: transparent;
+  box-shadow: none;
 }
 
-.day-notes-editor > div,
-.day-notes-editor .day-notes-field,
-.day-notes-editor textarea {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.day-notes-editor textarea {
-  width: 100%;
-}
-
-.day-notes-editor .app-confirm-actions {
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.day-notes-editor .app-confirm-actions button {
+#dayNotesDialog .day-notes-editor .app-confirm-actions button {
   min-width: 0;
 }
 
 @media (max-width: 560px) {
-  .day-notes-editor {
+  #dayNotesDialog .day-notes-editor {
     grid-template-columns: 1fr;
   }
 
-  .day-notes-editor .app-confirm-icon {
+  #dayNotesDialog .day-notes-editor .app-confirm-icon {
     margin-bottom: -4px;
   }
 
-  .day-notes-editor .app-confirm-actions {
+  #dayNotesDialog .day-notes-editor .app-confirm-actions {
     justify-content: stretch;
   }
 
-  .day-notes-editor .app-confirm-actions button {
+  #dayNotesDialog .day-notes-editor .app-confirm-actions button {
     flex: 1 1 auto;
   }
 }

@@ -28,6 +28,9 @@ function run() {
   includes(app, "floorPlanDailyNoteMarkup(dateKey)", "weekly floor-plan printing must include the day note");
   includes(index, 'data-floor-output="day-notes"', "the live floor plan must include a day-notes output area");
   includes(index, 'id="dayNotesDialog"', "day notes must use the Shift Bay dialog styling instead of a browser prompt");
+  includes(index, 'class="day-notes-content"', "day-notes content must be isolated from the dialog footer");
+  includes(index, 'class="hint day-notes-hint"', "day-notes helper text must have its own layout treatment");
+  includes(fs.readFileSync(path.join(root, "styles.css"), "utf8"), "#dayNotesDialog .day-notes-editor", "day-notes dialog must override the shared alert footer layout");
   excludes(app, "data-day-focus-date=", "redundant per-day buttons should stay removed");
   includes(app, "Double-click the date header to open Day View.", "day-header guidance must remain available");
   includes(app, "repeat click on it return to the weekly grid", "the active Schedule tab must provide a forgiving return from Day View");
