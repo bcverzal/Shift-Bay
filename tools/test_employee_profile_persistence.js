@@ -29,6 +29,8 @@ function run() {
   assert.ok(availabilityEditHandler.includes("availabilityEditingPatternId = selected.id"), "Edit must load the selected saved availability into the editor");
   assert.ok(!availabilityEditHandler.includes("selected.active"), "Edit must allow active saved availabilities to load into the editor");
   includes(app, "editButton.disabled = !selected", "Edit must stay unavailable until a saved availability is selected");
+  includes(app, "function syncEmployeeRosterSelection", "employee roster focus must stay synchronized with the loaded profile");
+  includes(app, "syncEmployeeRosterSelection(employee.id)", "loading an employee must update the focused roster card");
   includes(app, "availability-day-strip", "availability editing must keep day selection in a stable strip");
   includes(app, "aria-selected", "day selection must expose a clear selected state");
   includes(app, "availability-day-select", "preset and time changes must update the fixed day selector summaries");

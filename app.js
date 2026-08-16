@@ -9284,7 +9284,7 @@ function renderEmployeeRoster(employees, selectedEmployee) {
     const departments = normalizeEmployeeDepartments(employee).join("/");
     const roles = (employee.roleTraining || []).map((roleId) => roleById(roleId)?.name).filter(Boolean).slice(0, 3).join(", ");
     return `
-      <button type="button" class="employee-roster-card ${employee.id === selectedEmployee?.id ? "selected" : ""}" data-roster-employee="${employee.id}">
+      <button type="button" class="employee-roster-card ${employee.id === selectedEmployee?.id ? "selected" : ""}" data-roster-employee="${employee.id}" aria-current="${employee.id === selectedEmployee?.id ? "true" : "false"}">
         <strong>${displayName(employee)}</strong>
         <span>${fullEmployeeName(employee)}</span>
         <small>${[departments, roles, formatPhoneNumber(employee.phone || "")].filter(Boolean).join(" | ")}</small>
@@ -9296,6 +9296,14 @@ function renderEmployeeRoster(employees, selectedEmployee) {
       if (button.dataset.rosterEmployee !== $("employeeId")?.value && !(await confirmDiscardEmployeeChanges())) return;
       loadEmployee(button.dataset.rosterEmployee);
     };
+  });
+}
+
+function syncEmployeeRosterSelection(employeeId = "") {
+  document.querySelectorAll("[data-roster-employee]").forEach((button) => {
+    const selected = String(button.dataset.rosterEmployee || "") === String(employeeId || "");
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-current", selected ? "true" : "false");
   });
 }
 
@@ -10210,6 +10218,7 @@ function loadEmployee(id) {
   hydrateEmployeeAvailabilitySubmissions(employee);
   renderWeeklyRuleEditor(employee);
   updateStickyEmployeeName();
+  syncEmployeeRosterSelection(employee.id);
   employeeFormHydrating = false;
   markEmployeeFormClean();
 }
