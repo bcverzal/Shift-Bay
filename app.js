@@ -11808,6 +11808,7 @@ function renderCtuitEntryPrintView() {
       (roleById(a.roleId)?.name || "").localeCompare(roleById(b.roleId)?.name || "") ||
       displayName(employeeById(a.employeeId)).localeCompare(displayName(employeeById(b.employeeId)))
     ));
+  const preflight = ctuitEntryPreflight(shifts);
   const grouped = new Map(dateKeys.map((dateKey) => [dateKey, []]));
   shifts.forEach((shift) => {
     if (!grouped.has(shift.date)) grouped.set(shift.date, []);
@@ -11823,7 +11824,8 @@ function renderCtuitEntryPrintView() {
         </div>
         <div class="ctuit-entry-total">${shifts.length} shifts</div>
       </header>
-      <p class="ctuit-entry-hint">Work from top to bottom. Check each box after the shift is entered in Ctuit.</p>
+      <p class="ctuit-entry-hint">Enter direct rows first. Check each box after the shift is entered in Ctuit. Every row explicitly says whether to set or clear Close.</p>
+      ${renderCtuitEntryPreflight(preflight)}
       ${Array.from(grouped.entries()).map(([dateKey, dayShifts]) => renderCtuitEntryDay(dateKey, dayShifts)).join("")}
     </section>
   `;
@@ -11855,8 +11857,8 @@ function renderCtuitEntryRow(shift) {
   const role = roleById(shift.roleId);
   const employee = employeeById(shift.employeeId);
   const end = shift.untilVolume ? "Until Volume" : shift.end;
-  const flags = [];
-  if (shift.isCloser) flags.push("CL");
+  // Ctuit preserves template flags, so every row must explicitly say whether to set or clear Close.
+  const flags = [shift.isCloser ? "Close: Set" : "Close: Clear"];
   if (shift.isFlexDouble) flags.push("Flex");
   trainingBadgesForShift(shift).forEach((trainingNote) => flags.push(trainingNote));
   if (shift.notes) flags.push(shift.notes);
@@ -14492,6 +14494,49 @@ function normalizePhone(value) {
   const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   if (ten.length !== 10) return cleanCell(value);
   return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+}
+
+function ctuitEntryPreflight(shifts) {
+  const longShifts = shifts.filter((shift) => {
+    if (shift.untilVolume) return true;
+    const start = minutesFromTime(shift.start);
+    const end = minutesFromTime(shift.end);
+    return Number.isFinite(start) && Number.isFinite(end) && end - start > 8 * 60;
+  });
+  const trainingShifts = shifts.filter((shift) => Boolean(shift.training?.isTraining));
+  const exceptionIds = new Set([...longShifts, ...trainingShifts].map((shift) => shift.id));
+  return {
+    directCount: shifts.length - exceptionIds.size,
+    longShifts,
+    trainingShifts,
+    closerCount: shifts.filter((shift) => shift.isCloser).length,
+    clearCloserCount: shifts.filter((shift) => !shift.isCloser).length
+  };
+}
+
+function renderCtuitEntryPreflight(preflight) {
+  const longRows = preflight.longShifts.map((shift) => ctuitEntryPreflightRow(shift, "Show More"));
+  const trainingRows = preflight.trainingShifts.map((shift) => ctuitEntryPreflightRow(shift, "Training note"));
+  const exceptions = [...longRows, ...trainingRows];
+  return `
+    <section class="ctuit-entry-preflight">
+      <h3>Entry Preflight</h3>
+      <div class="ctuit-entry-preflight-summary">
+        <span><strong>${preflight.directCount}</strong> direct</span>
+        <span><strong>${preflight.longShifts.length}</strong> Show More</span>
+        <span><strong>${preflight.trainingShifts.length}</strong> training</span>
+        <span><strong>${preflight.closerCount}</strong> set Close</span>
+        <span><strong>${preflight.clearCloserCount}</strong> clear Close</span>
+      </div>
+      ${exceptions.length ? `<div class="ctuit-entry-preflight-exceptions">${exceptions.join("")}</div>` : ""}
+    </section>
+  `;
+}
+
+function ctuitEntryPreflightRow(shift, action) {
+  const employee = employeeById(shift.employeeId);
+  const role = roleById(shift.roleId);
+  return `<span><strong>${action}:</strong> ${displayDate(parseDateKey(shift.date))} | ${displayName(employee)} | ${role?.name || "Role"} | ${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}</span>`;
 }
 
 function formatPhoneNumber(value) {

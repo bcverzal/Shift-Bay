@@ -14,6 +14,10 @@ function run() {
   includes(app, "function preparePrintView", "print preparation must remain centralized");
   includes(app, "printing-floor-week", "floor-plan printing must have its own print mode");
   includes(app, "printing-ctuit-entry", "CTuit entry printing must have its own print mode");
+  includes(app, "Close: Clear", "Ctuit entry rows must explicitly tell the operator to clear inherited closer flags");
+  includes(app, "Close: Set", "Ctuit entry rows must explicitly tell the operator to set closer flags");
+  includes(app, "function ctuitEntryPreflight", "Ctuit entry printing must classify exceptional rows before entry begins");
+  includes(app, "Show More", "Ctuit preflight must flag long shifts for the all-eligible-staff workflow");
   includes(app, "compact-print-role-list", "compact role printing must render role sections");
   includes(app, "printDepartmentFilters", "compact printing must expose department filtering");
   includes(app, "function isPrintableScheduledEmployee", "compact printing must have an active employee print guard");
@@ -24,6 +28,7 @@ function run() {
   includes(styles, "@media print", "print styles must be isolated from screen styles");
   includes(styles, ".printing-floor-week", "floor-plan print CSS must be scoped");
   includes(styles, ".printing-ctuit-entry", "CTuit print CSS must be scoped");
+  includes(styles, ".ctuit-entry-preflight", "Ctuit preflight must remain print-scoped");
   includes(styles, ".printing-simple", "compact print CSS must be scoped");
   includes(styles, ".day-focus-tool-rail", "screen-only rails must be removable from print output");
   includes(styles, "binder-punch gutter", "compact schedules must reserve a binder gutter");
