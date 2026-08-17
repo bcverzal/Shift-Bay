@@ -10517,6 +10517,14 @@ dialog .time-picker {
     font-weight: 800;
   }
 
+  body.printing-ctuit-entry .ctuit-entry-name small {
+    display: block;
+    margin-top: 1px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #4b5f7f;
+  }
+
   body.printing-ctuit-entry .ctuit-entry-box {
     display: inline-block;
     width: 12px;

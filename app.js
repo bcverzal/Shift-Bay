@@ -11868,7 +11868,7 @@ function renderCtuitEntryRow(shift) {
       <td class="ctuit-entry-check"><span class="ctuit-entry-box"></span></td>
       <td class="ctuit-entry-time">${shift.start} - ${end}</td>
       <td class="ctuit-entry-role ${roleClass}">${role?.name || "Role"}</td>
-      <td class="ctuit-entry-name">${displayName(employee)}</td>
+      <td class="ctuit-entry-name">${ctuitEntryEmployeeMarkup(employee)}</td>
       <td>${flags.join("; ")}</td>
     </tr>
   `;
@@ -14504,11 +14504,18 @@ function ctuitEntryPreflight(shifts) {
     return Number.isFinite(start) && Number.isFinite(end) && end - start > 8 * 60;
   });
   const trainingShifts = shifts.filter((shift) => Boolean(shift.training?.isTraining));
+  const nameLookups = Array.from(new Map(
+    shifts
+      .map((shift) => employeeById(shift.employeeId))
+      .filter((employee) => ctuitEntryNeedsProfileName(employee))
+      .map((employee) => [employee.id, employee])
+  ).values());
   const exceptionIds = new Set([...longShifts, ...trainingShifts].map((shift) => shift.id));
   return {
     directCount: shifts.length - exceptionIds.size,
     longShifts,
     trainingShifts,
+    nameLookups,
     closerCount: shifts.filter((shift) => shift.isCloser).length,
     clearCloserCount: shifts.filter((shift) => !shift.isCloser).length
   };
@@ -14517,7 +14524,10 @@ function ctuitEntryPreflight(shifts) {
 function renderCtuitEntryPreflight(preflight) {
   const longRows = preflight.longShifts.map((shift) => ctuitEntryPreflightRow(shift, "Show More"));
   const trainingRows = preflight.trainingShifts.map((shift) => ctuitEntryPreflightRow(shift, "Training note"));
-  const exceptions = [...longRows, ...trainingRows];
+  const nameRows = preflight.nameLookups.map((employee) =>
+    `<span><strong>Profile name:</strong> ${escapeHtml(displayName(employee))} -> ${escapeHtml(ctuitEntryProfileName(employee))}</span>`
+  );
+  const exceptions = [...longRows, ...trainingRows, ...nameRows];
   return `
     <section class="ctuit-entry-preflight">
       <h3>Entry Preflight</h3>
@@ -14525,6 +14535,7 @@ function renderCtuitEntryPreflight(preflight) {
         <span><strong>${preflight.directCount}</strong> direct</span>
         <span><strong>${preflight.longShifts.length}</strong> Show More</span>
         <span><strong>${preflight.trainingShifts.length}</strong> training</span>
+        <span><strong>${preflight.nameLookups.length}</strong> profile names</span>
         <span><strong>${preflight.closerCount}</strong> set Close</span>
         <span><strong>${preflight.clearCloserCount}</strong> clear Close</span>
       </div>
@@ -14537,6 +14548,23 @@ function ctuitEntryPreflightRow(shift, action) {
   const employee = employeeById(shift.employeeId);
   const role = roleById(shift.roleId);
   return `<span><strong>${action}:</strong> ${displayDate(parseDateKey(shift.date))} | ${displayName(employee)} | ${role?.name || "Role"} | ${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}</span>`;
+}
+
+function ctuitEntryProfileName(employee) {
+  return fullEmployeeName(employee) || displayName(employee);
+}
+
+function ctuitEntryNeedsProfileName(employee) {
+  return Boolean(employee && ctuitEntryProfileName(employee).toLocaleLowerCase() !== displayName(employee).toLocaleLowerCase());
+}
+
+function ctuitEntryEmployeeMarkup(employee) {
+  const displayed = displayName(employee);
+  const profileName = ctuitEntryProfileName(employee);
+  const lookup = ctuitEntryNeedsProfileName(employee)
+    ? `<small>Ctuit: ${escapeHtml(profileName)}</small>`
+    : "";
+  return `${escapeHtml(displayed)}${lookup}`;
 }
 
 function formatPhoneNumber(value) {

@@ -17,6 +17,8 @@ function run() {
   includes(app, "Close: Clear", "Ctuit entry rows must explicitly tell the operator to clear inherited closer flags");
   includes(app, "Close: Set", "Ctuit entry rows must explicitly tell the operator to set closer flags");
   includes(app, "function ctuitEntryPreflight", "Ctuit entry printing must classify exceptional rows before entry begins");
+  includes(app, "function ctuitEntryEmployeeMarkup", "Ctuit entry rows must show the profile name when a nickname differs");
+  includes(app, "Profile name:", "Ctuit preflight must flag nickname-to-profile lookup names");
   includes(app, "Show More", "Ctuit preflight must flag long shifts for the all-eligible-staff workflow");
   includes(app, "compact-print-role-list", "compact role printing must render role sections");
   includes(app, "printDepartmentFilters", "compact printing must expose department filtering");
