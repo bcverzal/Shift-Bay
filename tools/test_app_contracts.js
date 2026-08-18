@@ -22,6 +22,9 @@ function excludes(source, value, message) {
 
 function run() {
   includes(app, "function syncFloorPlanDateToActiveWeek", "floor-plan date handoff must exist");
+  includes(app, "const DEMO_SEED_VERSION = \"2026-08-18-v1\"", "demo bootstrap must use an explicit seed version");
+  includes(app, "function demoStateNeedsBootstrap", "demo bootstrap must detect an unmistakably empty shared state");
+  includes(app, "demo.meta.demoSeedVersion = DEMO_SEED_VERSION", "demo bootstrap must mark the shared seed version");
   includes(app, "focusedDateKey || formatDateKey(currentDate)", "floor plans must prefer the focused day");
   includes(app, "function openDayNotesDialog", "day view must provide date-scoped floor-chart notes");
   includes(app, "state.dailyNotes", "day notes must be saved with the schedule state");
