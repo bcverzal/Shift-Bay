@@ -20,6 +20,7 @@ function run() {
   includes(app, "function ctuitEntryEmployeeMarkup", "Ctuit entry rows must show the profile name when a nickname differs");
   includes(app, "Profile name:", "Ctuit preflight must flag nickname-to-profile lookup names");
   includes(app, "Show More", "Ctuit preflight must flag long shifts for the all-eligible-staff workflow");
+  includes(app, "Staff profile not found", "Ctuit preflight must flag missing employee profiles");
   includes(app, "compact-print-role-list", "compact role printing must render role sections");
   includes(app, "printDepartmentFilters", "compact printing must expose department filtering");
   includes(app, "function isPrintableScheduledEmployee", "compact printing must have an active employee print guard");

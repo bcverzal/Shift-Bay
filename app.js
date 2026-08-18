@@ -92,6 +92,8 @@ let inFlightMutationFingerprint = "";
 let lastConfirmedMutationFingerprint = "";
 let employeeProfileSavePriority = false;
 let cloudSaveBlockedByStale = false;
+let cloudWritesPaused = false;
+let cloudWriteEpoch = null;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
 let lastKnownServerState = null;
@@ -813,9 +815,36 @@ function saveState(options = {}) {
 }
 
 function setStorageStatus(status, detail = "") {
+  if (cloudWritesPaused && status !== "local") {
+    storageStatus = "stale";
+    storageStatusDetail = detail || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+    updateStorageStatus();
+    return;
+  }
   storageStatus = status;
   storageStatusDetail = detail;
   updateStorageStatus();
+}
+
+function applyWriteControl(control) {
+  if (!control || typeof control !== "object") return;
+  const wasPaused = cloudWritesPaused;
+  const nextEpoch = Number(control.writeEpoch || 0);
+  const epochChanged = cloudWriteEpoch !== null && nextEpoch > 0 && nextEpoch !== cloudWriteEpoch;
+  cloudWriteEpoch = nextEpoch || cloudWriteEpoch;
+  cloudWritesPaused = Boolean(control.writesPaused);
+
+  if (cloudWritesPaused) {
+    setStorageStatus("stale", control.message || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.");
+    return;
+  }
+  // A tab that lived through a pause must refresh after the control epoch
+  // changes. This prevents edits against a partially migrated view from being
+  // sent after the owner reopens writes.
+  if (wasPaused || epochChanged) {
+    cloudSaveBlockedByStale = true;
+    setStorageStatus("stale", "Writes are available again. Refresh Shift Bay before making more edits.");
+  }
 }
 
 function storageStatusLabel(status) {
@@ -899,6 +928,13 @@ async function persistEmployeeProfileToServer(employee) {
     setEmployeeSaveDebugStatus("Cloud request did not start: cloud storage is not ready", "failed");
     return false;
   }
+  if (cloudWritesPaused) {
+    const message = "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+    setStorageStatus("stale", message);
+    setEmployeeSaveDebugStatus(message, "failed");
+    showConflict(message);
+    return false;
+  }
 
   const saveAttemptId = `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   setEmployeeSaveDebugStatus(`Cloud request started [${saveAttemptId}]`);
@@ -938,6 +974,15 @@ async function persistEmployeeProfileToServer(employee) {
       })
     });
     const result = await response.json().catch(() => ({}));
+    if (response.status === 423) {
+      cloudWritesPaused = true;
+      cloudSaveBlockedByStale = true;
+      const message = result.error || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+      setStorageStatus("stale", message);
+      setEmployeeSaveDebugStatus(message, "failed");
+      showConflict(message);
+      return false;
+    }
     if (!response.ok) throw new Error(result.error || `Employee profile save failed: ${response.status}`);
     if (result.savedAt) {
       // This endpoint saves an employee override, not the scheduler document.
@@ -968,8 +1013,10 @@ async function persistEmployeeProfileToServer(employee) {
 }
 
 function queueServerSave() {
-  if (cloudSaveBlockedByStale) {
-    setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+  if (cloudWritesPaused || cloudSaveBlockedByStale) {
+    setStorageStatus("stale", cloudWritesPaused
+      ? "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen."
+      : "CLOUD SAVE REJECTED. Refresh before making more edits.");
     return;
   }
   const mutationFingerprint = schedulerMutationFingerprint(state);
@@ -993,7 +1040,7 @@ async function persistStateToServer(options = {}) {
     return false;
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
-  if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
+  if (cloudWritesPaused || (cloudSaveBlockedByStale && options.scope !== "employee-profile")) return false;
   const mutationFingerprint = schedulerMutationFingerprint(state);
   if (serverSaveInFlight) {
     // A profile save must not be reported as failed just because a queued
@@ -1022,6 +1069,15 @@ async function persistStateToServer(options = {}) {
       body: JSON.stringify(serverEnvelope({ ...options, stateOverride: requestState }))
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
+    if (response.status === 423) {
+      const paused = await response.json().catch(() => ({}));
+      cloudWritesPaused = true;
+      cloudSaveBlockedByStale = true;
+      const message = paused.error || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+      setStorageStatus("stale", message);
+      showConflict(message);
+      return false;
+    }
     if (response.status === 403) {
       const forbidden = await response.json().catch(() => ({}));
       throw new Error(forbidden.error || readOnlyMessage());
@@ -2235,6 +2291,7 @@ async function initializeAuth() {
     ]);
     authConfig = config;
     authRequired = status?.mode === "supabase";
+    applyWriteControl(status?.writeControl);
     if (!authRequired) {
       hideLoginOverlay();
       updateAccountUi();
@@ -2466,6 +2523,8 @@ async function checkForNewerSharedSchedule() {
     const response = await authFetch("/api/status", { cache: "no-store" });
     if (!response.ok) return;
     const status = await response.json().catch(() => ({}));
+    applyWriteControl(status?.writeControl);
+    if (cloudWritesPaused || cloudSaveBlockedByStale) return;
     const remoteSavedAt = String(status.updatedAt || "");
     if (!remoteSavedAt || !lastKnownServerSavedAt || Date.parse(remoteSavedAt) <= Date.parse(lastKnownServerSavedAt) + 1000) return;
     if (employeeFormHasUnsavedChanges()) {
@@ -14510,12 +14569,14 @@ function ctuitEntryPreflight(shifts) {
       .filter((employee) => ctuitEntryNeedsProfileName(employee))
       .map((employee) => [employee.id, employee])
   ).values());
+  const missingEmployees = shifts.filter((shift) => Boolean(shift.employeeId) && !employeeById(shift.employeeId));
   const exceptionIds = new Set([...longShifts, ...trainingShifts].map((shift) => shift.id));
   return {
     directCount: shifts.length - exceptionIds.size,
     longShifts,
     trainingShifts,
     nameLookups,
+    missingEmployees,
     closerCount: shifts.filter((shift) => shift.isCloser).length,
     clearCloserCount: shifts.filter((shift) => !shift.isCloser).length
   };
@@ -14524,10 +14585,11 @@ function ctuitEntryPreflight(shifts) {
 function renderCtuitEntryPreflight(preflight) {
   const longRows = preflight.longShifts.map((shift) => ctuitEntryPreflightRow(shift, "Show More"));
   const trainingRows = preflight.trainingShifts.map((shift) => ctuitEntryPreflightRow(shift, "Training note"));
+  const missingRows = preflight.missingEmployees.map((shift) => ctuitEntryPreflightRow(shift, "Staff profile not found"));
   const nameRows = preflight.nameLookups.map((employee) =>
     `<span><strong>Profile name:</strong> ${escapeHtml(displayName(employee))} -> ${escapeHtml(ctuitEntryProfileName(employee))}</span>`
   );
-  const exceptions = [...longRows, ...trainingRows, ...nameRows];
+  const exceptions = [...longRows, ...trainingRows, ...missingRows, ...nameRows];
   return `
     <section class="ctuit-entry-preflight">
       <h3>Entry Preflight</h3>
@@ -14535,6 +14597,7 @@ function renderCtuitEntryPreflight(preflight) {
         <span><strong>${preflight.directCount}</strong> direct</span>
         <span><strong>${preflight.longShifts.length}</strong> Show More</span>
         <span><strong>${preflight.trainingShifts.length}</strong> training</span>
+        <span><strong>${preflight.missingEmployees.length}</strong> missing staff</span>
         <span><strong>${preflight.nameLookups.length}</strong> profile names</span>
         <span><strong>${preflight.closerCount}</strong> set Close</span>
         <span><strong>${preflight.clearCloserCount}</strong> clear Close</span>

@@ -2,6 +2,9 @@
 
 Use this before pushing changes that will auto-deploy to Netlify.
 
+For the full first-pass migration audit and repeatable review process, see
+[`docs/POST_MIGRATION_REVIEW_CHECKLIST.md`](docs/POST_MIGRATION_REVIEW_CHECKLIST.md).
+
 ## Before Push
 
 - Confirm the work is in `restaurant-scheduler-supabase` on branch `supabase-migration`.

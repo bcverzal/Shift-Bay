@@ -10,7 +10,8 @@ Use Shift Bay's `Ctuit entry list` print for every schedule. It is the source of
 6. Before creating a Ctuit shift, look for an existing blank row with the same date, role, start, and end time. Use that row when it exists so duplicate empty shifts are not created.
 7. If Ctuit does not show an employee for their intended role, first edit the row to a role where they appear, select the employee and save. Reopen the row, change it to the intended role, and save again.
 8. Use the yellow-pencil editor for name selection when possible; its alphabetical list is faster to scan than the blue staff picker.
-9. After entry, verify only the exception rows and any unmatched names or roles. Do not post until the Shift Bay and Ctuit rows agree.
+9. Stop on any `Staff profile not found` preflight row. Do not guess or create a placeholder employee; resolve the Ctuit profile first or leave the row in the exception report for manager review.
+10. After entry, verify only the exception rows and any unmatched names or roles. Do not post until the Shift Bay and Ctuit rows agree.
 
 ## Expected Timing
 

@@ -157,6 +157,20 @@ async function request(baseUrl, key, pathName, options = {}) {
   return body;
 }
 
+async function listAll(baseUrl, key, pathName) {
+  const pageSize = 1000;
+  const rows = [];
+  let offset = 0;
+  while (true) {
+    const separator = pathName.includes("?") ? "&" : "?";
+    const page = values(await request(baseUrl, key, `${pathName}${separator}limit=${pageSize}&offset=${offset}`));
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return rows;
+}
+
 async function snapshotForLocation(baseUrl, key, locationId, documentKey) {
   const rows = await request(baseUrl, key, `scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=state,saved_at,updated_at`);
   const snapshot = values(rows)[0];
@@ -189,6 +203,37 @@ async function upsertTemplateShift(baseUrl, key, templateId, legacyId, payload) 
   return row?.id
     ? values(await request(baseUrl, key, `template_shifts?id=eq.${encodeURIComponent(row.id)}`, { method: "PATCH", body: JSON.stringify(payload) }))[0]
     : values(await request(baseUrl, key, "template_shifts", { method: "POST", body: JSON.stringify([payload]) }))[0];
+}
+
+async function removeStaleSnapshotShifts(baseUrl, key, locationId, legacyIds) {
+  const rows = await listAll(baseUrl, key, `shifts?location_id=eq.${encodeURIComponent(locationId)}&source=eq.snapshot-bridge&select=id,legacy_id`);
+  const stale = rows.filter((row) => row?.legacy_id && !legacyIds.has(String(row.legacy_id)));
+  for (const row of stale) {
+    await request(baseUrl, key, `shifts?id=eq.${encodeURIComponent(row.id)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+  }
+  return stale.length;
+}
+
+async function removeStaleTemplateShifts(baseUrl, key, templateIdsByLegacyId, sourceTemplates) {
+  const templateIds = [...templateIdsByLegacyId.values()].filter(Boolean);
+  if (!templateIds.length) return 0;
+  const rows = await listAll(baseUrl, key, `template_shifts?template_id=in.(${templateIds.join(",")})&select=id,template_id,legacy_id`);
+  const expected = new Set();
+  for (const template of sourceTemplates) {
+    const templateId = templateIdsByLegacyId.get(String(template.id));
+    for (const shift of values(template.shifts)) expected.add(`${templateId}:${String(shift.id)}`);
+  }
+  const stale = rows.filter((row) => row?.legacy_id && !expected.has(`${row.template_id}:${String(row.legacy_id)}`));
+  for (const row of stale) {
+    await request(baseUrl, key, `template_shifts?id=eq.${encodeURIComponent(row.id)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+  }
+  return stale.length;
 }
 
 async function main() {
@@ -260,6 +305,8 @@ async function main() {
     const weekId = weekIds.get(weekStartFor(shift.date, weekStartDay));
     await upsertByLegacy(baseUrl, key, "shifts", locationId, String(shift.id), shiftPayload(shift, locationId, maps, weekId, true));
   }
+  const sourceShiftIds = new Set([...assigned, ...open].map((shift) => String(shift.id || "")).filter(Boolean));
+  const removedStaleShifts = await removeStaleSnapshotShifts(baseUrl, key, locationId, sourceShiftIds);
   for (const item of requests) {
     const employee = maps.employeesByLegacyId.get(String(item.employeeId || ""));
     if (!employee?.id) throw new Error(`Request off ${item.id || "(unknown)"} references an unknown employee.`);
@@ -270,14 +317,17 @@ async function main() {
     if (!employee?.id) throw new Error(`Schedule block ${item.id || "(unknown)"} references an unknown employee.`);
     await upsertByLegacy(baseUrl, key, "schedule_blocks", locationId, String(item.id), blockPayload(item, locationId, employee.id));
   }
+  const templateIdsByLegacyId = new Map();
   for (const template of templates) {
     const savedTemplate = await upsertByLegacy(baseUrl, key, "templates", locationId, String(template.id), templatePayload(template, locationId));
     if (!savedTemplate?.id) throw new Error(`Could not save template ${template.name || template.id}.`);
+    templateIdsByLegacyId.set(String(template.id), savedTemplate.id);
     for (const [sortOrder, shift] of values(template.shifts).entries()) {
       await upsertTemplateShift(baseUrl, key, savedTemplate.id, String(shift.id), templateShiftPayload(shift, savedTemplate.id, maps, sortOrder));
     }
   }
-  console.log(JSON.stringify({ ...plan, backupPath, normalizedScheduleWeeks: weekIds.size }, null, 2));
+  const removedStaleTemplateShifts = await removeStaleTemplateShifts(baseUrl, key, templateIdsByLegacyId, templates);
+  console.log(JSON.stringify({ ...plan, backupPath, normalizedScheduleWeeks: weekIds.size, removedStaleShifts, removedStaleTemplateShifts }, null, 2));
 }
 
 if (require.main === module) {

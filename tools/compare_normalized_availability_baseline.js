@@ -26,14 +26,16 @@ function comparisonKey(window) {
 async function main() {
   loadEnvFile(ROOT);
   const args = process.argv.slice(2);
-  const locationIndex = args.indexOf("--location");
-  const locationId = locationIndex >= 0 ? args[locationIndex + 1] || "" : SANDBOX_LOCATION_ID;
+  const configuredLocation = String(process.env.SHIFT_BAY_LOCATION_ID || "");
   const liveConfirmed = args.includes("--confirm-live");
+  const locationIndex = args.indexOf("--location");
+  const locationId = locationIndex >= 0
+    ? args[locationIndex + 1] || ""
+    : (liveConfirmed ? configuredLocation : SANDBOX_LOCATION_ID);
   const baseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
   if (!baseUrl || !key) throw new Error("Missing Supabase credentials in .env.");
-  const configuredLocation = String(process.env.SHIFT_BAY_LOCATION_ID || "");
   const isSandbox = locationId === SANDBOX_LOCATION_ID;
   const isConfirmedLive = liveConfirmed && locationId === configuredLocation && locationId !== SANDBOX_LOCATION_ID;
   if (!isSandbox && !isConfirmedLive) throw new Error("Refusing this location. Use Sandbox or pass --confirm-live for the configured live location.");

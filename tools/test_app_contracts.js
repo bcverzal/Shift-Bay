@@ -160,6 +160,12 @@ function run() {
   includes(edgeFunction, 'path === "/normalized/availability"', "normalized availability reads must use an explicit route");
   includes(edgeFunction, "Normalized availability reads are not enabled for this location.", "normalized availability reads must refuse unconfigured locations");
   includes(edgeFunction, "repeatWeeks: Number(assignment.repeat_interval_weeks || 1)", "normalized availability reads must keep repeat behavior on assignments");
+  includes(edgeFunction, "async function loadWriteControl", "migration write control must be readable by the Edge Function");
+  includes(edgeFunction, "async function enforceWriteControl", "migration write control must guard write routes");
+  includes(edgeFunction, "return json(423", "paused migration writes must return a distinct read-only response");
+  includes(edgeFunction, "writeControl: writeControl ?", "status must expose the migration write-control epoch");
+  includes(app, "function applyWriteControl", "the browser must react to the global migration write-control state");
+  includes(app, "cloudWritesPaused", "the browser must stop queuing writes while a migration is paused");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");

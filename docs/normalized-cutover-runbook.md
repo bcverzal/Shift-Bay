@@ -23,8 +23,9 @@ are mirrored into normalized tables.
 & "C:\Users\bcver\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" tools\capture_supabase_baseline.js
 ```
 
-3. Run read-only parity checks. Each must report its respective
-`readyForNormalized...: true` field:
+3. Run read-only parity checks. The `--confirm-live` flag now selects the
+   configured live location from `.env`; each must report its respective
+   `readyForNormalized...: true` field:
 
 ```powershell
 & "C:\Users\bcver\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" tools\compare_normalized_employee_baseline.js --confirm-live

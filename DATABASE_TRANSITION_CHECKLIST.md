@@ -96,6 +96,9 @@ This checklist is the working plan for moving Shift Bay from one JSON scheduler 
 
 ## Recommended Next Concrete Step
 
+Use [`docs/POST_MIGRATION_REVIEW_CHECKLIST.md`](docs/POST_MIGRATION_REVIEW_CHECKLIST.md)
+for the first-pass migration review and the repeatable release review after that.
+
 Run the final **reversible default-read smoke check** before deploying the frontend:
 
 1. Open the local app normally, with no query parameters, and confirm the normalized schedule and availability match the approved canary.
