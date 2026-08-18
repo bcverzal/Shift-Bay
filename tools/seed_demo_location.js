@@ -4,6 +4,7 @@ const { loadEnvFile } = require("../config/load-env");
 
 const ROOT = path.resolve(__dirname, "..");
 const DEMO_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
+const DEMO_SEED_VERSION = "2026-08-18-v1";
 const DOCUMENT_KEY = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
 
 loadEnvFile(ROOT);
@@ -200,7 +201,8 @@ const state = {
     documentId: id("scheduleData", "demo"),
     deviceId: "demo-seed",
     createdAt: nowIso(),
-    updatedAt: nowIso()
+    updatedAt: nowIso(),
+    demoSeedVersion: DEMO_SEED_VERSION
   },
   settings: {
     weekStart: 2,

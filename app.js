@@ -6,6 +6,7 @@ const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
 const AUTH_SESSION_KEY = "shiftBay.supabaseSession.v1";
 const SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId.v1";
 const DEMO_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
+const DEMO_SEED_VERSION = "2026-08-18-v1";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -1346,6 +1347,16 @@ function isDemoLocation() {
   return selectedLocationId === DEMO_LOCATION_ID;
 }
 
+function demoStateNeedsBootstrap(candidate = state) {
+  if (!isDemoLocation() || !canEditScheduler()) return false;
+  if (candidate?.meta?.demoSeedVersion) return false;
+  const hasEmployees = Array.isArray(candidate?.employees) && candidate.employees.length > 0;
+  const hasTemplates = Array.isArray(candidate?.templates) && candidate.templates.length > 0;
+  const hasAssignedShifts = Array.isArray(candidate?.shifts) && candidate.shifts.length > 0;
+  const hasOpenShifts = Array.isArray(candidate?.unassignedShifts) && candidate.unassignedShifts.length > 0;
+  return !hasEmployees && !hasTemplates && !hasAssignedShifts && !hasOpenShifts;
+}
+
 function setNormalizedScheduleReadBadge(readState = "off") {
   normalizedScheduleReadState = readState;
   updateNormalizedReadBadge();
@@ -2020,6 +2031,7 @@ function buildDemoSchedulerState() {
   demo.settings.scheduleRoleOrder = demo.roles.filter((role) => role.department === "FOH").map((role) => role.id);
   demo.settings.printRoleOrder = demo.settings.scheduleRoleOrder;
   demo.meta.updatedAt = nowIso();
+  demo.meta.demoSeedVersion = DEMO_SEED_VERSION;
   return demo;
 }
 
@@ -2369,6 +2381,31 @@ async function hydrateStateFromServer() {
       if (Number.isInteger(Number(envelope.normalizedScheduleRevision))) {
         lastKnownNormalizedScheduleRevision = Number(envelope.normalizedScheduleRevision);
       }
+      // A demo location is expected to be usable from any device. Older
+      // deployments could create an empty cloud document when a second device
+      // first opened the sandbox, even though the original browser still had
+      // the fake data in localStorage. Restore only that unmistakable empty
+      // demo state, and only for an editor; never touch a populated location.
+      if (demoStateNeedsBootstrap(serverState)) {
+        const seededState = buildDemoSchedulerState();
+        seededState.meta = { ...(seededState.meta || {}), serverSavedAt };
+        state = seededState;
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        serverStorageReady = true;
+        lastKnownServerSavedAt = serverSavedAt;
+        lastKnownServerState = cloneSchedulerState(serverState);
+        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+        setStorageStatus("saving", "Restoring the shared Sandbox demo data...");
+        const restored = await persistStateToServer({ immediate: true });
+        if (restored) {
+          setStorageStatus("saved", "Loaded the shared Sandbox demo data.");
+          showConflict("Sandbox demo data was restored for this device.");
+        }
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
+        finishInitialReadSourceHydrationRender();
+        return;
+      }
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
       const previousReadSource = localStorage.getItem(readSourceKey()) || "";
       const readSourceChanged = Boolean(previousReadSource && previousReadSource !== CURRENT_READ_SOURCE);
@@ -2459,15 +2496,18 @@ async function hydrateStateFromServer() {
     if (response.status === 404) {
       const createCleanLocation = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
-      if (createCleanLocation) {
-        state = defaultState();
+      const shouldSeedDemo = isDemoLocation() && canEditScheduler();
+      const bootstrapEmptyDemo = shouldSeedDemo && demoStateNeedsBootstrap(state);
+      if (createCleanLocation || bootstrapEmptyDemo) {
+        state = shouldSeedDemo ? buildDemoSchedulerState() : defaultState();
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
         finishInitialReadSourceHydrationRender();
       }
       serverStorageReady = true;
       lastKnownServerSavedAt = "";
-      setStorageStatus("saving", "Creating the first shared scheduler data file...");
-      await persistStateToServer();
+      setStorageStatus("saving", shouldSeedDemo ? "Creating the shared Sandbox demo data file..." : "Creating the first shared scheduler data file...");
+      const created = await persistStateToServer();
+      if (created && shouldSeedDemo) showConflict("Sandbox demo data was restored for this device.");
       return;
     }
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
