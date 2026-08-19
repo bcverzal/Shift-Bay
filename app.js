@@ -30,8 +30,10 @@ const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
 // schedule records stay behind an explicit URL opt-in during cutover.
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
+// The normalized schedule is now the default read source after the live
+// parity checks passed. The explicit legacy URL remains the rollback view.
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  ["read", "direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_SCHEDULE_MODE);
+  NORMALIZED_SCHEDULE_MODE !== "legacy";
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&

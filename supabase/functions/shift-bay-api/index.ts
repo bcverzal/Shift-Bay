@@ -441,11 +441,12 @@ function normalizedReadAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
-// The live restaurant is still backed by the compatibility document while the
-// migration is proven. Only the disposable Sandbox mirrors ordinary schedule
-// saves into normalized rows.
+// Keep the compatibility document as the rollback source while both locations
+// mirror ordinary schedule saves into normalized rows. The normal save path is
+// still snapshot-first; the production atomic writer remains disabled.
 function normalizedScheduleMirrorAllowed(locationId: string) {
-  return locationId === SANDBOX_LOCATION_ID;
+  const cfg = config();
+  return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
 // The Atomic Sandbox path is an isolated migration canary. Keep it opt-in at
@@ -860,9 +861,9 @@ async function removeNormalizedLegacyRowsNotIn(table: string, locationId: string
   return staleRows.length;
 }
 
-// The JSON document remains the compatibility source during this bridge.
-// Only changed legacy records are mirrored after the first baseline write, so
-// a normal schedule edit never rewrites an entire location's history.
+// The JSON document remains the compatibility rollback source during this
+// bridge. Only changed legacy records are mirrored after the first baseline
+// write, so a normal schedule edit never rewrites an entire location's history.
 async function syncNormalizedSchedule(locationId: string, state: JsonRecord, previousState: JsonRecord | null = null) {
   if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" };
   try {
