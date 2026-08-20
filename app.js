@@ -26,16 +26,12 @@ const NORMALIZED_EMPLOYEE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedEmployee
 const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule") === "shadow";
 const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
 const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
-// The compatibility snapshot remains the proven scheduler source. Normalized
-// schedule records stay behind an explicit URL opt-in during cutover.
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
-// Keep the proven compatibility snapshot as the normal scheduler source until
-// normalized reads have stayed reliable under ordinary production use. The
-// normalized collection remains available through an explicit read URL for
-// canary checks: ?normalizedSchedule=read.
+// Normalized schedule reads are now the default after the live parity and
+// hosted canary checks. `legacySnapshot=1` remains the immediate rollback view.
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  NORMALIZED_SCHEDULE_MODE === "read";
+  NORMALIZED_SCHEDULE_MODE !== "legacy";
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
