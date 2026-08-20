@@ -121,6 +121,7 @@ function run() {
   includes(app, 'authFetch("/api/normalized/schedule"', "normalized schedule comparison must use the protected API route");
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
+  includes(app, 'NORMALIZED_SCHEDULE_MODE === "read"', "the ordinary scheduler must keep the compatibility snapshot authoritative until normalized reads are explicitly requested");
   includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
   includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");

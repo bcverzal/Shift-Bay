@@ -1242,12 +1242,15 @@ async function handleNormalizedSchedule(request: Request) {
       employeeId: employeeLegacyIds.get(String(item.employee_id)) || ""
     }))
   ];
+  const isOpenBayShift = (shift: any) => [true, "true", 1, "1"].includes(shift?.is_open_bay);
   const mapShift = (shift: any) => ({
     id: String(shift.legacy_id), employeeId: employeeLegacyIds.get(String(shift.employee_id)) || "", roleId: roleLegacyIds.get(String(shift.role_id)) || "", department: shift.department || "FOH",
-    date: shift.shift_date, shiftLabel: shift.shift_name || "", start: displayNormalizedTime(shift.start_time), end: displayNormalizedTime(shift.end_time),
+    date: String(shift.shift_date || "").slice(0, 10), shiftLabel: shift.shift_name || "", start: displayNormalizedTime(shift.start_time), end: displayNormalizedTime(shift.end_time),
     untilVolume: Boolean(shift.until_volume), isCloser: Boolean(shift.is_closer), isLunchCloser: Boolean(shift.is_lunch_closer), isFlexDouble: Boolean(shift.is_flex_double),
-    color: shift.color || null, notes: shift.notes || "", meals: Array.isArray(shift.metadata?.meals) ? shift.metadata.meals : [], training: shift.metadata?.training || {}
+    isOpenBay: isOpenBayShift(shift), color: shift.color || null, notes: shift.notes || "", meals: Array.isArray(shift.metadata?.meals) ? shift.metadata.meals : [], training: shift.metadata?.training || {}
   });
+  const normalizedAssignedShifts = (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && !isOpenBayShift(shift)).map(mapShift);
+  const normalizedOpenShifts = (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && isOpenBayShift(shift)).map(mapShift);
   const templateShiftRowsByTemplate = new Map<string, any[]>();
   (Array.isArray(templateShifts) ? templateShifts : []).forEach((shift: any) => {
     const rows = templateShiftRowsByTemplate.get(String(shift.template_id)) || [];
@@ -1261,8 +1264,8 @@ async function handleNormalizedSchedule(request: Request) {
     generatedAt: new Date().toISOString(),
     normalizedScheduleRevision: scheduleRevision.revision,
     scheduleWeeks: (Array.isArray(scheduleWeeks) ? scheduleWeeks : []).map((week: any) => ({ weekStart: week.week_start, status: week.status })),
-    shifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && !shift.is_open_bay).map(mapShift),
-    unassignedShifts: (Array.isArray(shifts) ? shifts : []).filter((shift: any) => shift?.legacy_id && shift.is_open_bay).map(mapShift),
+    shifts: normalizedAssignedShifts,
+    unassignedShifts: normalizedOpenShifts,
     timeOffRequests,
     templates: templateRows.map((template: any) => ({
       id: String(template.legacy_id), name: template.name || "", active: template.active !== false,
