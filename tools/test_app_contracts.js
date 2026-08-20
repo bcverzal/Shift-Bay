@@ -22,6 +22,9 @@ function excludes(source, value, message) {
 
 function run() {
   includes(app, "function syncFloorPlanDateToActiveWeek", "floor-plan date handoff must exist");
+  includes(app, "const DEMO_SEED_VERSION = \"2026-08-18-v1\"", "demo bootstrap must use an explicit seed version");
+  includes(app, "function demoStateNeedsBootstrap", "demo bootstrap must detect an unmistakably empty shared state");
+  includes(app, "demo.meta.demoSeedVersion = DEMO_SEED_VERSION", "demo bootstrap must mark the shared seed version");
   includes(app, "focusedDateKey || formatDateKey(currentDate)", "floor plans must prefer the focused day");
   includes(app, "function openDayNotesDialog", "day view must provide date-scoped floor-chart notes");
   includes(app, "state.dailyNotes", "day notes must be saved with the schedule state");
@@ -171,6 +174,12 @@ function run() {
   includes(edgeFunction, 'path === "/normalized/availability"', "normalized availability reads must use an explicit route");
   includes(edgeFunction, "Normalized availability reads are not enabled for this location.", "normalized availability reads must refuse unconfigured locations");
   includes(edgeFunction, "repeatWeeks: Number(assignment.repeat_interval_weeks || 1)", "normalized availability reads must keep repeat behavior on assignments");
+  includes(edgeFunction, "async function loadWriteControl", "migration write control must be readable by the Edge Function");
+  includes(edgeFunction, "async function enforceWriteControl", "migration write control must guard write routes");
+  includes(edgeFunction, "return json(423", "paused migration writes must return a distinct read-only response");
+  includes(edgeFunction, "writeControl: writeControl ?", "status must expose the migration write-control epoch");
+  includes(app, "function applyWriteControl", "the browser must react to the global migration write-control state");
+  includes(app, "cloudWritesPaused", "the browser must stop queuing writes while a migration is paused");
 
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");

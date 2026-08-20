@@ -10564,6 +10564,37 @@ dialog .time-picker {
     color: #20395f;
   }
 
+  body.printing-ctuit-entry .ctuit-entry-preflight {
+    margin: 0 0 7px;
+    padding: 5px 7px;
+    border: 1px solid #cfd8e6;
+    background: #f8fbff;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.printing-ctuit-entry .ctuit-entry-preflight h3 {
+    margin: 0 0 3px;
+    font-size: 10px;
+    color: #20395f;
+  }
+
+  body.printing-ctuit-entry .ctuit-entry-preflight-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 10px;
+    font-size: 9px;
+    color: #31405a;
+  }
+
+  body.printing-ctuit-entry .ctuit-entry-preflight-exceptions {
+    display: grid;
+    gap: 2px;
+    margin-top: 4px;
+    font-size: 8.5px;
+    color: #4a2a17;
+  }
+
   body.printing-ctuit-entry .ctuit-entry-day {
     margin-bottom: 7px;
     break-inside: auto;
@@ -10641,6 +10672,14 @@ dialog .time-picker {
   body.printing-ctuit-entry .ctuit-entry-name {
     width: 1.55in;
     font-weight: 800;
+  }
+
+  body.printing-ctuit-entry .ctuit-entry-name small {
+    display: block;
+    margin-top: 1px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #4b5f7f;
   }
 
   body.printing-ctuit-entry .ctuit-entry-box {

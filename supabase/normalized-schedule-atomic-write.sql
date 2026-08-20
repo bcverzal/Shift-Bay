@@ -64,9 +64,15 @@ begin
   if not pg_try_advisory_xact_lock(
     hashtextextended('shift-bay:normalized-schedule:' || p_location_id::text, 0)
   ) then
-    raise exception using
-      errcode = '55P03',
-      message = 'Another normalized atomic write is already in progress for this location';
+    -- Lock contention is an expected concurrency result, not a database
+    -- failure. Returning a structured result avoids filling Postgres error
+    -- logs when a stale tab retries while another writer is active.
+    return jsonb_build_object(
+      'ok', false,
+      'conflict', true,
+      'code', '55P03',
+      'error', 'Another normalized atomic write is already in progress for this location'
+    );
   end if;
 
   insert into public.normalized_schedule_revisions (location_id, revision, updated_by)
@@ -80,13 +86,21 @@ begin
    for update;
 
   if v_current_revision is distinct from p_expected_revision then
-    raise exception using
-      errcode = '40001',
-      message = format(
+    -- A revision conflict is the normal stale-write guard. Return it before
+    -- staging rows so the API can answer with a clean 409 and the database
+    -- does not record thousands of avoidable 40001 errors during retries.
+    return jsonb_build_object(
+      'ok', false,
+      'conflict', true,
+      'code', '40001',
+      'error', format(
         'Normalized schedule revision conflict: expected %s, found %s',
         coalesce(p_expected_revision::text, 'null'),
         coalesce(v_current_revision::text, 'null')
-      );
+      ),
+      'expectedRevision', p_expected_revision,
+      'currentRevision', v_current_revision
+    );
   end if;
 
   create temporary table if not exists _shift_bay_atomic_shift_input (

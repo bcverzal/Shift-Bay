@@ -22,16 +22,26 @@ function equalTime(left, right) {
 }
 
 async function request(baseUrl, key, pathName) {
-  const response = await fetch(`${baseUrl}/rest/v1/${pathName}`, {
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`
-    }
-  });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(body?.message || body?.hint || `Supabase request failed with ${response.status}: ${pathName}`);
-  return values(body);
+  const pageSize = 1000;
+  const rows = [];
+  let offset = 0;
+  while (true) {
+    const separator = pathName.includes("?") ? "&" : "?";
+    const response = await fetch(`${baseUrl}/rest/v1/${pathName}${separator}limit=${pageSize}&offset=${offset}`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`
+      }
+    });
+    const text = await response.text();
+    const body = text ? JSON.parse(text) : null;
+    if (!response.ok) throw new Error(body?.message || body?.hint || `Supabase request failed with ${response.status}: ${pathName}`);
+    const page = values(body);
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return rows;
 }
 
 function listDifferences(source, normalized, maps, weeks, isOpenBay) {
@@ -71,14 +81,16 @@ function listDifferences(source, normalized, maps, weeks, isOpenBay) {
 async function main() {
   loadEnvFile(ROOT);
   const args = process.argv.slice(2);
-  const locationIndex = args.indexOf("--location");
-  const locationId = locationIndex >= 0 ? args[locationIndex + 1] || "" : SANDBOX_LOCATION_ID;
+  const configuredLocation = String(process.env.SHIFT_BAY_LOCATION_ID || "");
   const liveConfirmed = args.includes("--confirm-live");
+  const locationIndex = args.indexOf("--location");
+  const locationId = locationIndex >= 0
+    ? args[locationIndex + 1] || ""
+    : (liveConfirmed ? configuredLocation : SANDBOX_LOCATION_ID);
   const baseUrl = stringValue(process.env.SUPABASE_URL).replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
   if (!baseUrl || !key) throw new Error("Missing Supabase credentials in .env.");
-  const configuredLocation = String(process.env.SHIFT_BAY_LOCATION_ID || "");
   const isSandbox = locationId === SANDBOX_LOCATION_ID;
   const isConfirmedLive = liveConfirmed && locationId === configuredLocation && locationId !== SANDBOX_LOCATION_ID;
   if (!isSandbox && !isConfirmedLive) throw new Error("Refusing this location. Use Sandbox or pass --confirm-live for the configured live location.");
@@ -140,6 +152,7 @@ async function main() {
   });
   const normalizedTemplates = new Map(templates.filter((row) => row.legacy_id).map((row) => [stringValue(row.legacy_id), row]));
   const templateMismatches = [];
+  const expectedTemplateShiftIds = new Set();
   for (const sourceTemplate of values(state.templates)) {
     const actualTemplate = normalizedTemplates.get(stringValue(sourceTemplate.id));
     if (!actualTemplate) {
@@ -148,6 +161,7 @@ async function main() {
     }
     const actualShifts = new Map(templateShifts.filter((row) => row.template_id === actualTemplate.id && row.legacy_id).map((row) => [stringValue(row.legacy_id), row]));
     for (const [sortOrder, sourceShift] of values(sourceTemplate.shifts).entries()) {
+      expectedTemplateShiftIds.add(`${actualTemplate.id}:${stringValue(sourceShift.id)}`);
       const actualShift = actualShifts.get(stringValue(sourceShift.id));
       if (!actualShift) {
         templateMismatches.push({ legacyId: sourceTemplate.id, shiftLegacyId: sourceShift.id, fields: ["missing shift"] });
@@ -160,6 +174,11 @@ async function main() {
       if (!equalTime(sourceShift.start, actualShift.start_time)) fields.push("start time");
       if (!equalTime(sourceShift.end, actualShift.end_time)) fields.push("end time");
       if (fields.length) templateMismatches.push({ legacyId: sourceTemplate.id, shiftLegacyId: sourceShift.id, fields });
+    }
+    for (const actualShift of actualShifts.values()) {
+      if (!expectedTemplateShiftIds.has(`${actualTemplate.id}:${stringValue(actualShift.legacy_id)}`)) {
+        templateMismatches.push({ legacyId: sourceTemplate.id, shiftLegacyId: actualShift.legacy_id, fields: ["unexpected shift"] });
+      }
     }
   }
   const sourceWeeks = new Set([...assigned, ...open].map((shift) => weekStartFor(shift.date, maps.weekStartDay)));

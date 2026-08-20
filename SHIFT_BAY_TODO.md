@@ -1,5 +1,59 @@
 # Shift Bay To-Do
 
+## Dependency-First Roadmap
+
+This order is based on what later features depend on, not on which idea is most exciting. New ideas should first be captured in the right phase, then promoted only when their prerequisites are stable.
+
+### P0: Protect The Working Scheduler
+
+These items protect the schedule workflow already being used in production. Do not begin autonomous scheduling work while any P0 item is actively breaking normal schedule creation, saving, printing, or recovery.
+
+- [ ] Finish normalized database cutover verification and keep the legacy snapshot rollback path available.
+- [ ] Keep cloud saves, stale-state recovery, atomic writes, and multi-window behavior reliable under normal scheduling use.
+- [ ] Make RO imports trustworthy, including accepted/rejected history, duplicates, full-day defaults, and clear review details.
+- [ ] Complete print QA for compact schedules, floor plans, completed weeks, grid views, and CTUIT entry output.
+- [ ] Keep the AV editor and manager/staff availability models consistent, including future effective dates and save/apply behavior.
+- [ ] Resolve the highest-impact schedule-view bugs: single-day assignment behavior, archived employee filtering, shift-bay selection, and drag/drop recovery.
+
+### P1: Minimum Sellable Staff Workflow
+
+This is the next product milestone after the scheduler and data foundation are dependable. It creates the staff-facing loop needed before marketing the product seriously.
+
+- [ ] **Portal launch gate: implement schedule publishing before staff access goes live.** A week must remain a manager-only draft until an authorized manager explicitly publishes it. Support both `Publish Week` and authorized single-shift publish/unpublish actions. Publishing must preserve a published snapshot/revision, record who published it and when, show staff only the latest published version, distinguish published work from draft edits, and require an intentional republish after post-publication changes.
+- [ ] Finish staff account invitation, one-login routing, temporary-password replacement, and location-scoped access.
+- [ ] Finish staff My Schedule, profile/privacy controls, request-off submission, availability submission, and manager approval queues.
+- [ ] Add shift release and manager-approved pickup as the first staff coverage workflow.
+- [ ] Add the smallest useful notification flow: in-app status first, email second, SMS/push later.
+- [ ] Add seasonal/student status before the next school-cycle scheduling period: active employee, away at school, and break schedule, with optional effective dates.
+
+### P2: Rules And Recommendation Foundation
+
+Build this before autonomous assignment. The scheduler needs one shared constraint model that humans, recommendations, and automation all use.
+
+- [ ] Replace isolated weekly work rules with a shared Rules & Preferences model.
+- [ ] Support hard constraints: request-offs, availability, no doubles, rest/clopen limits, maximum consecutive days, and required days off.
+- [ ] Support recurring constraints: weekend rotations, every-X-week patterns, and one-weekend-off-per-month rules.
+- [ ] Support linked-employee rules, such as coordinating two employees' start/end times within an allowed difference.
+- [ ] Separate hard rules from soft preferences and show which rule caused a recommendation or assignment to be rejected.
+- [ ] Expand historical shift recommendations with seniority, repeated assignments, seasonal status, rules, availability, and fairness signals.
+
+### P3: Collaboration And Scale
+
+These features become much safer after the core records, permissions, audit trail, and rule model are stable.
+
+- [ ] Add record-level concurrency, entity history, and owner-only undo.
+- [ ] Add multi-location access and cross-location labor requests.
+- [ ] Add staff messaging and location-scoped group communication.
+- [ ] Add coherent narrow-screen/read-only access and then refine the mobile staff experience.
+- [ ] Add analytics for labor usage, coverage, schedule fairness, and staff satisfaction.
+
+### P4: Long-Term Product Expansion
+
+- [ ] Build the floor-plan designer and section-balancing tools.
+- [ ] Build deeper automated scheduling and business-projection intelligence.
+- [ ] Research earned-tip/earned-wage access and payroll integrations.
+- [ ] Revisit marketing, tutorials, FAQ, and broader multi-unit product packaging after the MVP workflow is proven.
+
 ## Current Priority
 
 - [ ] Make RO import trustworthy for weekly use: accurate parsing, duplicate prevention, clear import confirmation, and an import summary.
@@ -17,6 +71,7 @@
 ## Core Workflow Polish
 
 - [ ] Add a concise Help / FAQ area: searchable answers for the availability workflow, scheduling, publishing, employee setup, imports, printing, backups, and common troubleshooting. Keep the first version brief and link to deeper walkthroughs only when needed.
+- [ ] Define publish safeguards: preview the week before publishing, show unresolved coverage/conflict warnings, preserve the previous published revision, support owner/manager permissions, provide a clear rollback or withdraw-publish path, and require confirmation before unpublishing a shift that staff may already have viewed.
 - [ ] Add an in-app Help & Feedback surface where users can choose Bug, Suggestion, or Question, describe the issue, and send relevant context (app version, page, location, and optional screenshot) to the owner/support destination. Decide the support email, retention, privacy notice, and notification workflow before enabling delivery.
 - [ ] Run a dedicated UI/UX simplification pass using Design Parser/Mobbin/Emil-style principles: reduce competing colors, reduce simultaneous information density, respect Miller's Law, make one primary action obvious per surface, and treat animation as functional feedback rather than decoration.
 - [ ] Revisit top-level navigation: evaluate whether Templates and Roles should remain permanent tabs or move into an onboarding/setup area or Settings after initial configuration, while keeping occasional maintenance easy to find.
@@ -47,6 +102,9 @@
 
 ## Scheduling Logic
 
+- [ ] Add seasonal/student scheduling status: keep the employee active, but allow `Away at school` and `Break schedule` modes with optional effective dates so recommendations and automation exclude them while they are away.
+- [ ] Add linked employee scheduling constraints for transportation or other shared-ride situations, with configurable maximum start/end-time difference and hard versus preferred handling.
+- [ ] Consolidate employee work rules, linked-employee constraints, and staff preferences into one scheduler-readable rules model before autonomous assignment.
 - [ ] Add emergency-only role eligibility for employees who can fill a role but should not be recommended for it.
 - [ ] Support role training by meal period, not just broad role-wide training.
 - [ ] Refine lunch closer logic and warnings.
@@ -54,6 +112,7 @@
 - [ ] Improve clopen detection and eventually suggest rearrangements to avoid clopens.
 - [ ] Rebuild Quick Training as a guided workflow that creates or links actual training shifts without marking employees fully trained too early.
 - [ ] Rebuild employee suggestion scoring later using seniority, sales data, shift performance, doubles, closing ability, and learned scheduling patterns.
+- [ ] Make recommendations explainable: show the main positive and negative factors and identify any hard rule that prevented a candidate.
 
 ## Printing And Floor Plans
 
@@ -70,11 +129,17 @@
 
 ## Ctuit Entry Assistant
 
-- [ ] Perfect a concise Ctuit entry list sorted in the fastest manual-entry order.
-- [ ] Standardize employee names, role names, and shift times so they match Ctuit.
-- [ ] Add a guided Ctuit entry mode that works shift-by-shift without posting.
-- [ ] Explore browser automation for repeatable Ctuit entry steps.
-- [ ] Add verification comparing Shift Bay expectations against Ctuit before anything is posted.
+- [ ] **Priority 1: Perfect a concise Ctuit entry list** sorted in the fastest manual-entry order.
+- [ ] **Priority 1: Add a Ctuit transfer manifest and completion report.** Classify every row as entered, reused, created, skipped, ambiguous, or unresolved, and explicitly report employees who are missing from Ctuit (for example, a new trainee whose Ctuit profile has not been created yet).
+- [ ] **Priority 1: Standardize employee names, role names, and shift times** so they match Ctuit, including a persistent profile-to-Ctuit name mapping instead of rediscovering nickname matches each week.
+- [ ] **Priority 1: Make Ctuit verification compare Shift Bay's explicit closer state against the final Ctuit row**, including clearing inherited template closer flags.
+- [ ] **Priority 2: Add a guided Ctuit entry mode** that works shift-by-shift without posting and pauses for exceptions requiring manager judgment.
+- [ ] **Priority 2: Explore browser automation for repeatable Ctuit entry steps**, beginning with exact matches and requiring confirmation for unresolved or unusual rows.
+- [ ] **Priority 2: Add final verification comparing Shift Bay expectations against Ctuit** before anything is posted.
+- [ ] **Priority 3: Add secure Ctuit credential storage per manager/location.** Credentials must be encrypted, location-scoped, access-controlled, rotatable, and excluded from ordinary employee-profile data and logs.
+- [ ] **Priority 3: Add an explicit sync/publish command** that can reconcile the live Shift Bay schedule to Ctuit, show a dry-run diff, require confirmation, and preserve an audit record of every change.
+- [ ] **Priority 4: Evaluate scheduled background synchronization.** Only pursue silent periodic updates after the assisted workflow is reliable, Ctuit access/automation is permitted and stable, and the owner has configurable safeguards for draft, publish, rollback, and failure notifications.
+- [ ] **Priority 4: Mirror approved staff-portal changes into Ctuit** for request-offs, approved shift releases/swaps, and other schedule-affecting events, using the same dry-run, approval, audit, and rollback controls as schedule synchronization.
 
 ## Data Safety And Multi-Computer Use
 
@@ -127,7 +192,9 @@
 - [ ] Design cross-location staff pickup rules after the single-location staff portal works.
 - [ ] Replace raw availability text fields with compact start/end time controls, one visible window per day plus an add-window action. Keep day grouping obvious and allow added windows to be removed.
 - [ ] Finish named availability patterns and week assignment controls using the planned pattern/assignment tables: save up to four named patterns, assign a pattern to a specific week, and configure non-overlapping weekly/biweekly/rotation schedules.
-- [ ] Add schedule posting workflow: distinguish manager draft shifts from published staff-visible shifts, add a deliberate Publish Week action, preserve the published snapshot, and show staff only the latest published schedule.
+- [ ] Complete the staff-facing side of schedule publishing: show the published week and its last-published timestamp, clearly label unpublished manager changes, and prevent draft-only shifts from appearing in staff schedules or notifications.
+- [ ] Add individual shift visibility states: a shift may be published while the rest of its week remains draft, and an authorized manager may unpublish that shift without changing unrelated shifts. Record the actor, timestamp, reason, and resulting staff notification/audit event.
+- [ ] Add publishing notifications: notify affected staff when a schedule containing their shifts is published, and when their published schedule gains, loses, or materially changes a shift. Include the shift date, role, time, and whether the change was an addition, removal, or edit. Keep notification delivery channel preferences and an in-app history for later email/SMS/push support.
 
 ## Longer-Term Product Direction
 

@@ -6,6 +6,7 @@ const ACTIVE_WEEK_KEY = "restaurantScheduler.activeWeek.v1";
 const AUTH_SESSION_KEY = "shiftBay.supabaseSession.v1";
 const SELECTED_LOCATION_KEY = "shiftBay.selectedLocationId.v1";
 const DEMO_LOCATION_ID = "78de461d-1f9e-4e66-83a8-a590359400aa";
+const DEMO_SEED_VERSION = "2026-08-18-v1";
 const COLLAPSED_ROLE_GROUPS_KEY = "restaurantScheduler.collapsedRoleGroups.v1";
 const EXPANDED_TEMPLATE_SETS_KEY = "restaurantScheduler.expandedTemplateSets.v1";
 const COLLAPSED_TEMPLATE_DAYS_KEY = "restaurantScheduler.collapsedTemplateDays.v1";
@@ -29,8 +30,10 @@ const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
 // schedule records stay behind an explicit URL opt-in during cutover.
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
+// The normalized schedule is now the default read source after the live
+// parity checks passed. The explicit legacy URL remains the rollback view.
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  ["read", "direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_SCHEDULE_MODE);
+  NORMALIZED_SCHEDULE_MODE !== "legacy";
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
@@ -92,6 +95,8 @@ let inFlightMutationFingerprint = "";
 let lastConfirmedMutationFingerprint = "";
 let employeeProfileSavePriority = false;
 let cloudSaveBlockedByStale = false;
+let cloudWritesPaused = false;
+let cloudWriteEpoch = null;
 let authRefreshInFlight = null;
 let lastKnownServerSavedAt = "";
 let lastKnownServerState = null;
@@ -814,9 +819,36 @@ function saveState(options = {}) {
 }
 
 function setStorageStatus(status, detail = "") {
+  if (cloudWritesPaused && status !== "local") {
+    storageStatus = "stale";
+    storageStatusDetail = detail || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+    updateStorageStatus();
+    return;
+  }
   storageStatus = status;
   storageStatusDetail = detail;
   updateStorageStatus();
+}
+
+function applyWriteControl(control) {
+  if (!control || typeof control !== "object") return;
+  const wasPaused = cloudWritesPaused;
+  const nextEpoch = Number(control.writeEpoch || 0);
+  const epochChanged = cloudWriteEpoch !== null && nextEpoch > 0 && nextEpoch !== cloudWriteEpoch;
+  cloudWriteEpoch = nextEpoch || cloudWriteEpoch;
+  cloudWritesPaused = Boolean(control.writesPaused);
+
+  if (cloudWritesPaused) {
+    setStorageStatus("stale", control.message || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.");
+    return;
+  }
+  // A tab that lived through a pause must refresh after the control epoch
+  // changes. This prevents edits against a partially migrated view from being
+  // sent after the owner reopens writes.
+  if (wasPaused || epochChanged) {
+    cloudSaveBlockedByStale = true;
+    setStorageStatus("stale", "Writes are available again. Refresh Shift Bay before making more edits.");
+  }
 }
 
 function storageStatusLabel(status) {
@@ -900,6 +932,13 @@ async function persistEmployeeProfileToServer(employee) {
     setEmployeeSaveDebugStatus("Cloud request did not start: cloud storage is not ready", "failed");
     return false;
   }
+  if (cloudWritesPaused) {
+    const message = "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+    setStorageStatus("stale", message);
+    setEmployeeSaveDebugStatus(message, "failed");
+    showConflict(message);
+    return false;
+  }
 
   const saveAttemptId = `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   setEmployeeSaveDebugStatus(`Cloud request started [${saveAttemptId}]`);
@@ -939,6 +978,15 @@ async function persistEmployeeProfileToServer(employee) {
       })
     });
     const result = await response.json().catch(() => ({}));
+    if (response.status === 423) {
+      cloudWritesPaused = true;
+      cloudSaveBlockedByStale = true;
+      const message = result.error || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+      setStorageStatus("stale", message);
+      setEmployeeSaveDebugStatus(message, "failed");
+      showConflict(message);
+      return false;
+    }
     if (!response.ok) throw new Error(result.error || `Employee profile save failed: ${response.status}`);
     if (result.savedAt) {
       // This endpoint saves an employee override, not the scheduler document.
@@ -969,8 +1017,10 @@ async function persistEmployeeProfileToServer(employee) {
 }
 
 function queueServerSave() {
-  if (cloudSaveBlockedByStale) {
-    setStorageStatus("stale", "CLOUD SAVE REJECTED. Refresh before making more edits.");
+  if (cloudWritesPaused || cloudSaveBlockedByStale) {
+    setStorageStatus("stale", cloudWritesPaused
+      ? "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen."
+      : "CLOUD SAVE REJECTED. Refresh before making more edits.");
     return;
   }
   const mutationFingerprint = schedulerMutationFingerprint(state);
@@ -994,7 +1044,7 @@ async function persistStateToServer(options = {}) {
     return false;
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
-  if (cloudSaveBlockedByStale && options.scope !== "employee-profile") return false;
+  if (cloudWritesPaused || (cloudSaveBlockedByStale && options.scope !== "employee-profile")) return false;
   const mutationFingerprint = schedulerMutationFingerprint(state);
   if (serverSaveInFlight) {
     // A profile save must not be reported as failed just because a queued
@@ -1023,6 +1073,15 @@ async function persistStateToServer(options = {}) {
       body: JSON.stringify(serverEnvelope({ ...options, stateOverride: requestState }))
     });
     if (response.status === 401) { handleAuthRequired(); throw new Error("Cloud login is required."); }
+    if (response.status === 423) {
+      const paused = await response.json().catch(() => ({}));
+      cloudWritesPaused = true;
+      cloudSaveBlockedByStale = true;
+      const message = paused.error || "Shift Bay is temporarily read-only while a migration is in progress. Refresh when writes reopen.";
+      setStorageStatus("stale", message);
+      showConflict(message);
+      return false;
+    }
     if (response.status === 403) {
       const forbidden = await response.json().catch(() => ({}));
       throw new Error(forbidden.error || readOnlyMessage());
@@ -1291,6 +1350,16 @@ function isDemoLocation() {
   return selectedLocationId === DEMO_LOCATION_ID;
 }
 
+function demoStateNeedsBootstrap(candidate = state) {
+  if (!isDemoLocation() || !canEditScheduler()) return false;
+  if (candidate?.meta?.demoSeedVersion) return false;
+  const hasEmployees = Array.isArray(candidate?.employees) && candidate.employees.length > 0;
+  const hasTemplates = Array.isArray(candidate?.templates) && candidate.templates.length > 0;
+  const hasAssignedShifts = Array.isArray(candidate?.shifts) && candidate.shifts.length > 0;
+  const hasOpenShifts = Array.isArray(candidate?.unassignedShifts) && candidate.unassignedShifts.length > 0;
+  return !hasEmployees && !hasTemplates && !hasAssignedShifts && !hasOpenShifts;
+}
+
 function setNormalizedScheduleReadBadge(readState = "off") {
   normalizedScheduleReadState = readState;
   updateNormalizedReadBadge();
@@ -1316,6 +1385,11 @@ function updateNormalizedReadBadge() {
     availabilityActive: "Normalized Availability Read",
     availabilityUnavailable: "Availability read unavailable"
   };
+  if (NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE) {
+    labels.requested = "Atomic Sandbox check...";
+    labels.active = "Atomic Sandbox";
+    labels.unavailable = "Atomic Sandbox read unavailable";
+  }
   const readState = NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off" && !NORMALIZED_SCHEDULE_READ_MODE
     ? normalizedAvailabilityReadState
     : normalizedScheduleReadState;
@@ -1965,6 +2039,7 @@ function buildDemoSchedulerState() {
   demo.settings.scheduleRoleOrder = demo.roles.filter((role) => role.department === "FOH").map((role) => role.id);
   demo.settings.printRoleOrder = demo.settings.scheduleRoleOrder;
   demo.meta.updatedAt = nowIso();
+  demo.meta.demoSeedVersion = DEMO_SEED_VERSION;
   return demo;
 }
 
@@ -2236,6 +2311,7 @@ async function initializeAuth() {
     ]);
     authConfig = config;
     authRequired = status?.mode === "supabase";
+    applyWriteControl(status?.writeControl);
     if (!authRequired) {
       hideLoginOverlay();
       updateAccountUi();
@@ -2312,6 +2388,31 @@ async function hydrateStateFromServer() {
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
       if (Number.isInteger(Number(envelope.normalizedScheduleRevision))) {
         lastKnownNormalizedScheduleRevision = Number(envelope.normalizedScheduleRevision);
+      }
+      // A demo location is expected to be usable from any device. Older
+      // deployments could create an empty cloud document when a second device
+      // first opened the sandbox, even though the original browser still had
+      // the fake data in localStorage. Restore only that unmistakable empty
+      // demo state, and only for an editor; never touch a populated location.
+      if (demoStateNeedsBootstrap(serverState)) {
+        const seededState = buildDemoSchedulerState();
+        seededState.meta = { ...(seededState.meta || {}), serverSavedAt };
+        state = seededState;
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        serverStorageReady = true;
+        lastKnownServerSavedAt = serverSavedAt;
+        lastKnownServerState = cloneSchedulerState(serverState);
+        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+        setStorageStatus("saving", "Restoring the shared Sandbox demo data...");
+        const restored = await persistStateToServer({ immediate: true });
+        if (restored) {
+          setStorageStatus("saved", "Loaded the shared Sandbox demo data.");
+          showConflict("Sandbox demo data was restored for this device.");
+        }
+        currentDate = loadLocalActiveWeek(state.settings.weekStart);
+        saveLocalActiveWeek({ shared: false });
+        finishInitialReadSourceHydrationRender();
+        return;
       }
       serverState.meta = { ...(serverState.meta || {}), serverSavedAt };
       const previousReadSource = localStorage.getItem(readSourceKey()) || "";
@@ -2403,15 +2504,18 @@ async function hydrateStateFromServer() {
     if (response.status === 404) {
       const createCleanLocation = skipLocalRecoveryOnce;
       skipLocalRecoveryOnce = false;
-      if (createCleanLocation) {
-        state = defaultState();
+      const shouldSeedDemo = isDemoLocation() && canEditScheduler();
+      const bootstrapEmptyDemo = shouldSeedDemo && demoStateNeedsBootstrap(state);
+      if (createCleanLocation || bootstrapEmptyDemo) {
+        state = shouldSeedDemo ? buildDemoSchedulerState() : defaultState();
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
         finishInitialReadSourceHydrationRender();
       }
       serverStorageReady = true;
       lastKnownServerSavedAt = "";
-      setStorageStatus("saving", "Creating the first shared scheduler data file...");
-      await persistStateToServer();
+      setStorageStatus("saving", shouldSeedDemo ? "Creating the shared Sandbox demo data file..." : "Creating the first shared scheduler data file...");
+      const created = await persistStateToServer();
+      if (created && shouldSeedDemo) showConflict("Sandbox demo data was restored for this device.");
       return;
     }
     if (response.status === 401 || response.status === 403) { handleAuthRequired(); return; }
@@ -2467,6 +2571,8 @@ async function checkForNewerSharedSchedule() {
     const response = await authFetch("/api/status", { cache: "no-store" });
     if (!response.ok) return;
     const status = await response.json().catch(() => ({}));
+    applyWriteControl(status?.writeControl);
+    if (cloudWritesPaused || cloudSaveBlockedByStale) return;
     const remoteSavedAt = String(status.updatedAt || "");
     if (!remoteSavedAt || !lastKnownServerSavedAt || Date.parse(remoteSavedAt) <= Date.parse(lastKnownServerSavedAt) + 1000) return;
     if (employeeFormHasUnsavedChanges()) {
@@ -12032,6 +12138,7 @@ function renderCtuitEntryPrintView() {
       (roleById(a.roleId)?.name || "").localeCompare(roleById(b.roleId)?.name || "") ||
       displayName(employeeById(a.employeeId)).localeCompare(displayName(employeeById(b.employeeId)))
     ));
+  const preflight = ctuitEntryPreflight(shifts);
   const grouped = new Map(dateKeys.map((dateKey) => [dateKey, []]));
   shifts.forEach((shift) => {
     if (!grouped.has(shift.date)) grouped.set(shift.date, []);
@@ -12047,7 +12154,8 @@ function renderCtuitEntryPrintView() {
         </div>
         <div class="ctuit-entry-total">${shifts.length} shifts</div>
       </header>
-      <p class="ctuit-entry-hint">Work from top to bottom. Check each box after the shift is entered in Ctuit.</p>
+      <p class="ctuit-entry-hint">Enter direct rows first. Check each box after the shift is entered in Ctuit. Every row explicitly says whether to set or clear Close.</p>
+      ${renderCtuitEntryPreflight(preflight)}
       ${Array.from(grouped.entries()).map(([dateKey, dayShifts]) => renderCtuitEntryDay(dateKey, dayShifts)).join("")}
     </section>
   `;
@@ -12079,8 +12187,8 @@ function renderCtuitEntryRow(shift) {
   const role = roleById(shift.roleId);
   const employee = employeeById(shift.employeeId);
   const end = shift.untilVolume ? "Until Volume" : shift.end;
-  const flags = [];
-  if (shift.isCloser) flags.push("CL");
+  // Ctuit preserves template flags, so every row must explicitly say whether to set or clear Close.
+  const flags = [shift.isCloser ? "Close: Set" : "Close: Clear"];
   if (shift.isFlexDouble) flags.push("Flex");
   trainingBadgesForShift(shift).forEach((trainingNote) => flags.push(trainingNote));
   if (shift.notes) flags.push(shift.notes);
@@ -12090,7 +12198,7 @@ function renderCtuitEntryRow(shift) {
       <td class="ctuit-entry-check"><span class="ctuit-entry-box"></span></td>
       <td class="ctuit-entry-time">${shift.start} - ${end}</td>
       <td class="ctuit-entry-role ${roleClass}">${role?.name || "Role"}</td>
-      <td class="ctuit-entry-name">${displayName(employee)}</td>
+      <td class="ctuit-entry-name">${ctuitEntryEmployeeMarkup(employee)}</td>
       <td>${flags.join("; ")}</td>
     </tr>
   `;
@@ -14716,6 +14824,81 @@ function normalizePhone(value) {
   const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   if (ten.length !== 10) return cleanCell(value);
   return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+}
+
+function ctuitEntryPreflight(shifts) {
+  const longShifts = shifts.filter((shift) => {
+    if (shift.untilVolume) return true;
+    const start = minutesFromTime(shift.start);
+    const end = minutesFromTime(shift.end);
+    return Number.isFinite(start) && Number.isFinite(end) && end - start > 8 * 60;
+  });
+  const trainingShifts = shifts.filter((shift) => Boolean(shift.training?.isTraining));
+  const nameLookups = Array.from(new Map(
+    shifts
+      .map((shift) => employeeById(shift.employeeId))
+      .filter((employee) => ctuitEntryNeedsProfileName(employee))
+      .map((employee) => [employee.id, employee])
+  ).values());
+  const missingEmployees = shifts.filter((shift) => Boolean(shift.employeeId) && !employeeById(shift.employeeId));
+  const exceptionIds = new Set([...longShifts, ...trainingShifts].map((shift) => shift.id));
+  return {
+    directCount: shifts.length - exceptionIds.size,
+    longShifts,
+    trainingShifts,
+    nameLookups,
+    missingEmployees,
+    closerCount: shifts.filter((shift) => shift.isCloser).length,
+    clearCloserCount: shifts.filter((shift) => !shift.isCloser).length
+  };
+}
+
+function renderCtuitEntryPreflight(preflight) {
+  const longRows = preflight.longShifts.map((shift) => ctuitEntryPreflightRow(shift, "Show More"));
+  const trainingRows = preflight.trainingShifts.map((shift) => ctuitEntryPreflightRow(shift, "Training note"));
+  const missingRows = preflight.missingEmployees.map((shift) => ctuitEntryPreflightRow(shift, "Staff profile not found"));
+  const nameRows = preflight.nameLookups.map((employee) =>
+    `<span><strong>Profile name:</strong> ${escapeHtml(displayName(employee))} -> ${escapeHtml(ctuitEntryProfileName(employee))}</span>`
+  );
+  const exceptions = [...longRows, ...trainingRows, ...missingRows, ...nameRows];
+  return `
+    <section class="ctuit-entry-preflight">
+      <h3>Entry Preflight</h3>
+      <div class="ctuit-entry-preflight-summary">
+        <span><strong>${preflight.directCount}</strong> direct</span>
+        <span><strong>${preflight.longShifts.length}</strong> Show More</span>
+        <span><strong>${preflight.trainingShifts.length}</strong> training</span>
+        <span><strong>${preflight.missingEmployees.length}</strong> missing staff</span>
+        <span><strong>${preflight.nameLookups.length}</strong> profile names</span>
+        <span><strong>${preflight.closerCount}</strong> set Close</span>
+        <span><strong>${preflight.clearCloserCount}</strong> clear Close</span>
+      </div>
+      ${exceptions.length ? `<div class="ctuit-entry-preflight-exceptions">${exceptions.join("")}</div>` : ""}
+    </section>
+  `;
+}
+
+function ctuitEntryPreflightRow(shift, action) {
+  const employee = employeeById(shift.employeeId);
+  const role = roleById(shift.roleId);
+  return `<span><strong>${action}:</strong> ${displayDate(parseDateKey(shift.date))} | ${displayName(employee)} | ${role?.name || "Role"} | ${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}</span>`;
+}
+
+function ctuitEntryProfileName(employee) {
+  return fullEmployeeName(employee) || displayName(employee);
+}
+
+function ctuitEntryNeedsProfileName(employee) {
+  return Boolean(employee && ctuitEntryProfileName(employee).toLocaleLowerCase() !== displayName(employee).toLocaleLowerCase());
+}
+
+function ctuitEntryEmployeeMarkup(employee) {
+  const displayed = displayName(employee);
+  const profileName = ctuitEntryProfileName(employee);
+  const lookup = ctuitEntryNeedsProfileName(employee)
+    ? `<small>Ctuit: ${escapeHtml(profileName)}</small>`
+    : "";
+  return `${escapeHtml(displayed)}${lookup}`;
 }
 
 function formatPhoneNumber(value) {

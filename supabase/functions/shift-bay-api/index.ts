@@ -29,7 +29,7 @@ const normalizedAtomicConflictCache = new Map<string, {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-shift-bay-location-id",
-  "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Cache-Control": "no-store"
 };
 
@@ -148,6 +148,41 @@ function escapeHtml(value: unknown) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// The write pause is intentionally fail-open until the reviewed migration SQL
+// has been run. Once the control row exists, every browser session observes
+// the same owner-controlled read-only state before a write reaches Supabase.
+async function loadWriteControl() {
+  try {
+    const rows = await supabaseJson("/rpc/get_shift_bay_write_control", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: "{}"
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return row && typeof row === "object" ? row as JsonRecord : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeControlExempt(path: string) {
+  return path.startsWith("/auth/") || path === "/staff/login" || path === "/staff/change-password";
+}
+
+async function enforceWriteControl(request: Request, path: string) {
+  const writeMethods = ["POST", "PUT", "PATCH", "DELETE"];
+  if (!writeMethods.includes(request.method) || writeControlExempt(path)) return null;
+  const control = await loadWriteControl();
+  if (!control?.writes_paused) return null;
+  return json(423, {
+    ok: false,
+    error: String(control.message || "Shift Bay is temporarily read-only while a migration is in progress. Refresh before continuing."),
+    writesPaused: true,
+    writeEpoch: Number(control.write_epoch || 0),
+    updatedAt: control.updated_at || null
+  });
 }
 
 function formatPhoneNumber(value: unknown) {
@@ -406,18 +441,20 @@ function normalizedReadAllowed(locationId: string) {
   return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
-// The live restaurant is still backed by the compatibility document while the
-// migration is proven. Only the disposable Sandbox mirrors ordinary schedule
-// saves into normalized rows.
+// Keep the compatibility document as the rollback source while both locations
+// mirror ordinary schedule saves into normalized rows. The normal save path is
+// still snapshot-first; the production atomic writer remains disabled.
 function normalizedScheduleMirrorAllowed(locationId: string) {
-  return locationId === SANDBOX_LOCATION_ID;
+  const cfg = config();
+  return locationId === SANDBOX_LOCATION_ID || Boolean(locationId && locationId === cfg.locationId);
 }
 
 // The Atomic Sandbox path is an isolated migration canary. Keep it opt-in at
 // the Edge Function so an old browser tab or bookmarked test URL cannot keep
 // consuming database resources while the canary is paused.
 function normalizedAtomicCanaryEnabled() {
-  return env("SHIFT_BAY_ATOMIC_CANARY_ENABLED") === "true";
+  const value = env("SHIFT_BAY_ATOMIC_CANARY_ENABLED").trim().toLowerCase();
+  return ["true", "1", "yes"].includes(value);
 }
 
 function cachedNormalizedAtomicConflict(locationId: string, expectedRevision: number) {
@@ -825,9 +862,9 @@ async function removeNormalizedLegacyRowsNotIn(table: string, locationId: string
   return staleRows.length;
 }
 
-// The JSON document remains the compatibility source during this bridge.
-// Only changed legacy records are mirrored after the first baseline write, so
-// a normal schedule edit never rewrites an entire location's history.
+// The JSON document remains the compatibility rollback source during this
+// bridge. Only changed legacy records are mirrored after the first baseline
+// write, so a normal schedule edit never rewrites an entire location's history.
 async function syncNormalizedSchedule(locationId: string, state: JsonRecord, previousState: JsonRecord | null = null) {
   if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" };
   try {
@@ -1822,12 +1859,19 @@ async function handleStatus(request: Request) {
   const validated = bearerToken(request) ? await validateSession(request) : null;
   const locationId = validated?.ok ? (validated.user as any).locationId : cfg.locationId;
   const row = await loadDocumentRow("saved_at,updated_at", locationId);
+  const writeControl = await loadWriteControl();
   return json(200, {
     ok: true,
     mode: "supabase",
     locationId,
     documentKey: cfg.documentKey,
-    updatedAt: row?.updated_at || row?.saved_at || null
+    updatedAt: row?.updated_at || row?.saved_at || null,
+    writeControl: writeControl ? {
+      writeEpoch: Number(writeControl.write_epoch || 0),
+      writesPaused: Boolean(writeControl.writes_paused),
+      message: writeControl.message || null,
+      updatedAt: writeControl.updated_at || null
+    } : null
   });
 }
 
@@ -2108,6 +2152,36 @@ async function handleSaveState(request: Request) {
         });
       }
       throw error;
+    }
+    // The SQL procedure returns expected concurrency conflicts as structured
+    // data so stale tabs do not turn normal contention into Postgres errors.
+    // Translate those results back into the same API contract as the legacy
+    // exception path.
+    if (normalizedAtomicWrite?.ok === false) {
+      const resultCode = String(normalizedAtomicWrite?.code || normalizedAtomicWrite?.errorCode || "");
+      const resultMessage = String(normalizedAtomicWrite?.error || normalizedAtomicWrite?.message || "");
+      if (resultCode === "55P03" || /Another normalized atomic write is already in progress/i.test(resultMessage)) {
+        return json(409, {
+          error: "Another Atomic Sandbox save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (resultCode === "40001" || resultMessage.includes("Normalized schedule revision conflict")) {
+        const currentRevision = Number.isInteger(Number(normalizedAtomicWrite?.currentRevision))
+          ? Number(normalizedAtomicWrite.currentRevision)
+          : (await loadNormalizedScheduleRevision(locationId)).revision;
+        rememberNormalizedAtomicConflict(
+          locationId,
+          expectedNormalizedScheduleRevision,
+          currentRevision
+        );
+        return json(409, {
+          error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
+          expectedNormalizedScheduleRevision,
+          normalizedScheduleRevision: currentRevision
+        });
+      }
+      throw new Error(resultMessage || "The atomic normalized schedule write was rejected.");
     }
     const savedAt = new Date().toISOString();
     const revision = Number(normalizedAtomicWrite?.revision);
@@ -2649,6 +2723,8 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const path = routePath(request);
+    const writeControlResponse = await enforceWriteControl(request, path);
+    if (writeControlResponse) return writeControlResponse;
     if (path === "/auth/config" && request.method === "GET") return await handleAuthConfig();
     if (path === "/auth/login" && request.method === "POST") return await handleLogin(request);
     if (path === "/auth/refresh" && request.method === "POST") return await handleRefresh(request);
