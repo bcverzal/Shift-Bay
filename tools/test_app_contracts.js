@@ -122,7 +122,11 @@ function run() {
   includes(app, 'authFetch("/api/normalized/schedule"', "normalized schedule comparison must use the protected API route");
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
-  includes(app, 'NORMALIZED_SCHEDULE_MODE === "read"', "normalized schedule reads must remain behind an explicit opt-in during cutover");
+  assert.match(
+    app,
+    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE\s*&&\s*NORMALIZED_SCHEDULE_MODE === "read";/,
+    "normalized schedule reads must remain behind an explicit opt-in during cutover"
+  );
   includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
   includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
@@ -133,7 +137,7 @@ function run() {
   includes(app, "quarantinedByLegacySnapshot", "the compatibility rollback view must not auto-replay a previously captured browser recovery");
   includes(app, "function readSourceKey", "read-source tracking must stay scoped to the selected location");
   includes(app, "readSourceChanged", "switching read sources must not be treated as a schedule edit");
-  includes(app, "DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE", "hosted routes must not briefly paint cached schedule data before shared-source hydration");
+  includes(app, "const DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE = SERVER_STORAGE_ENABLED;", "hosted routes must not briefly paint cached schedule data before shared-source hydration");
   includes(app, "finishInitialReadSourceHydrationRender", "the selected read source must render only after hydration finishes");
   includes(app, "if (!initialReadSourceHydrationPending)", "explicit read-source overrides must defer the initial browser-cache render");
   includes(app, '"/api/state?normalizedSchedule=read"', "normalized schedule read mode must request the guarded state path");

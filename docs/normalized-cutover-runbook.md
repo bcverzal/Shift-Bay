@@ -11,8 +11,28 @@ are mirrored into normalized tables.
 - Do not use `legacySnapshot=1`, migration commands, or Supabase schema edits
   while actively creating a schedule.
 - Do not edit the same shift simultaneously from two devices.
-- The normal app reads normalized schedule and availability data when enabled;
-  `?legacySnapshot=1` is the immediate compatibility fallback.
+- The normal app is intentionally **snapshot-first**. It waits for the shared
+  snapshot before rendering, rather than briefly showing an older browser copy.
+- `?normalizedSchedule=read` is an explicit read-only normalized schedule
+  canary. `?legacySnapshot=1` remains the immediate compatibility reference.
+
+## Current Read Safety Gate
+
+Do not make normalized schedule reads the default just because one report
+passes. The cutover requires all of the following from the same quiet window:
+
+1. A fresh live schedule parity report with
+   `readyForNormalizedScheduleReads: true`.
+2. A normal hosted-page refresh that shows the complete schedule after shared
+   hydration, with no transient partial grid.
+3. The same schedule verified through `?legacySnapshot=1` and the explicit
+   `?normalizedSchedule=read` canary.
+4. One reversible create, edit, and delete in the normal app, followed by a
+   refresh and another parity report.
+
+Until all four checks are recorded, the normal URL stays snapshot-first and
+normalized records remain the mirrored, verified successor rather than the
+authoritative read source.
 
 ## Final Hybrid Verification
 
@@ -33,10 +53,12 @@ are mirrored into normalized tables.
 & "C:\Users\bcver\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" tools\compare_normalized_availability_baseline.js --confirm-live
 ```
 
-4. In the normal app, make one reversible smoke-test change, verify it saves,
-   then verify the same data with `?legacySnapshot=1`. Revert the test change.
-5. Record the baseline filename and the three passing reports before beginning
-   the observation period.
+4. In the normal app, make one reversible create, edit, and delete. Refresh
+   after each change, then verify the same result with
+   `?legacySnapshot=1` and `?normalizedSchedule=read`. Revert the test
+   change.
+5. Rerun the schedule parity report after the smoke test. Record the baseline
+   filename and all passing reports before beginning the observation period.
 
 ## Observation Period
 
