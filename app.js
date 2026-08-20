@@ -82,12 +82,10 @@ const CURRENT_READ_SOURCE = LEGACY_SNAPSHOT_OVERRIDE
 // different source from the browser's last cached schedule. Do not paint that
 // cached schedule first, otherwise a shift can briefly appear in the wrong
 // place before hydration replaces it with the selected source.
-// Do not paint browser-local schedule data before any server-backed read has
-// completed. The normalized read is now the default hosted source, so letting
-// its cached copy render first can briefly show shifts that the authoritative
-// response then removes or replaces.
-const DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE = SERVER_STORAGE_ENABLED &&
-  (LEGACY_SNAPSHOT_OVERRIDE || NORMALIZED_SCHEDULE_READ_MODE || NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE);
+// The browser copy is only a recovery cache. On every hosted load, wait for
+// the shared source before first render so an older local schedule cannot
+// flash on screen or be mistaken for the current one.
+const DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE = SERVER_STORAGE_ENABLED;
 let initialReadSourceHydrationPending = DEFER_INITIAL_RENDER_FOR_READ_OVERRIDE;
 let serverStorageReady = !SERVER_STORAGE_ENABLED;
 let serverSaveTimer = null;
