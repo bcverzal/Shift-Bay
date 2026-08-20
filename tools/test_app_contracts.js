@@ -124,8 +124,8 @@ function run() {
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
   assert.match(
     app,
-    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE\s*&&\s*NORMALIZED_SCHEDULE_MODE === "read";/,
-    "normalized schedule reads must remain behind an explicit opt-in during cutover"
+    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE[\s\S]*?\["read", "direct-sandbox-revision", "atomic-sandbox-revision"\]\.includes\(NORMALIZED_SCHEDULE_MODE\);/,
+    "normalized schedule reads must remain behind explicit read/canary opt-ins during cutover"
   );
   includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
   includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");

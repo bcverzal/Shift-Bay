@@ -31,12 +31,12 @@ const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZ
 // The compatibility snapshot remains the proven scheduler source. Normalized
 // schedule records stay behind an explicit URL opt-in until their live read
 // path has demonstrated complete parity under ordinary production use.
-const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  NORMALIZED_SCHEDULE_MODE === "read";
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-sandbox-revision";
+const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
+  ["read", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_SCHEDULE_MODE);
 // Direct writes are a controlled Sandbox-only canary. The normal application
 // continues to write the compatibility snapshot while this path is proven.
 const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
@@ -1274,6 +1274,13 @@ function selectedLocationHeaders() {
 }
 
 function resetWorkspaceForLocationSwitch() {
+  // These values belong to the selected location. Carrying a revision or a
+  // rejected-write flag across locations makes the next canary submit against
+  // the wrong normalized schedule and look stale immediately.
+  lastKnownNormalizedScheduleRevision = null;
+  cloudSaveBlockedByStale = false;
+  cloudWritesPaused = false;
+  cloudWriteEpoch = null;
   state = defaultState();
   selectedCell = null;
   selectedShiftId = null;
