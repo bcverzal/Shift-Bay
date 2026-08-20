@@ -18,6 +18,11 @@ Other observed failures had separate causes:
 - A successful response records the exact snapshot that was sent, so a later redraw does not resend it.
 - A stale browser is blocked after the first conflict and its edits are preserved for recovery.
 - The Edge Function remembers a known atomic revision conflict for 30 seconds and rejects the same stale revision before entering the RPC again.
+- The atomic RPC returns expected lock contention (`55P03`) and stale revision
+  conflicts (`40001`) as structured JSON instead of raising database errors;
+  the Edge Function translates those results into the same clean `409`
+  responses. These expected conflicts should not create a Postgres error
+  storm.
 - The RPC keeps the advisory lock, `3s` lock timeout, `20s` statement timeout, and one-transaction rollback behavior.
 - Production remains on the compatibility snapshot. Atomic writes remain Sandbox-only and opt-in.
 
@@ -29,6 +34,9 @@ Other observed failures had separate causes:
 4. Open two Atomic Sandbox tabs from the same revision. Save in tab A, then attempt one edit in tab B. Tab B should show one clear 409/refresh message; Supabase should not show a repeated conflict storm.
 5. Leave tab B stale for at least 30 seconds and verify that redraws do not create repeated RPC calls.
 6. Test one ordinary schedule edit, one delete, one open shift, and one request-off/block change. Confirm each successful save increments the normalized revision exactly once.
-7. Check Supabase logs and infrastructure after each test. Any new 504, 42501, or sustained 40001 volume is a stop condition.
+7. Check Supabase logs and infrastructure after each test. A single clean
+   `409` conflict is expected during the two-window test; new `504`, `42501`,
+   connection-closed errors, or sustained Postgres `40001`/`5xx` volume is a
+   stop condition.
 
 Do not enable normalized reads or atomic writes for the live restaurant until this sequence passes and the baseline comparison is clean.

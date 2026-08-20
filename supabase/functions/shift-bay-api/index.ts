@@ -453,7 +453,8 @@ function normalizedScheduleMirrorAllowed(locationId: string) {
 // the Edge Function so an old browser tab or bookmarked test URL cannot keep
 // consuming database resources while the canary is paused.
 function normalizedAtomicCanaryEnabled() {
-  return env("SHIFT_BAY_ATOMIC_CANARY_ENABLED") === "true";
+  const value = env("SHIFT_BAY_ATOMIC_CANARY_ENABLED").trim().toLowerCase();
+  return ["true", "1", "yes"].includes(value);
 }
 
 function cachedNormalizedAtomicConflict(locationId: string, expectedRevision: number) {
@@ -2151,6 +2152,36 @@ async function handleSaveState(request: Request) {
         });
       }
       throw error;
+    }
+    // The SQL procedure returns expected concurrency conflicts as structured
+    // data so stale tabs do not turn normal contention into Postgres errors.
+    // Translate those results back into the same API contract as the legacy
+    // exception path.
+    if (normalizedAtomicWrite?.ok === false) {
+      const resultCode = String(normalizedAtomicWrite?.code || normalizedAtomicWrite?.errorCode || "");
+      const resultMessage = String(normalizedAtomicWrite?.error || normalizedAtomicWrite?.message || "");
+      if (resultCode === "55P03" || /Another normalized atomic write is already in progress/i.test(resultMessage)) {
+        return json(409, {
+          error: "Another Atomic Sandbox save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (resultCode === "40001" || resultMessage.includes("Normalized schedule revision conflict")) {
+        const currentRevision = Number.isInteger(Number(normalizedAtomicWrite?.currentRevision))
+          ? Number(normalizedAtomicWrite.currentRevision)
+          : (await loadNormalizedScheduleRevision(locationId)).revision;
+        rememberNormalizedAtomicConflict(
+          locationId,
+          expectedNormalizedScheduleRevision,
+          currentRevision
+        );
+        return json(409, {
+          error: "Another user saved the normalized Sandbox schedule first. Refresh before making more changes.",
+          expectedNormalizedScheduleRevision,
+          normalizedScheduleRevision: currentRevision
+        });
+      }
+      throw new Error(resultMessage || "The atomic normalized schedule write was rejected.");
     }
     const savedAt = new Date().toISOString();
     const revision = Number(normalizedAtomicWrite?.revision);

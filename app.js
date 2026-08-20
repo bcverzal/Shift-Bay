@@ -1384,6 +1384,11 @@ function updateNormalizedReadBadge() {
     availabilityActive: "Normalized Availability Read",
     availabilityUnavailable: "Availability read unavailable"
   };
+  if (NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE) {
+    labels.requested = "Atomic Sandbox check...";
+    labels.active = "Atomic Sandbox";
+    labels.unavailable = "Atomic Sandbox read unavailable";
+  }
   const readState = NORMALIZED_AVAILABILITY_READ_MODE && normalizedAvailabilityReadState !== "off" && !NORMALIZED_SCHEDULE_READ_MODE
     ? normalizedAvailabilityReadState
     : normalizedScheduleReadState;
