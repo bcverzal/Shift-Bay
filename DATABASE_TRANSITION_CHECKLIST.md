@@ -21,7 +21,7 @@ This checklist is the working plan for moving Shift Bay from one JSON scheduler 
 
 - Roles, employees, employee-role capabilities, availability profiles/windows/assignments, templates, template shifts, shifts, open Shift Bay shifts, request-offs, and schedule blocks are mirrored for the live Machine Shed location.
 - Training links, coverage, floor-plan settings, and some metadata still need normalized destinations or field-level verification.
-- Normalized schedule and availability reads are the default manager path for approved locations. The snapshot remains available through the immediate `?legacySnapshot=1` compatibility override.
+- Normalized schedule and availability reads are currently an explicit canary path only. The compatibility snapshot remains the default manager read source, with normalized reads available through `?normalizedSchedule=read` and the snapshot diagnostic view available through `?legacySnapshot=1`.
 - Record-level optimistic concurrency and record-level undo are not implemented.
 
 ## Transition Rules
@@ -55,7 +55,7 @@ This checklist is the working plan for moving Shift Bay from one JSON scheduler 
 - [x] Run the additive employee scheduling-preference schema in Supabase.
 - [x] Mirror roles and employee-role capabilities into Sandbox and live Machine Shed.
 - [x] Mirror live saved availability definitions, windows, assignments, and approval state represented in the snapshot bridge.
-- [ ] Run the saved availability schema in Sandbox and verify it remains the one canonical model for staff and manager availability.
+- [ ] Resolve the remaining Sandbox demo availability-assignment comparison differences and verify the saved availability schema remains the one canonical model for staff and manager availability.
 - [x] Add a comparison report that checks snapshot employees, roles, availability, and role capabilities against normalized records.
 - [x] Add a field-level coverage audit and migration manifest before writing additional employee data.
 - [x] Define additive normalized destinations for employee scheduling preferences and weekly work rules.
@@ -92,19 +92,27 @@ This checklist is the working plan for moving Shift Bay from one JSON scheduler 
 - [ ] Add a recovery view that can restore a prior entity version.
 - [x] Deploy the live-canary Edge Function update and confirm explicit normalized schedule and availability reads.
 - [x] Define the rollback switch back to snapshot reads with `?legacySnapshot=1`.
-- [x] Cut over Sandbox and the verified Machine Shed location to default normalized schedule and availability reads, pending final local and production smoke checks.
+- [ ] Cut over Sandbox and the verified Machine Shed location to default normalized schedule and availability reads after the explicit canary passes.
 
 ## Recommended Next Concrete Step
 
 Use [`docs/POST_MIGRATION_REVIEW_CHECKLIST.md`](docs/POST_MIGRATION_REVIEW_CHECKLIST.md)
 for the first-pass migration review and the repeatable release review after that.
 
+The current live parity gate has passed for Machine Shed: schedule, open shifts,
+request-offs, blocks, templates, employees, roles, availability windows, and
+availability assignments all match the compatibility snapshot. The remaining
+cutover gate is behavioral rather than structural: exercise normalized reads in
+the hosted canary and confirm that a normal refresh, date change, employee
+profile read, and rollback to the snapshot remain reliable.
+
 Run the final **reversible default-read smoke check** before deploying the frontend:
 
-1. Open the local app normally, with no query parameters, and confirm the normalized schedule and availability match the approved canary.
-2. Open the same page with `?legacySnapshot=1` and confirm the compatibility snapshot still loads cleanly.
-3. Return to the normal URL and confirm the normalized-read badge and expected schedule data return.
-4. After those checks, deploy the frontend. No additional Edge Function deployment is required for this default-read switch.
+1. Open the hosted app with `?normalizedSchedule=read` and confirm the normalized schedule and availability match the normal site.
+2. Refresh the canary, change weeks, and open Employees and Floor Plans; confirm there is no partial or stale schedule flash.
+3. Open the same page with `?legacySnapshot=1` and confirm the compatibility snapshot still loads cleanly.
+4. Return to the normal URL and confirm the production scheduler remains stable before enabling normalized reads by default.
+5. Only after those checks, deploy the frontend default-read switch. No additional Edge Function deployment is required for that frontend switch.
 
 The legacy snapshot remains intact throughout this phase, so the compatibility URL is an immediate rollback path rather than a data recovery operation.
 

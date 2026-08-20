@@ -13,13 +13,23 @@ function isBlock(item = {}) {
 }
 
 async function request(baseUrl, key, pathName) {
-  const response = await fetch(`${baseUrl}/rest/v1/${pathName}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` }
-  });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(body?.message || body?.hint || `Supabase request failed with ${response.status}: ${pathName}`);
-  return body;
+  const pageSize = 1000;
+  const rows = [];
+  let offset = 0;
+
+  while (true) {
+    const separator = pathName.includes("?") ? "&" : "?";
+    const response = await fetch(`${baseUrl}/rest/v1/${pathName}${separator}limit=${pageSize}&offset=${offset}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` }
+    });
+    const text = await response.text();
+    const body = text ? JSON.parse(text) : null;
+    if (!response.ok) throw new Error(body?.message || body?.hint || `Supabase request failed with ${response.status}: ${pathName}`);
+    const page = values(body);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+    offset += pageSize;
+  }
 }
 
 function compareIds(expected, actual) {

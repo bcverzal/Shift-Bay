@@ -113,6 +113,7 @@ function run() {
   includes(app, "The primary schedule document is connected at this point", "cloud status must turn connected before a slow secondary availability read finishes");
   includes(app, "renderAll({ skipSave: true })", "hydrating a shared read must not queue an automatic compatibility save");
   includes(fs.readFileSync(path.join(root, "tools", "plan_location_normalized_migration.js"), "utf8"), "mode: \"read-only-plan\"", "live normalized migration planning must be explicitly read-only");
+  includes(fs.readFileSync(path.join(root, "tools", "plan_location_normalized_migration.js"), "utf8"), "limit=${pageSize}&offset=${offset}", "normalized migration planning must paginate Supabase reads");
   includes(app, 'authFetch("/api/normalized/employees"', "normalized employee comparison must use the protected API route");
   includes(app, "Switch to the Sandbox location", "normalized employee comparison must refuse production checks");
   includes(app, "normalizedEmployeeShadowDifferences", "normalized employee comparison must report record differences");
