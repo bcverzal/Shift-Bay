@@ -36,6 +36,7 @@ async function main() {
   const query = new URLSearchParams({
     location_id: `eq.${locationId}`,
     document_key: `eq.${documentKey}`,
+    order: "updated_at.desc",
     select: "id,location_id,document_key,schema_version,state,saved_by,saved_by_device_id,saved_at,created_at,updated_at"
   });
   const response = await fetch(`${supabaseUrl}/rest/v1/scheduler_state_documents?${query}`, {

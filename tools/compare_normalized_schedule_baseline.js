@@ -96,7 +96,7 @@ async function main() {
   if (!isSandbox && !isConfirmedLive) throw new Error("Refusing this location. Use Sandbox or pass --confirm-live for the configured live location.");
 
   const encodedLocation = encodeURIComponent(locationId);
-  const documents = await request(baseUrl, key, `scheduler_state_documents?location_id=eq.${encodedLocation}&document_key=eq.${encodeURIComponent(documentKey)}&select=state,saved_at,updated_at`);
+  const documents = await request(baseUrl, key, `scheduler_state_documents?location_id=eq.${encodedLocation}&document_key=eq.${encodeURIComponent(documentKey)}&order=updated_at.desc&select=state,saved_at,updated_at`);
   const state = documents[0]?.state;
   if (!state) throw new Error("Sandbox scheduler snapshot was not found.");
   const [employees, roles, scheduleWeeks, shifts, requestOffs, blocks, templates] = await Promise.all([

@@ -53,7 +53,7 @@ async function main() {
   const documentKey = process.env.SHIFT_BAY_DOCUMENT_KEY || "primary";
   if (!baseUrl || !key || !locationId) throw new Error("Missing Supabase credentials or SHIFT_BAY_LOCATION_ID in .env.");
 
-  const snapshots = await request(baseUrl, key, `scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&select=state,saved_at,updated_at`);
+  const snapshots = await request(baseUrl, key, `scheduler_state_documents?location_id=eq.${encodeURIComponent(locationId)}&document_key=eq.${encodeURIComponent(documentKey)}&order=updated_at.desc&select=state,saved_at,updated_at`);
   const snapshot = values(snapshots)[0];
   if (!snapshot?.state) throw new Error("No scheduler state document was found for the requested location.");
   const state = snapshot.state;
