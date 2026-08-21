@@ -101,6 +101,20 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   return body;
 }
 
+// PostgREST applies a default row limit. Read large normalized collections in
+// pages so older rows cannot hide the current week's schedule.
+async function supabaseJsonAll(path: string, options: RequestInit = {}, pageSize = 1000) {
+  const rows: any[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const page = await supabaseJson(`${path}${separator}limit=${pageSize}&offset=${offset}`, options);
+    if (!Array.isArray(page) || page.length === 0) break;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
 function serviceHeaders(extra: HeadersInit = {}) {
   const cfg = config();
   return {
@@ -1225,7 +1239,7 @@ async function handleNormalizedSchedule(request: Request) {
     supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_weeks?location_id=eq.${encodeURIComponent(locationId)}&select=id,week_start,status`, { headers: serviceHeaders() }),
-    supabaseJson(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata`, { headers: serviceHeaders() }),
+    supabaseJsonAll(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata&order=shift_date.asc,start_time.asc,legacy_id.asc`, { headers: serviceHeaders() }),
     supabaseJson(`/request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,request_date,start_time,end_time,all_day,reason,source,kind,daypart,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_blocks?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,block_date,start_time,end_time,all_day,block_type,note,source,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/templates?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,active,metadata`, { headers: serviceHeaders() }),

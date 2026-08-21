@@ -165,6 +165,9 @@ function run() {
   includes(edgeFunction, 'const normalizedScheduleRead = new URL(request.url).searchParams.get("normalizedSchedule") === "read"', "the server must recognize the explicit normalized read flag");
   includes(edgeFunction, "readSource: locationId === SANDBOX_LOCATION_ID ? \"normalized-sandbox\" : \"normalized-live-canary\"", "normalized schedule reads must identify their source");
   includes(edgeFunction, "department: shift.department || \"FOH\"", "normalized schedule reads must preserve shift departments for visibility filtering");
+  includes(edgeFunction, "async function supabaseJsonAll", "normalized schedule reads must page through large normalized collections");
+  includes(edgeFunction, "supabaseJsonAll(`/shifts?location_id=eq.", "normalized schedule reads must not truncate production shifts at the PostgREST row limit");
+  includes(edgeFunction, "order=shift_date.asc,start_time.asc,legacy_id.asc", "normalized schedule pagination must use a stable shift order");
   includes(edgeFunction, "Normalized schedule reads are not enabled for this location.", "normalized schedule reads must refuse unconfigured locations");
   includes(edgeFunction, "async function handleNormalizedAvailability", "normalized availability reads must have a protected probe route");
   includes(edgeFunction, 'path === "/normalized/availability"', "normalized availability reads must use an explicit route");
