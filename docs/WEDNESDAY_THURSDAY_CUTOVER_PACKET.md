@@ -5,16 +5,18 @@ proving the atomic writer, and deciding whether the verified location can move
 forward. It is intentionally operational: every step produces evidence or a
 clear stop.
 
-## Current Checkpoint: 2026-08-18
+## Current Checkpoint: 2026-08-21
 
 - Fresh Machine Shed baseline captured at:
-  `data/backups/cloud-baselines/production-baseline-20260818200255.json`
+  `data/backups/cloud-baselines/production-baseline-20260821002739.json`
 - Baseline summary: 79 employees, 8 roles, 942 assigned shifts, 367 open
-  shifts, 359 schedule request-offs, 24 schedule blocks, 1 template, and 115
-  template shifts.
+  shifts, 383 time-off records (359 request-offs plus 24 schedule blocks), 1
+  template, and 115 template shifts.
 - Local baseline suite: all 15 modules passed.
 - Live parity is now **ready for the controlled cutover gate**. The final
   `--confirm-live` reports pass for people, availability, and schedule data.
+- The migration preflight now explicitly selects the newest scheduler snapshot
+  document, preventing historical rows from producing a false readiness result.
 - The schedule migration removed 48 stale `snapshot-bridge` rows that were not
   present in the current baseline. No legacy snapshot rows were deleted.
 - No production read switch should be attempted until the write-pause,
