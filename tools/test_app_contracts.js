@@ -121,13 +121,24 @@ function run() {
   includes(app, "function runNormalizedScheduleShadowCheck", "Sandbox must be able to compare normalized schedule records without changing scheduler reads");
   includes(app, 'authFetch("/api/normalized/schedule"', "normalized schedule comparison must use the protected API route");
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
+  includes(app, "NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE", "the hosted scheduler root must default to the verified atomic normalized path");
+  assert.match(
+    app,
+    /const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = !IS_LOCAL_TEST_HOST[\s\S]*?!NORMALIZED_SCHEDULE_MODE;/,
+    "the hosted root must opt into atomic normalized mode while local mode remains on the compatibility path"
+  );
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
   assert.match(
     app,
-    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE[\s\S]*?\["read", "direct-sandbox-revision", "atomic-sandbox-revision", "atomic-production-revision"\]\.includes\(NORMALIZED_SCHEDULE_MODE\);/,
-    "normalized schedule reads must remain behind explicit read/canary opt-ins during cutover"
+    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE[\s\S]*?NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE[\s\S]*?\["read", "direct-sandbox-revision", "atomic-sandbox-revision", "atomic-production-revision"\]\.includes\(NORMALIZED_SCHEDULE_MODE\)\);/,
+    "normalized schedule reads must default on the hosted root while preserving explicit rollback and canary routes"
   );
-  includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "the Sandbox direct-write canary must require an explicit app mode");
+  includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "hosted schedule saves must use the verified production atomic writer by default");
+  assert.match(
+    app,
+    /const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST[\s\S]*?NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE/,
+    "hosted schedule saves must use atomic writes while local mode remains on the compatibility path"
+  );
   includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
   includes(app, '"normalized-sandbox-direct-revision"', "the app must identify revision-locked Sandbox schedule saves explicitly");
