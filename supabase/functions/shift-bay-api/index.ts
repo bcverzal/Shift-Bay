@@ -457,6 +457,14 @@ function normalizedAtomicCanaryEnabled() {
   return ["true", "1", "yes"].includes(value);
 }
 
+// Production atomic writes have a separate gate from the disposable Sandbox
+// canary. Leaving this unset keeps the snapshot-first bridge authoritative,
+// even if a browser somehow sends the production-only save mode.
+function normalizedProductionAtomicWritesEnabled() {
+  const value = env("SHIFT_BAY_PRODUCTION_ATOMIC_WRITES").trim().toLowerCase();
+  return ["true", "1", "yes"].includes(value);
+}
+
 function cachedNormalizedAtomicConflict(locationId: string, expectedRevision: number) {
   const entry = normalizedAtomicConflictCache.get(locationId);
   if (!entry || entry.expiresAt <= Date.now()) {
@@ -1875,6 +1883,48 @@ async function handleStatus(request: Request) {
   });
 }
 
+// The controlled production cutover uses this wrapper instead of the
+// Sandbox-only procedure directly. The database procedure writes normalized
+// schedule rows and the compatibility snapshot in one transaction.
+async function writeProductionScheduleAtomicallyWithSnapshot(
+  locationId: string,
+  expectedRevision: number,
+  state: JsonRecord,
+  userId: string,
+  documentKey: string,
+  schemaVersion: number,
+  savedByDeviceId: string,
+  savedAt: string
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const rows = await supabaseJson("/rpc/write_production_schedule_atomically_with_snapshot", {
+      method: "POST",
+      headers: serviceHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({
+        p_location_id: locationId,
+        p_expected_revision: expectedRevision,
+        p_state: state,
+        p_user_id: userId || null,
+        p_document_key: documentKey,
+        p_schema_version: schemaVersion,
+        p_saved_by_device_id: savedByDeviceId || null,
+        p_saved_at: savedAt
+      }),
+      signal: controller.signal
+    });
+    return Array.isArray(rows) ? rows[0] || null : rows;
+  } catch (error) {
+    if ((error as any)?.name === "AbortError") {
+      throw Object.assign(new Error("The production atomic write timed out before Supabase completed. No commit was confirmed; leave writes paused and verify the snapshot before retrying."), { status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function handleLoadState(request: Request) {
   const validated = await validateSession(request);
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
@@ -1988,8 +2038,10 @@ async function handleSaveState(request: Request) {
     ]);
     return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync: { synced: false, reason: "normalized sync deferred" } });
   }
+  const atomicRevisionMode = saveMode === "normalized-sandbox-atomic-revision" ||
+    saveMode === "normalized-production-atomic-revision";
   const existingRow = await loadDocumentRow(
-    saveMode === "normalized-sandbox-atomic-revision" ? "saved_at,updated_at" : "state,saved_at,updated_at",
+    atomicRevisionMode ? "saved_at,updated_at" : "state,saved_at,updated_at",
     locationId
   );
   const existingEmployees = Array.isArray(existingRow?.state?.employees) ? existingRow.state.employees : [];
@@ -2202,6 +2254,114 @@ async function handleSaveState(request: Request) {
       normalizedAtomic: true,
       normalizedScheduleRevision: revision,
       normalizedAtomicWrite
+    });
+  }
+
+  // This is intentionally unreachable from the normal browser path until the
+  // controlled cutover enables both the frontend mode and server gate. It
+  // commits the normalized schedule and compatibility snapshot together.
+  if (saveMode === "normalized-production-atomic-revision") {
+    if (locationId !== cfg.locationId) {
+      return json(403, { ok: false, error: "Production atomic schedule writes are limited to the configured primary location." });
+    }
+    if (!normalizedProductionAtomicWritesEnabled()) {
+      return json(503, { ok: false, error: "Production atomic schedule writes are disabled until the controlled cutover." });
+    }
+    if (profileOnlySave || !Number.isInteger(expectedNormalizedScheduleRevision) || expectedNormalizedScheduleRevision < 0) {
+      return json(400, { ok: false, error: "A current normalized schedule revision is required for this production atomic save." });
+    }
+    const cachedConflict = cachedNormalizedAtomicConflict(locationId, expectedNormalizedScheduleRevision);
+    if (cachedConflict) {
+      return json(409, {
+        error: "Another user saved the production schedule first. Refresh before making more changes.",
+        expectedNormalizedScheduleRevision,
+        normalizedScheduleRevision: cachedConflict.currentRevision
+      });
+    }
+    const savedAt = new Date().toISOString();
+    const schemaVersion = Number(payload?.schemaVersion || (state.meta as any)?.schemaVersion || 1);
+    const savedByDeviceId = String(payload?.savedByDeviceId || (state.meta as any)?.deviceId || "");
+    let productionAtomicWrite: any;
+    try {
+      productionAtomicWrite = await writeProductionScheduleAtomicallyWithSnapshot(
+        locationId,
+        expectedNormalizedScheduleRevision,
+        state,
+        (validated.user as any).id,
+        cfg.documentKey,
+        schemaVersion,
+        savedByDeviceId,
+        savedAt
+      );
+    } catch (error) {
+      const errorCode = String((error as any)?.code || "");
+      const errorMessage = String((error as Error)?.message || "");
+      if (errorCode === "55P03" || /another normalized atomic write is already in progress/i.test(errorMessage)) {
+        return json(409, {
+          error: "Another production atomic save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (errorCode === "57014" || /statement timeout|canceling statement due to lock timeout/i.test(errorMessage)) {
+        return json(504, {
+          error: "The production atomic write was stopped by the database before it could finish. The snapshot was not updated.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (errorMessage.includes("Normalized schedule revision conflict")) {
+        const currentRevision = await loadNormalizedScheduleRevision(locationId);
+        rememberNormalizedAtomicConflict(locationId, expectedNormalizedScheduleRevision, currentRevision.revision);
+        return json(409, {
+          error: "Another user saved the production schedule first. Refresh before making more changes.",
+          expectedNormalizedScheduleRevision,
+          normalizedScheduleRevision: currentRevision.revision
+        });
+      }
+      throw error;
+    }
+    if (productionAtomicWrite?.ok === false) {
+      const resultCode = String(productionAtomicWrite?.code || productionAtomicWrite?.errorCode || "");
+      const resultMessage = String(productionAtomicWrite?.error || productionAtomicWrite?.message || "");
+      if (resultCode === "55P03" || /another normalized atomic write is already in progress/i.test(resultMessage)) {
+        return json(409, {
+          error: "Another production atomic save is already in progress. Wait for it to finish, then retry once.",
+          expectedNormalizedScheduleRevision
+        });
+      }
+      if (resultCode === "40001" || resultMessage.includes("Normalized schedule revision conflict")) {
+        const currentRevision = Number.isInteger(Number(productionAtomicWrite?.currentRevision))
+          ? Number(productionAtomicWrite.currentRevision)
+          : (await loadNormalizedScheduleRevision(locationId)).revision;
+        rememberNormalizedAtomicConflict(locationId, expectedNormalizedScheduleRevision, currentRevision);
+        return json(409, {
+          error: "Another user saved the production schedule first. Refresh before making more changes.",
+          expectedNormalizedScheduleRevision,
+          normalizedScheduleRevision: currentRevision
+        });
+      }
+      throw new Error(resultMessage || "The production atomic schedule write was rejected.");
+    }
+    const revision = Number(productionAtomicWrite?.revision);
+    normalizedAtomicConflictCache.delete(locationId);
+    await logAuditEvent("normalized_production_atomic_schedule_saved", (validated.user as any).id, {
+      documentKey: cfg.documentKey,
+      savedAt: productionAtomicWrite?.snapshotSavedAt || savedAt,
+      savedByEmail: (validated.user as any).email || "",
+      savedByRole: (validated.user as any).role || "",
+      savedByDeviceId: savedByDeviceId || null,
+      saveScope,
+      saveMode,
+      normalizedScheduleRevision: revision,
+      productionAtomicWrite
+    }, locationId);
+    return json(200, {
+      ok: true,
+      savedAt: productionAtomicWrite?.snapshotSavedAt || savedAt,
+      normalizedDirect: true,
+      normalizedAtomic: true,
+      productionAtomic: true,
+      normalizedScheduleRevision: revision,
+      productionAtomicWrite
     });
   }
 
