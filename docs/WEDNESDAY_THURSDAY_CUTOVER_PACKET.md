@@ -17,8 +17,38 @@ clear stop.
   `--confirm-live` reports pass for people, availability, and schedule data.
 - The schedule migration removed 48 stale `snapshot-bridge` rows that were not
   present in the current baseline. No legacy snapshot rows were deleted.
-- No production read switch should be attempted until the write-pause,
-  rollback, access, and normal-versus-legacy smoke checks below are completed.
+- The global write pause was verified in the hosted Sandbox: paused tabs reject
+  autosaves with the supplied message, and reopening increments the write epoch.
+- The hosted Sandbox atomic writer passed create, edit, delete, and two-window
+  stale-write recovery checks. It remains server-blocked for Machine Shed.
+- Normal and legacy Machine Shed views have passed reversible create/delete
+  smoke checks with the compatibility bridge enabled.
+- **Hybrid migration status: complete.** Machine Shed remains snapshot-first
+  for writes, with normalized records kept in parity and the legacy snapshot
+  available for rollback.
+- The production atomic wrapper is implemented and covered by local contract
+  tests, but it is deliberately inactive. The normal site cannot invoke it
+  until a controlled cutover explicitly enables the server-side gate and adds
+  the corresponding client route.
+
+## Production Atomic Cutover (Prepared, Not Live)
+
+The production wrapper writes normalized schedule records and the compatibility
+snapshot in the same database transaction. That keeps the normal site,
+legacy-snapshot fallback, and normalized reads in sync.
+
+Before enabling it, complete these steps in one focused maintenance window:
+
+1. Apply `supabase/production-atomic-snapshot-write.sql`.
+2. Deploy the matching Edge Function with
+   `SHIFT_BAY_PRODUCTION_ATOMIC_WRITES` still disabled.
+3. Confirm normal Machine Shed scheduling still saves through the snapshot-first
+   path.
+4. Pause global writes, refresh open Shift Bay windows, then enable the gate.
+5. Run one disposable production atomic create, edit, and delete canary while
+   checking both normal and legacy-snapshot views.
+6. Keep the compatibility snapshot and global write-pause rollback controls in
+   place through the post-cutover observation window.
 
 ## Today: Prepare Without Touching Production Data
 

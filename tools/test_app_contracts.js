@@ -167,6 +167,13 @@ function run() {
   includes(edgeFunction, "Direct normalized schedule writes are limited to the Sandbox location.", "direct normalized writes must reject live locations");
   includes(edgeFunction, "claimNormalizedScheduleRevision", "revision-locked normalized writes must claim a server revision");
   includes(edgeFunction, "Revision-locked normalized schedule writes are limited to the Sandbox location.", "revision-locked direct writes must reject live locations");
+  includes(edgeFunction, "normalizedProductionAtomicWritesEnabled", "production atomic writes must remain behind a separate server gate");
+  includes(edgeFunction, "SHIFT_BAY_PRODUCTION_ATOMIC_WRITES", "production atomic writes must require an explicit server-side enablement");
+  includes(edgeFunction, "writeProductionScheduleAtomicallyWithSnapshot", "production atomic writes must use the snapshot transaction wrapper");
+  includes(edgeFunction, 'saveMode === "normalized-production-atomic-revision"', "production atomic writes must use an explicit cutover-only mode");
+  includes(app, "NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE", "production atomic writes must require an explicit client cutover mode");
+  includes(app, 'NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-production-revision"', "the production atomic mode must require its exact cutover URL");
+  includes(app, '"normalized-production-atomic-revision"', "the explicit production atomic mode must be sent only during controlled cutover");
   includes(edgeFunction, 'if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" }', "ordinary schedule mirroring must remain limited to the Sandbox during cutover");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");
   includes(edgeFunction, "changedSnapshotItems", "live schedule mirroring must limit normal saves to changed records");
