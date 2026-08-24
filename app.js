@@ -1769,14 +1769,18 @@ function normalizedAvailabilityReadPatterns(employee, normalizedEmployee) {
   });
 }
 
-async function applyNormalizedAvailabilityRead(serverState) {
+async function applyNormalizedAvailabilityRead(serverState, prefetchedPayload = null) {
   if (!NORMALIZED_AVAILABILITY_READ_MODE) return;
   normalizedAvailabilityReadState = "availabilityRequested";
   updateNormalizedReadBadge();
   try {
-    const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    let payload = prefetchedPayload;
+    if (!payload) {
+      const response = await authFetch("/api/normalized/availability", { method: "GET", cache: "no-store" });
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || "Could not load normalized availability records.");
+    }
+    if (payload?.ok === false) throw new Error(payload?.error || "Could not load normalized availability records.");
     const normalizedByEmployee = new Map((payload.employees || []).map((employee) => [String(employee.id || ""), employee]));
     const missing = [];
     const employees = (serverState.employees || []).map((employee) => {
@@ -2410,7 +2414,10 @@ async function hydrateStateFromServer() {
               ? "Loaded normalized schedule data."
               : "Loaded the shared scheduler data file."
       );
-      serverState = await applyNormalizedAvailabilityRead(serverState) || serverState;
+      // The guarded state response includes normalized availability alongside
+      // the normalized schedule. Reuse it here instead of waiting for a second
+      // full Edge Function round trip before the scheduler can render.
+      serverState = await applyNormalizedAvailabilityRead(serverState, envelope.normalizedAvailability) || serverState;
       const serverSavedAt = envelope.savedAt || envelope.updatedAt || "";
       if (Number.isInteger(Number(envelope.normalizedScheduleRevision))) {
         lastKnownNormalizedScheduleRevision = Number(envelope.normalizedScheduleRevision);

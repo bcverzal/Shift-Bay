@@ -1258,11 +1258,7 @@ async function handleNormalizedEmployees(request: Request) {
 // It is limited to Sandbox and the explicitly configured live location. The
 // app still uses the compatibility snapshot unless a normalized read flag is
 // requested, so this remains a reversible canary.
-async function handleNormalizedAvailability(request: Request) {
-  const validated = await requireEditor(request);
-  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
-  const locationId = (validated.user as any).locationId;
-  if (!normalizedReadAllowed(locationId)) return json(403, { ok: false, error: "Normalized availability reads are not enabled for this location." });
+async function loadNormalizedAvailability(locationId: string) {
   const [employees, profiles, assignments] = await Promise.all([
     supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,first_name,last_name,nickname,active,archived`, { headers: serviceHeaders() }),
     supabaseJson(`/staff_availability_patterns?location_id=eq.${encodeURIComponent(locationId)}&select=id,employee_id,legacy_id,name,source,archived`, { headers: serviceHeaders() }),
@@ -1307,7 +1303,7 @@ async function handleNormalizedAvailability(request: Request) {
     });
     patternsByEmployee.set(String(profile.employee_id), rows);
   });
-  return json(200, {
+  return {
     ok: true,
     mode: "normalized-shadow",
     locationId,
@@ -1321,7 +1317,15 @@ async function handleNormalizedAvailability(request: Request) {
       archived: Boolean(employee.archived),
       availabilityProfiles: patternsByEmployee.get(String(employee.id)) || []
     }))
-  });
+  };
+}
+
+async function handleNormalizedAvailability(request: Request) {
+  const validated = await requireEditor(request);
+  if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
+  const locationId = (validated.user as any).locationId;
+  if (!normalizedReadAllowed(locationId)) return json(403, { ok: false, error: "Normalized availability reads are not enabled for this location." });
+  return json(200, await loadNormalizedAvailability(locationId));
 }
 
 // Read-only schedule migration probe. The scheduler continues to load the
@@ -2041,18 +2045,28 @@ async function handleLoadState(request: Request) {
   if (!validated.ok) return json(validated.status || 401, { ok: false, error: validated.error });
 
   const locationId = (validated.user as any).locationId;
-  const row = await loadDocumentRow("*", locationId);
-  if (!row) return json(404, { error: "No scheduler data file has been created yet." });
-  const overrides = await loadEmployeeProfileOverrides(locationId);
-  const snapshotState = applyEmployeeProfileOverrides(row.state as JsonRecord || {}, overrides);
   const normalizedScheduleRead = new URL(request.url).searchParams.get("normalizedSchedule") === "read";
+  if (normalizedScheduleRead && !normalizedReadAllowed(locationId)) {
+    return json(403, { ok: false, error: "Normalized schedule reads are not enabled for this location." });
+  }
+  // Start independent normalized reads immediately. The browser used to load
+  // availability only after the full schedule response arrived, leaving the
+  // grid blank for an extra round trip on every normalized refresh.
+  const normalizedSchedulePromise = normalizedScheduleRead ? handleNormalizedSchedule(request) : null;
+  const normalizedAvailabilityPromise = normalizedScheduleRead ? loadNormalizedAvailability(locationId) : null;
+  const [row, overrides] = await Promise.all([
+    loadDocumentRow("*", locationId),
+    loadEmployeeProfileOverrides(locationId)
+  ]);
+  if (!row) return json(404, { error: "No scheduler data file has been created yet." });
+  const snapshotState = applyEmployeeProfileOverrides(row.state as JsonRecord || {}, overrides);
   if (normalizedScheduleRead) {
-    if (!normalizedReadAllowed(locationId)) {
-      return json(403, { ok: false, error: "Normalized schedule reads are not enabled for this location." });
-    }
-    const normalizedResponse = await handleNormalizedSchedule(request);
+    const normalizedResponse = await normalizedSchedulePromise!;
     if (!normalizedResponse.ok) return normalizedResponse;
-    const normalized = await normalizedResponse.json();
+    const [normalized, normalizedAvailability] = await Promise.all([
+      normalizedResponse.json(),
+      normalizedAvailabilityPromise!
+    ]);
     return json(200, {
       app: "restaurant-scheduler",
       schemaVersion: row.schema_version,
@@ -2061,6 +2075,7 @@ async function handleLoadState(request: Request) {
       savedByDeviceId: row.saved_by_device_id,
       readSource: locationId === SANDBOX_LOCATION_ID ? "normalized-sandbox" : "normalized-live-canary",
       normalizedScheduleRevision: normalized.normalizedScheduleRevision,
+      normalizedAvailability,
       data: {
         ...snapshotState,
         shifts: normalized.shifts || [],

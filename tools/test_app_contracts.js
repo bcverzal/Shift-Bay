@@ -179,6 +179,9 @@ function run() {
   includes(edgeFunction, "order=shift_date.asc,start_time.asc,legacy_id.asc", "normalized schedule pagination must use a stable shift order");
   includes(edgeFunction, "Normalized schedule reads are not enabled for this location.", "normalized schedule reads must refuse unconfigured locations");
   includes(edgeFunction, "async function handleNormalizedAvailability", "normalized availability reads must have a protected probe route");
+  includes(edgeFunction, "async function loadNormalizedAvailability", "state hydration must be able to reuse normalized availability data without a second API request");
+  includes(edgeFunction, "normalizedAvailabilityPromise", "normalized state hydration must start availability loading in parallel with the schedule read");
+  includes(edgeFunction, "normalizedAvailability,", "normalized state responses must include the prefetched availability payload");
   includes(edgeFunction, 'path === "/normalized/availability"', "normalized availability reads must use an explicit route");
   includes(edgeFunction, "Normalized availability reads are not enabled for this location.", "normalized availability reads must refuse unconfigured locations");
   includes(edgeFunction, "repeatWeeks: Number(assignment.repeat_interval_weeks || 1)", "normalized availability reads must keep repeat behavior on assignments");
