@@ -23,6 +23,9 @@ function run() {
   includes(app, "Staff profile not found", "Ctuit preflight must flag missing employee profiles");
   includes(app, "compact-print-role-list", "compact role printing must render role sections");
   includes(app, "printDepartmentFilters", "compact printing must expose department filtering");
+  includes(app, "Full staff roster", "print options must offer a full staff roster");
+  includes(app, "function renderFullRosterPrintView", "full roster printing must have a dedicated renderer");
+  includes(app, "layout === \"fullRoster\"", "full roster must use an explicit print mode");
   includes(app, "function isPrintableScheduledEmployee", "compact printing must have an active employee print guard");
   includes(app, "isPrintableScheduledEmployee(shift.employeeId)", "compact printing must exclude inactive and archived employee shifts");
   includes(app, "dateKeys.has(shift.date)", "compact role printing must only include the printed week");
@@ -33,6 +36,7 @@ function run() {
   includes(styles, ".printing-ctuit-entry", "CTuit print CSS must be scoped");
   includes(styles, ".ctuit-entry-preflight", "Ctuit preflight must remain print-scoped");
   includes(styles, ".printing-simple", "compact print CSS must be scoped");
+  includes(styles, ".full-roster-table", "full roster must have dedicated print-ready table styles");
   includes(styles, ".day-focus-tool-rail", "screen-only rails must be removable from print output");
   includes(styles, "binder-punch gutter", "compact schedules must reserve a binder gutter");
   includes(styles, "printing-current-page", "current-page print CSS must be scoped");
