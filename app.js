@@ -11979,17 +11979,20 @@ function resetPrintRoleOrder() {
 function renderPrintWarningChecklist() {
   const target = $("printWarningChecklist");
   if (!target) return;
+  const layout = $("printLayout")?.value;
   const issues = collectScheduleIssues();
   const hiddenEmployees = schedulableEmployees().filter((employee) => !visibleEmployee(employee)).length;
   const rows = [
-    { warn: issues.length > 0, text: issues.length ? `${issues.length} schedule warning/error${issues.length === 1 ? "" : "s"} found.` : "No schedule warnings found." },
-    { warn: hiddenEmployees > 0, text: hiddenEmployees ? `${hiddenEmployees} active employee${hiddenEmployees === 1 ? "" : "s"} hidden by filters.` : "No active employees hidden by filters." },
-    { warn: false, text: printLayoutDescription($("printLayout")?.value) },
-    ...(usesPrintDepartmentFilters($("printLayout")?.value) ? [{
+    ...(layout === "fullRoster" ? [] : [
+      { warn: issues.length > 0, text: issues.length ? `${issues.length} schedule warning/error${issues.length === 1 ? "" : "s"} found.` : "No schedule warnings found." },
+      { warn: hiddenEmployees > 0, text: hiddenEmployees ? `${hiddenEmployees} active employee${hiddenEmployees === 1 ? "" : "s"} hidden by filters.` : "No active employees hidden by filters." }
+    ]),
+    { warn: false, text: printLayoutDescription(layout) },
+    ...(usesPrintDepartmentFilters(layout) ? [{
       warn: false,
       text: `Departments: ${Array.from(selectedPrintDepartments() || printDepartmentList()).join(", ") || "none"}.`
     }] : []),
-    ...(isCompactPrintLayout($("printLayout")?.value) ? [{ warn: false, text: `Shift order inside cells: ${compactPrintShiftOrderLabel(compactPrintShiftOrder())}.` }] : [])
+    ...(isCompactPrintLayout(layout) ? [{ warn: false, text: `Shift order inside cells: ${compactPrintShiftOrderLabel(compactPrintShiftOrder())}.` }] : [])
   ];
   target.innerHTML = `
     <strong>Before printing</strong>
@@ -11999,13 +12002,14 @@ function renderPrintWarningChecklist() {
 
 async function printSchedule() {
   const layout = $("printLayout").value;
-  if (layout !== "currentPage" && !(await checkPrintCoverage())) return;
+  if (layout !== "currentPage" && layout !== "fullRoster" && !(await checkPrintCoverage())) return;
   preparePrintView(layout, $("printSort").value, {
     shiftOrder: compactPrintShiftOrder(),
     departments: selectedPrintDepartments()
   });
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  window.addEventListener("afterprint", clearPrintView, { once: true });
   window.print();
-  window.setTimeout(clearPrintView, 500);
 }
 
 function preparePrintView(layout, sortMode, options = {}) {
@@ -12046,7 +12050,7 @@ function preparePrintView(layout, sortMode, options = {}) {
 function printLayoutDescription(layout) {
   if (layout === "ctuitEntry") return "Ctuit entry checklist selected.";
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
-  if (layout === "fullRoster") return "Full staff roster selected. Active staff are grouped by department.";
+  if (layout === "fullRoster") return "Full staff roster selected. Active staff are listed alphabetically.";
   if (layout === "simpleRoleWithBay") return "Compact role grid with open Shift Bay boxes selected.";
   if (layout === "simpleRole") return "Compact role grid selected.";
   if (layout === "currentPage") return "Current page selected. The active screen will be printed intentionally.";
@@ -12236,53 +12240,35 @@ function renderCtuitEntryRow(shift) {
   `;
 }
 
-function rosterEmployeeRoles(employee, department) {
-  return (employee.roleTraining || [])
-    .map((roleId) => roleById(roleId))
-    .filter((role) => role && role.department === department)
-    .map((role) => role.name)
-    .join(", ") || "No roles set";
-}
-
 function renderFullRosterPrintView(departments = null) {
-  const selectedDepartments = Array.from(departments || printDepartmentList());
-  const groups = selectedDepartments.map((department) => ({
-    department,
-    employees: schedulableEmployees()
-      .filter((employee) => normalizeEmployeeDepartments(employee).includes(department))
-      .sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b), undefined, { sensitivity: "base" }))
-  }));
-  const displayedCount = new Set(groups.flatMap((group) => group.employees.map((employee) => employee.id))).size;
-  const includeEmail = groups.some((group) => group.employees.some((employee) => String(employee.email || "").trim()));
-  const columnCount = includeEmail ? 4 : 3;
+  const selectedDepartments = departments || new Set(printDepartmentList());
+  const employees = schedulableEmployees()
+    .filter((employee) => normalizeEmployeeDepartments(employee).some((department) => selectedDepartments.has(department)))
+    .sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b), undefined, { sensitivity: "base" }));
   $("printView").hidden = false;
   $("printView").innerHTML = `
     <section class="full-roster-print">
       <header class="full-roster-header">
         <h2>Staff Roster</h2>
-        <p>${displayedCount} active staff member${displayedCount === 1 ? "" : "s"} across ${groups.length} department${groups.length === 1 ? "" : "s"}</p>
+        <p>${employees.length} active staff member${employees.length === 1 ? "" : "s"}</p>
       </header>
-      ${groups.map(({ department, employees }) => `
-        <section class="full-roster-department">
-          <h3>${escapeHtml(department)}</h3>
-          <table class="full-roster-table">
-            <thead><tr><th>Employee</th><th>Phone</th>${includeEmail ? "<th>Email</th>" : ""}<th>Roles</th></tr></thead>
-            <tbody>
-              ${employees.map((employee) => {
-                const fullName = fullEmployeeName(employee);
-                const preferredName = displayName(employee);
-                const alternateName = fullName && fullName !== preferredName ? `<small>${escapeHtml(fullName)}</small>` : "";
-                return `<tr>
-                  <th>${escapeHtml(preferredName)}${alternateName}</th>
-                  <td>${escapeHtml(formatPhoneNumber(employee.phone || ""))}</td>
-                  ${includeEmail ? `<td>${escapeHtml(employee.email || "")}</td>` : ""}
-                  <td>${escapeHtml(rosterEmployeeRoles(employee, department))}</td>
-                </tr>`;
-              }).join("") || `<tr><td colspan="${columnCount}">No active staff in this department.</td></tr>`}
-            </tbody>
-          </table>
-        </section>
-      `).join("")}
+      <table class="full-roster-table">
+        <thead><tr><th>Employee</th><th>Department</th><th>Phone</th><th>Email</th></tr></thead>
+        <tbody>
+          ${employees.map((employee) => {
+            const fullName = fullEmployeeName(employee);
+            const preferredName = displayName(employee);
+            const alternateName = fullName && fullName !== preferredName ? `<small>${escapeHtml(fullName)}</small>` : "";
+            const employeeDepartments = normalizeEmployeeDepartments(employee).filter((department) => selectedDepartments.has(department));
+            return `<tr>
+              <th>${escapeHtml(preferredName)}${alternateName}</th>
+              <td>${escapeHtml(employeeDepartments.join(", "))}</td>
+              <td>${escapeHtml(formatPhoneNumber(employee.phone || ""))}</td>
+              <td>${escapeHtml(employee.email || "")}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="4">No active staff in the selected departments.</td></tr>`}
+        </tbody>
+      </table>
     </section>
   `;
 }

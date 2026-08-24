@@ -9226,8 +9226,7 @@ body.compact-preview .print-view {
 }
 
 .full-roster-print {
-  display: grid;
-  gap: 16px;
+  display: block;
 }
 
 .full-roster-header {
@@ -10605,12 +10604,16 @@ dialog .time-picker {
   }
 
   body.printing-full-roster .full-roster-print {
-    gap: 10px;
+    display: block !important;
+    break-before: auto !important;
+    page-break-before: auto !important;
   }
 
   body.printing-full-roster .full-roster-header {
     margin-bottom: 2px;
     padding-bottom: 5px;
+    break-after: avoid-page;
+    page-break-after: avoid;
   }
 
   body.printing-full-roster .full-roster-department {
@@ -10624,6 +10627,11 @@ dialog .time-picker {
 
   body.printing-full-roster .full-roster-table thead {
     display: table-header-group;
+  }
+
+  body.printing-full-roster .full-roster-table {
+    break-before: auto !important;
+    page-break-before: auto !important;
   }
 
   body.printing-full-roster .full-roster-table th,

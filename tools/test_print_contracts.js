@@ -26,6 +26,11 @@ function run() {
   includes(app, "Full staff roster", "print options must offer a full staff roster");
   includes(app, "function renderFullRosterPrintView", "full roster printing must have a dedicated renderer");
   includes(app, "layout === \"fullRoster\"", "full roster must use an explicit print mode");
+  includes(app, "Active staff are listed alphabetically", "full roster must describe its single alphabetical list");
+  includes(app, "<th>Department</th>", "full roster must retain department context in the combined list");
+  includes(app, "<th>Email</th>", "full roster must reserve an email column for portal onboarding");
+  includes(app, "layout !== \"fullRoster\" && !(await checkPrintCoverage())", "roster printing must bypass schedule coverage warnings");
+  includes(app, "window.addEventListener(\"afterprint\", clearPrintView", "print cleanup must wait until the browser finishes printing");
   includes(app, "function isPrintableScheduledEmployee", "compact printing must have an active employee print guard");
   includes(app, "isPrintableScheduledEmployee(shift.employeeId)", "compact printing must exclude inactive and archived employee shifts");
   includes(app, "dateKeys.has(shift.date)", "compact role printing must only include the printed week");
