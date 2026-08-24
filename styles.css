@@ -10876,6 +10876,22 @@ dialog .time-picker {
   margin: 0;
 }
 
+.floor-plan-date-control {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.floor-plan-date-control label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.floor-plan-date-control .icon-button {
+  flex: 0 0 40px;
+}
+
 .small-button {
   border-color: #cbd5e1;
   background: linear-gradient(180deg, #ffffff 0%, #f3f6fa 100%);

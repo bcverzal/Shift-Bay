@@ -786,6 +786,17 @@ function schedulerMutationFingerprint(candidate = state) {
   return JSON.stringify(snapshot);
 }
 
+// Employee profile saves are scoped merges. They must not make the browser's
+// full schedule snapshot look like a newer schedule mutation, or a later
+// refresh can replay unrelated stale shift data.
+function schedulerScheduleFingerprint(candidate = state) {
+  if (!candidate || typeof candidate !== "object") return "";
+  const snapshot = { ...candidate };
+  delete snapshot.meta;
+  delete snapshot.employees;
+  return JSON.stringify(snapshot);
+}
+
 function saveState(options = {}) {
   if (!canEditScheduler()) {
     if (options.immediate || options.notice) showReadOnlyNotice();
@@ -802,7 +813,7 @@ function saveState(options = {}) {
   migrateState(state, state);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (SERVER_STORAGE_ENABLED && serverStorageReady) {
-    const mutationFingerprint = schedulerMutationFingerprint(state);
+    const mutationFingerprint = schedulerScheduleFingerprint(state);
     // Profile-only saves merge one employee record on the server, so they can
     // safely proceed while this browser's broader schedule snapshot is stale.
     if (cloudSaveBlockedByStale && options.scope !== "employee-profile") {
@@ -1005,7 +1016,11 @@ async function persistEmployeeProfileToServer(employee) {
       // profile-only save look like a newer unsaved schedule after refresh.
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (lastKnownServerState?.employees) {
-        lastKnownServerState.employees = lastKnownServerState.employees.map((item) => String(item?.id || "") === String(employee?.id || "") ? cloneSchedulerState(employee) : item);
+        const employeeId = String(employee?.id || "");
+        const alreadyKnown = lastKnownServerState.employees.some((item) => String(item?.id || "") === employeeId);
+        lastKnownServerState.employees = alreadyKnown
+          ? lastKnownServerState.employees.map((item) => String(item?.id || "") === employeeId ? cloneSchedulerState(employee) : item)
+          : [...lastKnownServerState.employees, cloneSchedulerState(employee)];
       }
     }
     setStorageStatus("saved", "Employee profile saved to the shared scheduler data file.");
@@ -1034,7 +1049,7 @@ function queueServerSave() {
       : "CLOUD SAVE REJECTED. Refresh before making more edits.");
     return;
   }
-  const mutationFingerprint = schedulerMutationFingerprint(state);
+  const mutationFingerprint = schedulerScheduleFingerprint(state);
   if (mutationFingerprint === inFlightMutationFingerprint) return;
   if (mutationFingerprint === lastConfirmedMutationFingerprint) return;
   if (serverSaveTimer && queuedMutationFingerprint === mutationFingerprint) return;
@@ -1056,7 +1071,7 @@ async function persistStateToServer(options = {}) {
   }
   if (!SERVER_STORAGE_ENABLED || !serverStorageReady) return false;
   if (cloudWritesPaused || (cloudSaveBlockedByStale && options.scope !== "employee-profile")) return false;
-  const mutationFingerprint = schedulerMutationFingerprint(state);
+  const mutationFingerprint = schedulerScheduleFingerprint(state);
   if (serverSaveInFlight) {
     // A profile save must not be reported as failed just because a queued
     // scheduler save is already using the connection. Wait for that request,
@@ -2413,7 +2428,7 @@ async function hydrateStateFromServer() {
         serverStorageReady = true;
         lastKnownServerSavedAt = serverSavedAt;
         lastKnownServerState = cloneSchedulerState(serverState);
-        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+        lastConfirmedMutationFingerprint = schedulerScheduleFingerprint(serverState);
         setStorageStatus("saving", "Restoring the shared Sandbox demo data...");
         const restored = await persistStateToServer({ immediate: true });
         if (restored) {
@@ -2448,7 +2463,7 @@ async function hydrateStateFromServer() {
         cloudSaveBlockedByStale = false;
         lastKnownServerSavedAt = serverSavedAt;
         lastKnownServerState = cloneSchedulerState(serverState);
-        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+        lastConfirmedMutationFingerprint = schedulerScheduleFingerprint(serverState);
         const restored = await reapplyCloudRecoveryAfterRefresh(recovery, serverState, serverSavedAt);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
@@ -2476,7 +2491,7 @@ async function hydrateStateFromServer() {
         serverStorageReady = true;
         cloudSaveBlockedByStale = false;
         lastKnownServerSavedAt = serverSavedAt;
-        lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+        lastConfirmedMutationFingerprint = schedulerScheduleFingerprint(serverState);
         setStorageStatus("saved", "Loaded the latest shared schedule. An older browser copy was preserved for recovery.");
         showStaleRecoveryAlert(newerBrowserRecovery);
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
@@ -2486,7 +2501,7 @@ async function hydrateStateFromServer() {
       }
       lastKnownServerSavedAt = serverSavedAt;
       lastKnownServerState = cloneSchedulerState(serverState);
-      lastConfirmedMutationFingerprint = schedulerMutationFingerprint(serverState);
+      lastConfirmedMutationFingerprint = schedulerScheduleFingerprint(serverState);
       cloudSaveBlockedByStale = false;
       state = serverState;
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -3795,6 +3810,9 @@ function enterDayFocus(dateKey = selectedCell?.date || formatDateKey(currentDate
 
 function exitDayFocus() {
   focusedDateKey = "";
+  selectedCell = null;
+  selectedShiftId = null;
+  selectedUnassignedShiftId = null;
   renderSchedule();
 }
 
@@ -9499,9 +9517,10 @@ function isApprovedFutureAvailabilityPattern(pattern) {
   return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
 }
 
-function isFutureAvailabilityPattern(pattern) {
+function isFutureAvailabilityPattern(pattern, asOfDate = formatDateKey(new Date())) {
   const effectiveDate = normalizeAvailabilityEffectiveDate(pattern?.effectiveDate);
-  return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
+  const comparisonDate = normalizeAvailabilityEffectiveDate(asOfDate || formatDateKey(new Date()));
+  return Boolean(effectiveDate && effectiveDate > comparisonDate);
 }
 
 function isUnavailableAvailabilityPattern(pattern) {
@@ -9514,13 +9533,28 @@ function availabilityEffectiveDateLabel(dateKey) {
   return Number.isNaN(parsed.getTime()) ? (dateKey || "Not set") : displayDate(parsed);
 }
 
-function availabilityPatternStateLabel(pattern) {
+function availabilityPatternReplacesExisting(pattern, patterns = []) {
+  const replacementDate = normalizeAvailabilityEffectiveDate(pattern?.effectiveDate);
+  if (!replacementDate) return false;
+  return patterns.some((other) => {
+    if (!other || other.id === pattern?.id || other.active === false) return false;
+    const startsOn = normalizeAvailabilityEffectiveDate(other.effectiveDate);
+    const endsOn = other.endsOn ? normalizeAvailabilityEffectiveDate(other.endsOn) : "";
+    return Boolean(startsOn && startsOn < replacementDate && (!endsOn || endsOn >= replacementDate));
+  });
+}
+
+function availabilityPatternStateLabel(pattern, patterns = [], asOfDate = formatDateKey(new Date())) {
+  const future = isFutureAvailabilityPattern(pattern, asOfDate);
   if (isUnavailableAvailabilityPattern(pattern)) {
-    return isFutureAvailabilityPattern(pattern)
+    return future
       ? `Unavailable from ${availabilityEffectiveDateLabel(pattern.effectiveDate)}`
       : "Unavailable now";
   }
-  return isFutureAvailabilityPattern(pattern) ? "Will be live soon" : "Live";
+  if (!future) return "Live";
+  return availabilityPatternReplacesExisting(pattern, patterns)
+    ? "Will be live soon"
+    : `Starts ${availabilityEffectiveDateLabel(pattern.effectiveDate)}`;
 }
 
 function availabilityPatternAppliesOnDate(pattern, date) {
@@ -9597,19 +9631,20 @@ async function hydrateEmployeeAvailabilitySubmissions(employee) {
 function renderActiveAvailabilitySummary(employee = null, patterns = availabilityPatternsForEmployee(employee), selected = selectedAvailabilityPattern(employee)) {
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
+  const scheduleContextDate = currentWeekKey();
   const activePatterns = patterns
     .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
     .sort((left, right) => {
-      const leftFuture = isFutureAvailabilityPattern(left);
-      const rightFuture = isFutureAvailabilityPattern(right);
+      const leftFuture = isFutureAvailabilityPattern(left, scheduleContextDate);
+      const rightFuture = isFutureAvailabilityPattern(right, scheduleContextDate);
       if (leftFuture !== rightFuture) return leftFuture ? 1 : -1;
       return String(left.effectiveDate || "").localeCompare(String(right.effectiveDate || ""));
     });
   const pendingSubmissions = pendingAvailabilitySubmissionsForEmployee(employee);
   const activeTabMarkup = activePatterns.map((pattern) => {
-    const future = isFutureAvailabilityPattern(pattern);
+    const future = isFutureAvailabilityPattern(pattern, scheduleContextDate);
     const unavailable = isUnavailableAvailabilityPattern(pattern);
-    const stateLabel = availabilityPatternStateLabel(pattern);
+    const stateLabel = availabilityPatternStateLabel(pattern, patterns, scheduleContextDate);
     return `<button type="button" class="active-availability-tab${pattern.id === selected?.id ? " selected" : ""}${future ? " future-availability" : ""}${unavailable ? " unavailable-availability" : ""}" data-active-availability-id="${escapeHtml(pattern.id)}">
       <strong>${escapeHtml(pattern.name)}</strong>
       <span>${stateLabel}</span>
@@ -9624,8 +9659,8 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const selectedActiveMarkup = selectedActivePattern ? `<div class="active-availability-tab-content${selectedUnavailable ? " unavailable-availability-content" : ""}">
     <strong>${escapeHtml(selectedActivePattern.name)}</strong>
     <span>${selectedUnavailable
-      ? `${escapeHtml(availabilityPatternStateLabel(selectedActivePattern))}${selectedActivePattern.endsOn ? ` - available again ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`
-      : `${isFutureAvailabilityPattern(selectedActivePattern) ? "Will be live soon" : "Live for scheduling"} - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.effectiveDate))}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`}</span>
+      ? `${escapeHtml(availabilityPatternStateLabel(selectedActivePattern, patterns, scheduleContextDate))}${selectedActivePattern.endsOn ? ` - available again ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`
+      : `${escapeHtml(availabilityPatternStateLabel(selectedActivePattern, patterns, scheduleContextDate))} for scheduling - ${availabilityRepeatLabel(selectedActivePattern.repeatWeeks)} - starts ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.effectiveDate))}${selectedActivePattern.endsOn ? ` - replaced on ${escapeHtml(availabilityEffectiveDateLabel(selectedActivePattern.endsOn))}` : ""}`}</span>
     ${selectedUnavailable ? "<p>Every day is marked Not available. This employee will not be suggested or scheduled during this period.</p>" : `<div class="active-availability-day-summary">${availabilityDaySummary(selectedActivePattern.availability)}</div>`}
   </div>` : "";
   tabs.innerHTML = `<div class="active-availability-tab-strip">${activeTabMarkup}${pendingTabMarkup}</div>${selectedActiveMarkup}`;
@@ -12233,6 +12268,16 @@ function syncFloorPlanDateToActiveWeek(options = {}) {
   } else if (!input.value) {
     input.value = activeKey;
   }
+}
+function shiftFloorPlanDateBy(days) {
+  const input = $("floorPlanDate");
+  if (!input) return;
+  const dateKey = input.value || focusedDateKey || formatDateKey(currentDate);
+  const date = parseDateKey(dateKey);
+  if (Number.isNaN(date.getTime())) return;
+  date.setDate(date.getDate() + Number(days || 0));
+  input.value = formatDateKey(date);
+  renderFloorPlan();
 }
 function renderFloorPlan(options = {}) {
   if (!$("floorPlanDate")) return;
@@ -15133,6 +15178,8 @@ function wireEvents() {
   $("printStaffingBtn").onclick = printStaffingAnalysis;
   $("printCallWeeklyBtn").onclick = printCallWeeklySheet;
   $("floorPlanDate").onchange = renderFloorPlan;
+  $("floorPlanPrevDayBtn").onclick = () => shiftFloorPlanDateBy(-1);
+  $("floorPlanNextDayBtn").onclick = () => shiftFloorPlanDateBy(1);
   $("floorPlanPeriod").onchange = renderFloorPlan;
   $("printFloorPlanBtn").onclick = printFloorPlan;
   $("printFloorPlanWeekBtn").onclick = printFloorPlanWeek;
@@ -15523,6 +15570,14 @@ function wireEvents() {
     // A profile switch or a new draft can leave an old edit target behind.
     // Never let that stale id redirect this save to another employee/profile.
     if (availabilityEditingPatternId && !editingExisting) availabilityEditingPatternId = "";
+    if (!editingExisting && currentPatterns.length >= 7) {
+      showAppAlert({
+        title: "Availability Limit Reached",
+        message: "Each employee can have up to 7 saved availabilities. Delete an unused availability before creating another.",
+        type: "warning"
+      });
+      return;
+    }
     // Selecting a card only selects it for review or Apply. It never turns a
     // Save click into an overwrite; explicit Edit is required for that.
     const duplicate = findDuplicateAvailabilityPatternName(name, current?.id || "", availabilityEditingPatternId || "");

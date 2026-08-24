@@ -13,6 +13,7 @@ These items protect the schedule workflow already being used in production. Do n
 - [ ] Make RO imports trustworthy, including accepted/rejected history, duplicates, full-day defaults, and clear review details.
 - [ ] Complete print QA for compact schedules, floor plans, completed weeks, grid views, and CTUIT entry output.
 - [ ] Keep the AV editor and manager/staff availability models consistent, including future effective dates and save/apply behavior.
+- [ ] Make AV status context-aware: show first-time future AVs as starting on their date, reserve "Will be live soon" for replacements, and use the published schedule week for staff-facing status once publishing is live.
 - [ ] Resolve the highest-impact schedule-view bugs: single-day assignment behavior, archived employee filtering, shift-bay selection, and drag/drop recovery.
 
 ### P1: Minimum Sellable Staff Workflow

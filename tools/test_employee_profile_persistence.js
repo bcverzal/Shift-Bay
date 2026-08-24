@@ -33,6 +33,7 @@ function run() {
   includes(app, "employeeProfile: employee", "client profile saves must send the selected employee only");
   includes(app, "employeeProfileSavePriority", "profile saves must be prioritized over a queued schedule save");
   includes(app, "lastKnownServerState.employees", "profile saves must update the local shared-state baseline");
+  includes(app, "alreadyKnown", "profile saves must retain newly created employees in the local baseline");
   includes(app, "Do not advance the schedule document timestamp here", "profile saves must not advance the whole-schedule freshness timestamp");
   includes(store, 'saveScope === "employee-profile"', "local adapter must recognize profile-only saves");
   includes(store, "mergeEmployeeProfileState", "local adapter must merge a profile without replacing the schedule");
@@ -42,7 +43,12 @@ function run() {
   includes(edge, "profileOverrideSaved: true", "profile saves must return an explicit compatibility-override confirmation");
   includes(edge, 'employee_profile_saved', "profile saves must be auditable");
   includes(edge, "syncNormalizedEmployeeProfile", "profile saves must attempt normalized dual-write");
-  includes(edge, "normalized sync deferred", "profile saves must not wait indefinitely on normalized migration work");
+  includes(edge, "ensureNormalizedEmployeeMappings", "atomic schedule saves must preflight employee location mappings");
+  includes(edge, "Employee mapping is still syncing", "missing employee mappings must return a retryable diagnostic");
+  includes(edge, "employee is not present in the submitted scheduler state", "unmapped employees must identify missing scheduler state data");
+  includes(edge, "normalizedSyncRequired", "migrated locations must require normalized employee synchronization");
+  includes(edge, "could not be synchronized for scheduling", "failed employee synchronization must be visible to the user");
+  includes(edge, "overrideOnlyEmployees", "reloads must retain newly created override-only employees");
   includes(edge, 'if (!profileOnlySave && baseServerSavedAt', "API must keep the schedule stale guard scoped");
   console.log("employee profile persistence contract tests passed");
 }

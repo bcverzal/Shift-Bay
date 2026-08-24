@@ -443,10 +443,24 @@ async function loadEmployeeProfileOverrides(locationId: string) {
 }
 
 function applyEmployeeProfileOverrides(state: JsonRecord = {}, overrides: Map<string, JsonRecord>) {
-  if (!overrides.size || !Array.isArray(state.employees)) return state;
+  if (!overrides.size) return state;
+  const employees = Array.isArray(state.employees) ? state.employees : [];
+  const appliedIds = new Set<string>();
+  const mergedEmployees = employees.map((employee: any) => {
+    const employeeId = String(employee?.id || "");
+    const override = overrides.get(employeeId);
+    if (!override) return employee;
+    appliedIds.add(employeeId);
+    return override;
+  });
+  const overrideOnlyEmployees = Array.from(overrides.entries())
+    .filter(([employeeId, profile]) =>
+      !appliedIds.has(employeeId) && String(profile?.id || "") === employeeId
+    )
+    .map(([, profile]) => profile);
   return {
     ...state,
-    employees: state.employees.map((employee: any) => overrides.get(String(employee?.id || "")) || employee)
+    employees: [...mergedEmployees, ...overrideOnlyEmployees]
   };
 }
 
@@ -714,9 +728,9 @@ async function syncNormalizedAvailabilityProfiles(locationId: string, employee: 
 }
 
 // Transition bridge: keep the current profile override as the compatibility
-// source while opportunistically mirroring the employee into normalized rows.
-// This is intentionally best-effort so a location that has not run the
-// normalized schema migration can continue using the current scheduler.
+// source while mirroring the employee into normalized rows. Profile saves use
+// the result to prevent a profile from appearing saved before scheduling can
+// actually recognize the employee at this location.
 async function syncNormalizedEmployeeProfile(locationId: string, employee: JsonRecord) {
   const legacyId = String(employee?.id || "").trim();
   if (!locationId || !legacyId) return { synced: false, reason: "missing employee identity" };
@@ -773,12 +787,95 @@ async function syncNormalizedEmployeeProfile(locationId: string, employee: JsonR
     return { synced: true, employeeId: normalizedEmployee.id, availabilityWindows: windows.length, availabilityProfiles };
   } catch (error) {
     console.warn("Normalized employee sync deferred:", error?.message || error);
-    return { synced: false, reason: "normalized tables unavailable" };
+    const reason = String(error?.message || "normalized tables unavailable")
+      .replace(/\s+/g, " ")
+      .slice(0, 240);
+    return { synced: false, reason };
   }
 }
 
 function snapshotItems(value: unknown) {
   return Array.isArray(value) ? value : [];
+}
+
+function snapshotEmployeeLegacyId(value: any) {
+  return String(value?.employeeId || value?.employee_id || "").trim();
+}
+
+function snapshotEmployeeLabel(employee: any, fallbackId: string) {
+  const name = [employee?.nickname || employee?.firstName, employee?.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return name || String(employee?.name || fallbackId || "Unknown employee");
+}
+
+// A newly created profile can arrive in the compatibility snapshot just
+// before its normalized employee row is visible to the atomic writer. Repair
+// that bridge before calling the database procedure, so the user gets a
+// successful save instead of a generic employee-mapping 400.
+async function ensureNormalizedEmployeeMappings(locationId: string, state: JsonRecord) {
+  const requiredIds = new Set<string>();
+  for (const shift of snapshotItems(state.shifts)) {
+    const employeeId = snapshotEmployeeLegacyId(shift);
+    if (employeeId && !shift?.isOpenBay) requiredIds.add(employeeId);
+  }
+  for (const item of snapshotItems(state.timeOffRequests)) {
+    const employeeId = snapshotEmployeeLegacyId(item);
+    if (employeeId) requiredIds.add(employeeId);
+  }
+  if (!requiredIds.size) return { ok: true, repaired: [] };
+
+  const employeeRows = await supabaseJson(
+    `/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`,
+    { headers: serviceHeaders() }
+  );
+  const mappedIds = new Set(
+    (Array.isArray(employeeRows) ? employeeRows : [])
+      .filter((row: any) => row?.legacy_id)
+      .map((row: any) => String(row.legacy_id))
+  );
+  const missingIds = [...requiredIds].filter((id) => !mappedIds.has(id));
+  if (!missingIds.length) return { ok: true, repaired: [] };
+
+  const employees = snapshotItems(state.employees);
+  const attempts: any[] = [];
+  for (const legacyId of missingIds) {
+    const employee = employees.find((item: any) => String(item?.id || "") === legacyId);
+    if (!employee) {
+      attempts.push({ legacyId, label: legacyId, synced: false, reason: "employee is not present in the submitted scheduler state" });
+      continue;
+    }
+    const result = await syncNormalizedEmployeeProfile(locationId, employee as JsonRecord);
+    attempts.push({
+      legacyId,
+      label: snapshotEmployeeLabel(employee, legacyId),
+      synced: Boolean(result?.synced),
+      reason: result?.reason || ""
+    });
+  }
+
+  const refreshedRows = await supabaseJson(
+    `/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`,
+    { headers: serviceHeaders() }
+  );
+  const refreshedIds = new Set(
+    (Array.isArray(refreshedRows) ? refreshedRows : [])
+      .filter((row: any) => row?.legacy_id)
+      .map((row: any) => String(row.legacy_id))
+  );
+  const stillMissing = attempts.filter((attempt) => !refreshedIds.has(attempt.legacyId));
+  if (!stillMissing.length) return { ok: true, repaired: attempts };
+
+  const retryable = stillMissing.some((attempt) => attempt.synced === false && attempt.reason !== "employee is not present in the submitted scheduler state");
+  return {
+    ok: false,
+    status: retryable ? 503 : 400,
+    missing: stillMissing,
+    error: retryable
+      ? `Employee mapping is still syncing: ${stillMissing.map((item) => item.label).join(", ")}. Retry once after the profile save finishes.`
+      : `Employee ${stillMissing.map((item) => item.label).join(", ")} is not mapped to this location.`
+  };
 }
 
 function snapshotItemMap(items: unknown) {
@@ -2018,10 +2115,21 @@ async function handleSaveState(request: Request) {
   }
   const profileOnlySave = profileRequested;
   if (profileOnlySave) {
-    // Profile-only saves must not wait for the whole scheduler document or
-    // normalized schedule migration work. Availability edits are stored in
-    // the compatibility override first, then mirrored separately when the
-    // database has capacity.
+    // Profile-only saves do not need the whole scheduler document, but a
+    // migrated location must have the normalized employee mapping before the
+    // UI reports success. Otherwise the next shift assignment is rejected and
+    // the new profile disappears on reload.
+    const normalizedSyncRequired = normalizedScheduleMirrorAllowed(locationId);
+    const normalizedSync = normalizedSyncRequired
+      ? await syncNormalizedEmployeeProfile(locationId, employeeProfile)
+      : { synced: false, reason: "normalized mirror not enabled" };
+    if (normalizedSyncRequired && !normalizedSync.synced) {
+      return json(503, {
+        ok: false,
+        error: "Employee profile could not be synchronized for scheduling. Try again after the database connection is healthy.",
+        normalizedSync
+      });
+    }
     const savedAt = new Date().toISOString();
     await supabaseJson("/employee_profile_overrides?on_conflict=location_id,employee_id", {
       method: "POST",
@@ -2045,12 +2153,12 @@ async function handleSaveState(request: Request) {
         saveScope,
         saveAttemptId: saveAttemptId || null,
         employeeId,
-        normalizedSync: { synced: false, reason: "normalized sync deferred" },
+        normalizedSync,
         changeSummary: { employeesChanged: 1 }
       }),
       new Promise<void>((resolve) => setTimeout(resolve, 500))
     ]);
-    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync: { synced: false, reason: "normalized sync deferred" } });
+    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync });
   }
   const atomicRevisionMode = saveMode === "normalized-sandbox-atomic-revision" ||
     saveMode === "normalized-production-atomic-revision";
@@ -2181,6 +2289,14 @@ async function handleSaveState(request: Request) {
         normalizedScheduleRevision: cachedConflict.currentRevision
       });
     }
+    const employeeMappings = await ensureNormalizedEmployeeMappings(locationId, state);
+    if (!employeeMappings.ok) {
+      return json(employeeMappings.status || 503, {
+        ok: false,
+        error: employeeMappings.error,
+        missingEmployees: employeeMappings.missing || []
+      });
+    }
     let normalizedAtomicWrite: any;
     try {
       normalizedAtomicWrite = await writeNormalizedScheduleAtomically(
@@ -2290,6 +2406,14 @@ async function handleSaveState(request: Request) {
         error: "Another user saved the production schedule first. Refresh before making more changes.",
         expectedNormalizedScheduleRevision,
         normalizedScheduleRevision: cachedConflict.currentRevision
+      });
+    }
+    const employeeMappings = await ensureNormalizedEmployeeMappings(locationId, state);
+    if (!employeeMappings.ok) {
+      return json(employeeMappings.status || 503, {
+        ok: false,
+        error: employeeMappings.error,
+        missingEmployees: employeeMappings.missing || []
       });
     }
     const savedAt = new Date().toISOString();

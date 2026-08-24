@@ -22,6 +22,13 @@ function excludes(source, value, message) {
 
 function run() {
   includes(app, "function syncFloorPlanDateToActiveWeek", "floor-plan date handoff must exist");
+  includes(index, 'id="floorPlanPrevDayBtn"', "floor-plan needs a previous-day control");
+  includes(index, 'id="floorPlanNextDayBtn"', "floor-plan needs a next-day control");
+  includes(app, "function shiftFloorPlanDateBy", "floor-plan day controls need a shared date-shift handler");
+  includes(app, '$("floorPlanPrevDayBtn").onclick', "floor-plan previous-day control must be wired");
+  includes(app, '$("floorPlanNextDayBtn").onclick', "floor-plan next-day control must be wired");
+  includes(app, "Each employee can have up to 7 saved availabilities", "availability saves must enforce the per-employee limit");
+  includes(app, "selectedUnassignedShiftId = null;", "leaving day view must clear the selected unassigned shift");
   includes(app, "const DEMO_SEED_VERSION = \"2026-08-18-v1\"", "demo bootstrap must use an explicit seed version");
   includes(app, "function demoStateNeedsBootstrap", "demo bootstrap must detect an unmistakably empty shared state");
   includes(app, "demo.meta.demoSeedVersion = DEMO_SEED_VERSION", "demo bootstrap must mark the shared seed version");
@@ -58,6 +65,8 @@ function run() {
   includes(app, "employeeProfileSavePriority", "employee profile saves must take priority over queued full-schedule writes");
   includes(app, "another large schedule request", "employee profile saves must reserve the next cloud write");
   includes(app, "function schedulerMutationFingerprint", "scheduler saves must distinguish real state changes from screen redraws");
+  includes(app, "function schedulerScheduleFingerprint", "employee profile saves must not invalidate the schedule mutation fingerprint");
+  includes(app, "delete snapshot.employees", "schedule fingerprints must exclude employee-profile-only changes");
   includes(app, "lastConfirmedMutationFingerprint", "scheduler saves must remember the last confirmed mutation");
   includes(app, "queuedMutationFingerprint", "scheduler save debouncing must coalesce identical pending payloads");
   includes(app, "if (mutationFingerprint === inFlightMutationFingerprint) return false", "a redraw during an in-flight save must not queue a duplicate atomic write");

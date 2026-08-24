@@ -453,7 +453,11 @@
       <div class="toolbar">
         <div class="toolbar-group">
           <h2>Floor Plans</h2>
-          <label>Date <input id="floorPlanDate" type="date"></label>
+          <div class="floor-plan-date-control">
+            <button id="floorPlanPrevDayBtn" class="small-button icon-button" type="button" title="Previous day" aria-label="Previous day">&larr;</button>
+            <label>Date <input id="floorPlanDate" type="date"></label>
+            <button id="floorPlanNextDayBtn" class="small-button icon-button" type="button" title="Next day" aria-label="Next day">&rarr;</button>
+          </div>
           <label>Plan
             <select id="floorPlanPeriod">
               <option value="all">All-Day</option>
