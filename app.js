@@ -11879,14 +11879,18 @@ function isCompactPrintLayout(layout) {
   return layout === "simpleRole" || layout === "simpleRoleWithBay" || layout === "simpleEmployee";
 }
 
+function usesPrintDepartmentFilters(layout) {
+  return isCompactPrintLayout(layout) || layout === "fullRoster";
+}
+
 function updateCompactPrintAdvancedVisibility() {
   const advanced = $("compactPrintAdvanced");
   if (!advanced) return;
   const layout = $("printLayout")?.value;
   advanced.hidden = !isCompactPrintLayout(layout);
   const departmentFilters = $("printDepartmentFilters");
-  if (departmentFilters) departmentFilters.hidden = !isCompactPrintLayout(layout);
-  if (isCompactPrintLayout(layout)) renderPrintDepartmentOptions();
+  if (departmentFilters) departmentFilters.hidden = !usesPrintDepartmentFilters(layout);
+  if (usesPrintDepartmentFilters(layout)) renderPrintDepartmentOptions();
   if (!advanced.hidden) renderCompactPrintRoleOrderEditor();
 }
 
@@ -11981,7 +11985,7 @@ function renderPrintWarningChecklist() {
     { warn: issues.length > 0, text: issues.length ? `${issues.length} schedule warning/error${issues.length === 1 ? "" : "s"} found.` : "No schedule warnings found." },
     { warn: hiddenEmployees > 0, text: hiddenEmployees ? `${hiddenEmployees} active employee${hiddenEmployees === 1 ? "" : "s"} hidden by filters.` : "No active employees hidden by filters." },
     { warn: false, text: printLayoutDescription($("printLayout")?.value) },
-    ...(isCompactPrintLayout($("printLayout")?.value) ? [{
+    ...(usesPrintDepartmentFilters($("printLayout")?.value) ? [{
       warn: false,
       text: `Departments: ${Array.from(selectedPrintDepartments() || printDepartmentList()).join(", ") || "none"}.`
     }] : []),
@@ -12005,7 +12009,7 @@ async function printSchedule() {
 }
 
 function preparePrintView(layout, sortMode, options = {}) {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "printing-full-roster");
   if (layout === "currentPage") {
     clearPrintView();
     document.body.classList.add("printing-current-page");
@@ -12030,6 +12034,11 @@ function preparePrintView(layout, sortMode, options = {}) {
     document.body.classList.add("printing-simple", "printing-employee-compact");
     return;
   }
+  if (layout === "fullRoster") {
+    renderFullRosterPrintView(options.departments);
+    document.body.classList.add("printing-simple", "printing-full-roster");
+    return;
+  }
   clearPrintView();
   document.body.classList.add("printing-grid");
 }
@@ -12037,6 +12046,7 @@ function preparePrintView(layout, sortMode, options = {}) {
 function printLayoutDescription(layout) {
   if (layout === "ctuitEntry") return "Ctuit entry checklist selected.";
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
+  if (layout === "fullRoster") return "Full staff roster selected. Active staff are grouped by department.";
   if (layout === "simpleRoleWithBay") return "Compact role grid with open Shift Bay boxes selected.";
   if (layout === "simpleRole") return "Compact role grid selected.";
   if (layout === "currentPage") return "Current page selected. The active screen will be printed intentionally.";
@@ -12044,7 +12054,7 @@ function printLayoutDescription(layout) {
 }
 
 function clearPrintView() {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "compact-preview");
+  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "printing-full-roster", "compact-preview");
   updateCompactPreviewButton();
   $("printView").hidden = true;
   $("printView").innerHTML = "";
@@ -12223,6 +12233,57 @@ function renderCtuitEntryRow(shift) {
       <td class="ctuit-entry-name">${ctuitEntryEmployeeMarkup(employee)}</td>
       <td>${flags.join("; ")}</td>
     </tr>
+  `;
+}
+
+function rosterEmployeeRoles(employee, department) {
+  return (employee.roleTraining || [])
+    .map((roleId) => roleById(roleId))
+    .filter((role) => role && role.department === department)
+    .map((role) => role.name)
+    .join(", ") || "No roles set";
+}
+
+function renderFullRosterPrintView(departments = null) {
+  const selectedDepartments = Array.from(departments || printDepartmentList());
+  const groups = selectedDepartments.map((department) => ({
+    department,
+    employees: schedulableEmployees()
+      .filter((employee) => normalizeEmployeeDepartments(employee).includes(department))
+      .sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b), undefined, { sensitivity: "base" }))
+  }));
+  const displayedCount = new Set(groups.flatMap((group) => group.employees.map((employee) => employee.id))).size;
+  const includeEmail = groups.some((group) => group.employees.some((employee) => String(employee.email || "").trim()));
+  const columnCount = includeEmail ? 4 : 3;
+  $("printView").hidden = false;
+  $("printView").innerHTML = `
+    <section class="full-roster-print">
+      <header class="full-roster-header">
+        <h2>Staff Roster</h2>
+        <p>${displayedCount} active staff member${displayedCount === 1 ? "" : "s"} across ${groups.length} department${groups.length === 1 ? "" : "s"}</p>
+      </header>
+      ${groups.map(({ department, employees }) => `
+        <section class="full-roster-department">
+          <h3>${escapeHtml(department)}</h3>
+          <table class="full-roster-table">
+            <thead><tr><th>Employee</th><th>Phone</th>${includeEmail ? "<th>Email</th>" : ""}<th>Roles</th></tr></thead>
+            <tbody>
+              ${employees.map((employee) => {
+                const fullName = fullEmployeeName(employee);
+                const preferredName = displayName(employee);
+                const alternateName = fullName && fullName !== preferredName ? `<small>${escapeHtml(fullName)}</small>` : "";
+                return `<tr>
+                  <th>${escapeHtml(preferredName)}${alternateName}</th>
+                  <td>${escapeHtml(formatPhoneNumber(employee.phone || ""))}</td>
+                  ${includeEmail ? `<td>${escapeHtml(employee.email || "")}</td>` : ""}
+                  <td>${escapeHtml(rosterEmployeeRoles(employee, department))}</td>
+                </tr>`;
+              }).join("") || `<tr><td colspan="${columnCount}">No active staff in this department.</td></tr>`}
+            </tbody>
+          </table>
+        </section>
+      `).join("")}
+    </section>
   `;
 }
 

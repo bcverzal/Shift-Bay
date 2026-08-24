@@ -9225,6 +9225,82 @@ body.compact-preview .print-view {
   color: #1f2937;
 }
 
+.full-roster-print {
+  display: grid;
+  gap: 16px;
+}
+
+.full-roster-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 2px solid #1d4ed8;
+  padding-bottom: 7px;
+}
+
+.full-roster-header h2,
+.full-roster-department h3 {
+  margin: 0;
+  color: #172554;
+}
+
+.full-roster-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.full-roster-department {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.full-roster-department h3 {
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.full-roster-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.full-roster-table th,
+.full-roster-table td {
+  border: 1px solid #d9dee7;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.full-roster-table thead th {
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 11px;
+}
+
+.full-roster-table tbody th {
+  width: 28%;
+  color: #172554;
+  font-size: 12px;
+}
+
+.full-roster-table td {
+  font-size: 11px;
+}
+
+.full-roster-table small {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .staffing-short {
   background: #fff7ed;
 }
@@ -10526,6 +10602,38 @@ dialog .time-picker {
   body.printing-simple .employee-row {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  body.printing-full-roster .full-roster-print {
+    gap: 10px;
+  }
+
+  body.printing-full-roster .full-roster-header {
+    margin-bottom: 2px;
+    padding-bottom: 5px;
+  }
+
+  body.printing-full-roster .full-roster-department {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  body.printing-full-roster .full-roster-department h3 {
+    font-size: 13px;
+  }
+
+  body.printing-full-roster .full-roster-table thead {
+    display: table-header-group;
+  }
+
+  body.printing-full-roster .full-roster-table th,
+  body.printing-full-roster .full-roster-table td {
+    padding: 3px 4px;
+    font-size: 9px;
+  }
+
+  body.printing-full-roster .full-roster-table tbody th {
+    font-size: 10px;
   }
 
   body.printing-ctuit-entry .ctuit-entry-print {
