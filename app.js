@@ -1104,6 +1104,14 @@ async function persistStateToServer(options = {}) {
     if (response.status === 409) {
       const conflict = await response.json().catch(() => ({}));
       const recovery = createCloudRecovery(state, lastKnownServerSavedAt, conflict.existingUpdatedAt || "");
+      // A recovery replay is already the one automatic retry. If that retry
+      // loses another race, preserve the copy for review without creating a
+      // refresh loop that keeps the scheduler read-only.
+      if (options.recoveryReapply) {
+        recovery.autoReapplyPending = false;
+        recovery.presentedAt = nowIso();
+        recovery.recoveryRetryFailed = true;
+      }
       try {
         const latestResponse = await authFetch("/api/state", { cache: "no-store" });
         if (latestResponse.ok) {
@@ -2464,7 +2472,15 @@ async function hydrateStateFromServer() {
         currentDate = loadLocalActiveWeek(state.settings.weekStart);
         saveLocalActiveWeek({ shared: false });
         finishInitialReadSourceHydrationRender();
-        if (!restored?.saved) showStaleRecoveryAlert(readCloudRecovery() || recovery);
+        if (!restored?.saved) {
+          // The replay has now been attempted during this refresh. Do not
+          // leave the freshly loaded page read-only when that replay loses a
+          // second race; the preserved recovery copy remains available for
+          // review, but normal edits can continue from the shared state.
+          cloudSaveBlockedByStale = false;
+          setStorageStatus("saved", "Latest shared schedule loaded. Older browser changes were preserved for review.");
+          showStaleRecoveryAlert(readCloudRecovery() || recovery);
+        }
         return;
       }
       // `legacySnapshot=1` is a diagnostic rollback view, not a competing
@@ -4092,9 +4108,6 @@ function renderUnassignedShiftTray() {
   renderOpenShiftBaySummary(shifts);
   renderOpenShiftRoleJump(shifts);
   tray.innerHTML = shifts.length ? shifts.map(renderUnassignedShiftCard).join("") : `<span class="tray-empty">Choose a template and add it here, or double-click to create one open shift.</span>`;
-  if (openShiftBayRoleFocusId && shifts.some((shift) => shift.roleId === openShiftBayRoleFocusId)) {
-    requestAnimationFrame(() => { tray.scrollLeft = 0; });
-  }
   renderSelectedStagedShiftInfo();
 }
 
@@ -6752,15 +6765,9 @@ function scrollToOpenShiftRoleForDrag(unassignedId) {
 }
 
 function prioritizeEmployeesForOpenShift(employees, openShift) {
-  const roleId = openShift?.roleId || "";
-  const candidateRanks = openShift ? openShiftCandidateRankMap(openShift) : new Map();
-  return employees.slice().sort((a, b) => {
-    const aCandidate = candidateRanks.get(a.id) ?? 3;
-    const bCandidate = candidateRanks.get(b.id) ?? 3;
-    const aMatch = roleId && a.roleTraining?.includes(roleId) ? 0 : 1;
-    const bMatch = roleId && b.roleTraining?.includes(roleId) ? 0 : 1;
-    return aCandidate - bCandidate || aMatch - bMatch || displayName(a).localeCompare(displayName(b));
-  });
+  // Selecting an open shift must not reorder the schedule. Candidate ranking
+  // remains available to the bay info panel and future recommendation UI.
+  return employees.slice();
 }
 
 function openShiftCandidateRankMap(openShift) {
@@ -7094,11 +7101,8 @@ function renderEmployeeNameCell(employee, groupRole = null, options = {}) {
 }
 
 function applySelectedOpenShiftRowState(element, employee) {
-  const selectedShift = selectedOpenShiftForSchedule();
-  if (!selectedShift) return;
-  if (employee.roleTraining?.includes(selectedShift.roleId)) element.classList.add("selected-role-match");
-  const recommendation = selectedOpenShiftRecommendation();
-  if (recommendation?.id === employee.id) element.classList.add("selected-best-target");
+  // Open-shift selection is intentionally informational only. It must not
+  // recolor or otherwise move employee rows while the manager is working.
 }
 
 function renderEmployeeHoverCard(employee) {
@@ -8894,7 +8898,7 @@ async function reapplyCloudRecoveryAfterRefresh(recovery, latestState, latestSav
   recovery.baseData = cloneSchedulerState(latestState);
   recovery.autoReapplyPending = true;
   saveCloudRecovery(recovery);
-  const saved = await persistStateToServer({ immediate: true });
+  const saved = await persistStateToServer({ immediate: true, recoveryReapply: true });
   if (saved) {
     lastKnownServerState = cloneSchedulerState(state);
     if (!rebased.conflicts.length) clearCloudRecovery();
@@ -9729,6 +9733,11 @@ function isFutureAvailabilityPattern(pattern) {
   return Boolean(effectiveDate && effectiveDate > formatDateKey(new Date()));
 }
 
+function isEndedAvailabilityPattern(pattern, referenceDate = formatDateKey(new Date())) {
+  const endsOn = normalizeAvailabilityEffectiveDate(pattern?.endsOn || "");
+  return Boolean(endsOn && endsOn <= referenceDate);
+}
+
 function isUnavailableAvailabilityPattern(pattern) {
   return Boolean(pattern && !availabilityHasWindows(pattern.availability));
 }
@@ -9823,7 +9832,7 @@ function renderActiveAvailabilitySummary(employee = null, patterns = availabilit
   const tabs = $("activeAvailabilityTabs");
   if (!tabs) return;
   const activePatterns = patterns
-    .filter((pattern) => pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern))
+    .filter((pattern) => !isEndedAvailabilityPattern(pattern) && (pattern.active !== false || isApprovedFutureAvailabilityPattern(pattern)))
     .sort((left, right) => {
       const leftFuture = isFutureAvailabilityPattern(left);
       const rightFuture = isFutureAvailabilityPattern(right);

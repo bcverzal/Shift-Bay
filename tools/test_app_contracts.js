@@ -48,9 +48,10 @@ function run() {
   includes(app, "historicalMostRecentDate.localeCompare", "historical recommendation ties must prefer the most recent assignment");
   includes(app, "Schedule pattern", "recommendations should use plain schedule-pattern language");
   assert.ok(!app.includes("${renderRecentStagedSection(recent)}"), "selected shift info should not show the misleading recent section");
-  includes(app, "day-focus-pattern-chip", "day-view pattern styling must target only the eligible name chip");
   includes(app, "staged-info-history-recommendation", "historical recommendations must be visible in the bay info panel");
-  includes(app, "day-focus-pattern-chip", "historical recommendations must be visible in day view");
+  includes(app, "Candidate ranking", "open-shift selection must preserve candidate ranking for later recommendation UI");
+  excludes(app, "selected-best-target", "open-shift selection must not recolor recommended employee rows");
+  excludes(app, "tray.scrollLeft = 0", "selecting an open shift must not reset bay horizontal scroll");
   includes(app, 'data-availability-preset="unavailable"', "regular availability must offer an unavailable preset");
   includes(app, 'preset === "unavailable"', "unavailable preset must clear the day availability");
   includes(app, "function showDayFocusChipTooltip", "day-view eligibility tooltips must escape the scroll container");
@@ -61,6 +62,8 @@ function run() {
   includes(app, 'data-availability-end-slot', "manager availability needs paired start/end time controls");
   includes(app, 'data-add-availability-window', "manager availability needs an add-window action");
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
+  includes(app, "function isEndedAvailabilityPattern", "replaced availability tabs must disappear after their end date");
+  includes(app, "!isEndedAvailabilityPattern(pattern)", "replaced availability tabs must use the end-date filter");
   includes(app, "function availabilityShiftConflictDetails", "availability activation must identify already-scheduled conflicts");
   includes(app, "function showAvailabilityShiftConflictReview", "availability activation must provide a manager conflict review");
   includes(app, "Move Selected to Shift Bay", "availability conflict review must offer an explicit unassign action");

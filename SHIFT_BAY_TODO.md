@@ -1,5 +1,45 @@
 # Shift Bay To-Do
 
+## Planning Key
+
+Each promoted work item should include four planning fields:
+
+- **Tier A**: current foundation or an item that can safely proceed in parallel with the current foundation.
+- **Tier B**: depends on one or more Tier A items being stable.
+- **Tier C**: depends on Tier B work, or on several earlier foundations. These are deliberately later-stage items.
+- **Code**: approximate hands-on implementation, testing, and debugging time for Codex.
+- **You**: approximate focused time needed from you for decisions, Supabase/deployment steps, workflow testing, and acceptance review.
+
+Dependencies are explicit IDs rather than an implied list order. A task can therefore depend on several earlier tasks, and two tasks at the same tier can proceed in parallel when they do not touch the same behavior or data model. Estimates are working ranges, not promises; they assume the current Shift Bay architecture and one restaurant location.
+
+## Time-Budgeted Queue
+
+This is the short operational view to use when deciding what fits into an available work block. The full backlog below contains the detailed scope.
+
+| ID | Tier | Work item | Depends on | Code | You |
+| --- | --- | --- | --- | --- | --- |
+| A1 | A | Write and adopt the end-to-end schedule workflow, then audit features against it | — | 2-4h | 30-60m |
+| A2 | A | Make warnings and coverage acknowledgements useful during schedule creation and publishing | A1 | 4-8h | 30-60m |
+| A3 | A | Finish RO import reliability: parsing, duplicate handling, retained review history, and clear summaries | — | 6-12h | 45-90m |
+| A4 | A | Verify print outputs and fix the highest-impact schedule/floor-plan print defects | — | 4-8h | 30-60m |
+| A5 | A | Stabilize AV editing and effective-date behavior across manager and staff views | — | 8-16h | 1-2h |
+| A6 | A | Finish publish/unpublish safeguards for weeks and individual shifts | A1 | 8-16h | 1-2h |
+| A7 | A | Add shift-level audit metadata and reliable change history | A6 | 6-12h | 45-90m |
+| A8 | A | Finish the staff account, login, request-off, and availability approval workflow | A5, A6 | 12-24h | 2-4h |
+| A9 | A | Establish the pre-training reliability gate: no routine false stale warnings, dependable saves, clear recovery, and multi-session verification | A2, A7 | 8-16h | 1-2h |
+| B1 | B | Consolidate hard rules, soft preferences, and linked-employee constraints into one model | A1, A5, A8 | 12-24h | 2-4h |
+| B2 | B | Rebuild explainable recommendations using repeated shifts, availability, rules, seniority, and fairness | B1, A7 | 16-32h | 2-4h |
+| B3 | B | Add conflict-aware multi-user merging and record-level revisions | A7 | 16-32h | 1-3h |
+| B4 | B | Add mobile/read-only access and finish narrow-window usability | A1, A6, A8 | 8-16h | 1-2h |
+| C1 | C | Add staff shift release, pickup, approvals, and notifications | A6, A8, B1 | 16-32h | 2-4h |
+| C2 | C | Build the assisted Ctuit transfer manifest, verification, and exception workflow | A3, A4, A7 | 20-40h | 3-6h |
+| C3 | C | Build autonomous scheduling and business/labor optimization | B1, B2, C1 | 40-80h+ | 4-8h |
+| C4 | C | Add staff feedback, satisfaction signals, analytics, and manager weighting controls | B1, B2, C1 | 24-48h | 3-6h |
+
+When a new idea arrives, add it to this queue only after assigning an ID, tier, dependencies, Code estimate, and You estimate. That keeps an exciting idea from silently displacing a prerequisite.
+
+**Training and rollout gate:** Do not begin teaching the system to additional users until A9 is complete. A warning that is technically correct can still be a product failure if it appears frequently, cannot explain what happened, or makes users doubt whether their work was saved.
+
 ## Dependency-First Roadmap
 
 This order is based on what later features depend on, not on which idea is most exciting. New ideas should first be captured in the right phase, then promoted only when their prerequisites are stable.
@@ -14,6 +54,7 @@ These items protect the schedule workflow already being used in production. Do n
 - [ ] Complete print QA for compact schedules, floor plans, completed weeks, grid views, and CTUIT entry output.
 - [ ] Keep the AV editor and manager/staff availability models consistent, including future effective dates and save/apply behavior.
 - [ ] Resolve the highest-impact schedule-view bugs: single-day assignment behavior, archived employee filtering, shift-bay selection, and drag/drop recovery.
+- [ ] **Reliability gate before broader staff training:** verify normal saves, stale-state recovery, rejected-change recovery, refresh behavior, and two-session use without repeated false alarms or unexplained data changes.
 
 ### P1: Minimum Sellable Staff Workflow
 
@@ -70,6 +111,9 @@ These features become much safer after the core records, permissions, audit trai
 
 ## Core Workflow Polish
 
+- [ ] Revisit whether ideal-candidate recommendation highlighting belongs in the scheduling workflow after the end-to-end workflow review; keep recommendations informational until then.
+- [ ] Document the complete schedule-building workflow from start to finish, then audit every feature against it and remove, simplify, or relocate anything that does not help the workflow.
+- [ ] Redesign warnings and coverage acknowledgements around the real scheduling workflow: let managers quickly mark a coverage shortfall as accepted for that day or mark an open shift as intentionally deferred until after publishing, while preserving a clear unresolved-warning state for issues that still need action.
 - [ ] Add a concise Help / FAQ area: searchable answers for the availability workflow, scheduling, publishing, employee setup, imports, printing, backups, and common troubleshooting. Keep the first version brief and link to deeper walkthroughs only when needed.
 - [ ] Define publish safeguards: preview the week before publishing, show unresolved coverage/conflict warnings, preserve the previous published revision, support owner/manager permissions, provide a clear rollback or withdraw-publish path, and require confirmation before unpublishing a shift that staff may already have viewed.
 - [ ] Add an in-app Help & Feedback surface where users can choose Bug, Suggestion, or Question, describe the issue, and send relevant context (app version, page, location, and optional screenshot) to the owner/support destination. Decide the support email, retention, privacy notice, and notification workflow before enabling delivery.
@@ -116,6 +160,7 @@ These features become much safer after the core records, permissions, audit trai
 
 ## Printing And Floor Plans
 
+- [ ] Revisit the staff roster print layout after its final fields are settled: reduce the oversized Department column, rebalance column widths, and decide whether the recovered horizontal space should support another useful roster field or simply produce a tighter report.
 - [ ] Build a floor-plan designer inside Shift Bay so users can create their own floor plans instead of relying on a prebuilt hardcoded image.
 - [ ] Add floor-plan section assignment tools: split sections based on the number of servers, allow quick manual adjustments, and support giving stronger servers larger or more valuable sections.
 - [ ] Review floor-plan notes with real examples for double, BQT, BAR, trainer, trainee, flex, closer, and lunch closer shifts.
