@@ -1791,7 +1791,15 @@ async function applyNormalizedAvailabilityRead(serverState) {
       }
       return { ...employee, availabilityPatterns: normalizedAvailabilityReadPatterns(employee, normalizedEmployee) };
     });
-    if (missing.length) throw new Error(`Normalized availability is missing ${missing.length} employee${missing.length === 1 ? "" : "s"}: ${missing.slice(0, 5).join(", ")}.`);
+    if (missing.length) {
+      // A departed or not-yet-migrated employee must not force every employee
+      // back to the legacy availability source.
+      console.warn(
+        "Normalized availability is missing "
+          + `${missing.length} employee${missing.length === 1 ? "" : "s"}: ${missing.slice(0, 5).join(", ")}. `
+          + "Their existing availability was retained."
+      );
+    }
     normalizedAvailabilityReadState = "availabilityActive";
     updateNormalizedReadBadge();
     return { ...serverState, employees };
