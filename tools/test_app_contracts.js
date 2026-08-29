@@ -22,6 +22,10 @@ function excludes(source, value, message) {
 
 function run() {
   includes(app, "function syncFloorPlanDateToActiveWeek", "floor-plan date handoff must exist");
+  includes(app, "function chooseFutureShiftDisposition", "deactivating or archiving an employee must review future assigned shifts");
+  includes(app, "Move All to Shift Bay", "future assigned shifts must offer an unassign path before employee deactivation");
+  includes(app, "Delete All Future Shifts", "future assigned shifts must offer an explicit delete path before employee deactivation");
+  includes(app, "employee.active !== false && !employee.archived", "floor plans must exclude inactive and archived employees");
   includes(app, "const DEMO_SEED_VERSION = \"2026-08-18-v1\"", "demo bootstrap must use an explicit seed version");
   includes(app, "function demoStateNeedsBootstrap", "demo bootstrap must detect an unmistakably empty shared state");
   includes(app, "demo.meta.demoSeedVersion = DEMO_SEED_VERSION", "demo bootstrap must mark the shared seed version");

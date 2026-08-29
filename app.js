@@ -3514,6 +3514,84 @@ function moveAssignedShiftsToBay(shiftIds = []) {
   return moved;
 }
 
+function futureAssignedShiftDetails(employeeId, fromDate = formatDateKey(new Date())) {
+  return (state.shifts || [])
+    .filter((shift) => String(shift.employeeId || "") === String(employeeId || ""))
+    .filter((shift) => String(shift.date || "") >= fromDate)
+    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")) || String(left.start || "").localeCompare(String(right.start || "")))
+    .map((shift) => {
+      const role = roleById(shift.roleId);
+      const date = parseDateKey(shift.date);
+      const time = shift.untilVolume ? `${shift.start || "Time not set"} - volume` : `${shift.start || "Time not set"} - ${shift.end || "End not set"}`;
+      return {
+        id: shift.id,
+        label: `${Number.isNaN(date.getTime()) ? shift.date : displayDate(date)} · ${role?.name || "Shift"}`,
+        detail: time
+      };
+    });
+}
+
+async function chooseFutureShiftDisposition(employee, actionLabel) {
+  const futureShifts = futureAssignedShiftDetails(employee?.id);
+  if (!futureShifts.length) return { action: "none", shiftIds: [] };
+  const action = await showAppChoice({
+    title: `${actionLabel} Employee`,
+    message: `${displayName(employee)} has ${futureShifts.length} assigned ${futureShifts.length === 1 ? "shift" : "shifts"} from today onward. Choose what should happen before this employee is removed from scheduling.`,
+    items: futureShifts.slice(0, 8).map((shift) => `${shift.label} · ${shift.detail}`),
+    choices: [
+      { value: "unassign", label: "Move All to Shift Bay" },
+      { value: "delete", label: "Delete All Future Shifts" },
+      { value: "cancel", label: "Cancel" }
+    ]
+  });
+  return { action: action || "cancel", shiftIds: futureShifts.map((shift) => shift.id) };
+}
+
+function applyFutureShiftDisposition(shiftIds, action) {
+  if (action === "unassign") return moveAssignedShiftsToBay(shiftIds);
+  if (action === "delete") {
+    const ids = new Set((shiftIds || []).map(String));
+    const removed = (state.shifts || []).filter((shift) => ids.has(String(shift.id || "")));
+    state.shifts = (state.shifts || []).filter((shift) => !ids.has(String(shift.id || "")));
+    return removed;
+  }
+  return [];
+}
+
+async function archiveEmployeeWithFutureShiftDisposition(employeeId) {
+  const employee = employeeById(employeeId);
+  if (!employee) return false;
+  const review = await chooseFutureShiftDisposition(employee, "Archive");
+  if (review.action === "cancel") return false;
+  pushUndo();
+  const archivedEmployee = { ...employee, archived: true, active: false };
+  state.employees = state.employees.map((item) => item.id === employeeId ? archivedEmployee : item);
+  const profileSaved = SERVER_STORAGE_ENABLED
+    ? await persistEmployeeProfileToServer(archivedEmployee)
+    : true;
+  if (!profileSaved) {
+    state.employees = state.employees.map((item) => item.id === employeeId ? employee : item);
+    undoStack.pop();
+    renderAll({ skipSave: true });
+    return false;
+  }
+  const affectedShifts = applyFutureShiftDisposition(review.shiftIds, review.action);
+  const scheduleSaved = !affectedShifts.length || !SERVER_STORAGE_ENABLED
+    ? true
+    : await saveState({ immediate: true });
+  if (!SERVER_STORAGE_ENABLED) saveState();
+  selectedCell = null;
+  selectedShiftId = null;
+  renderAll({ skipSave: true });
+  resetEmployeeForm();
+  if (affectedShifts.length) {
+    const action = review.action === "delete" ? "deleted" : "returned to the Shift Bay";
+    showConflict(`${displayName(employee)} was archived. ${affectedShifts.length} future ${affectedShifts.length === 1 ? "shift was" : "shifts were"} ${action}.`);
+  }
+  if (!scheduleSaved) showConflict("The employee was archived, but the future-shift update was not confirmed. Refresh before retrying that shift cleanup.");
+  return scheduleSaved;
+}
+
 function markEmployeeFormClean() {
   employeeFormCleanSnapshot = employeeFormSnapshot();
   employeeFormDirty = false;
@@ -12623,10 +12701,14 @@ function openDayNotesDialog(dateKey = focusedDateKey || formatDateKey(currentDat
 
 function floorPlanGroups(dateKey, period, options = {}) {
   const groups = { host: [], expo: [], servers: [], busser: [], bartender: [], banquet: [] };
+  const isFloorPlanEmployee = (shift) => {
+    const employee = employeeById(shift.employeeId);
+    return Boolean(employee && employee.active !== false && !employee.archived);
+  };
   const dayShifts = state.shifts
-    .filter((shift) => shift.date === dateKey && shift.department === "FOH");
+    .filter((shift) => shift.date === dateKey && shift.department === "FOH" && isFloorPlanEmployee(shift));
   const floorShifts = state.shifts
-    .filter((shift) => shift.date === dateKey && shift.department === "FOH" && shiftMatchesFloorPlanPeriod(shift, period))
+    .filter((shift) => shift.date === dateKey && shift.department === "FOH" && isFloorPlanEmployee(shift) && shiftMatchesFloorPlanPeriod(shift, period))
     .sort((a, b) => (minutesFromTime(a.start) ?? 0) - (minutesFromTime(b.start) ?? 0));
   const firstNameCounts = floorPlanFirstNameCounts(floorShifts);
   const pushEntry = (groupKey, employee, shift) => {
@@ -15753,6 +15835,15 @@ function wireEvents() {
       weeklyAvailability,
       weeklyRules: parseWeeklyRules()
     };
+    let statusShiftReview = { action: "none", shiftIds: [] };
+    if (existingEmployee && existingEmployee.active !== false && employee.active === false) {
+      statusShiftReview = await chooseFutureShiftDisposition(employee, "Deactivate");
+      if (statusShiftReview.action === "cancel") {
+        undoStack.pop();
+        setEmployeeSaveDebugStatus("Employee deactivation cancelled while reviewing future shifts", "idle");
+        return false;
+      }
+    }
     let availabilityConflictShiftIds = [];
     if (activateSubmittedAvailability && patternActive) {
       const schedulingConflicts = availabilityShiftConflictDetails(employee, availabilityEffectiveDate);
@@ -15791,9 +15882,11 @@ function wireEvents() {
       : (saveState(), true);
     let conflictShiftsSaved = true;
     let movedConflictingShifts = [];
-    if (saved && availabilityConflictShiftIds.length) {
-      movedConflictingShifts = moveAssignedShiftsToBay(availabilityConflictShiftIds);
-      if (movedConflictingShifts.length) {
+    let statusChangedShifts = [];
+    if (saved) {
+      statusChangedShifts = applyFutureShiftDisposition(statusShiftReview.shiftIds, statusShiftReview.action);
+      if (availabilityConflictShiftIds.length) movedConflictingShifts = moveAssignedShiftsToBay(availabilityConflictShiftIds);
+      if (statusChangedShifts.length || movedConflictingShifts.length) {
         conflictShiftsSaved = SERVER_STORAGE_ENABLED
           ? await saveState({ immediate: true })
           : (saveState(), true);
@@ -15826,6 +15919,10 @@ function wireEvents() {
       showEmployeeSavedToast(displayName(employee));
       if (movedConflictingShifts.length) {
         showConflict(`${movedConflictingShifts.length} conflicting ${movedConflictingShifts.length === 1 ? "shift was" : "shifts were"} returned to the Shift Bay.`);
+      }
+      if (statusChangedShifts.length) {
+        const action = statusShiftReview.action === "delete" ? "deleted" : "returned to the Shift Bay";
+        showConflict(`${statusChangedShifts.length} future ${statusChangedShifts.length === 1 ? "shift was" : "shifts were"} ${action}.`);
       }
       return true;
     } else {
@@ -16070,14 +16167,10 @@ function wireEvents() {
     renderWeeklyAvailabilityEditor(employeeById($("employeeId").value));
   };
   $("addWeeklyRuleBtn").onclick = addWeeklyRuleRow;
-  $("archiveEmployeeBtn").onclick = () => {
+  $("archiveEmployeeBtn").onclick = async () => {
     const id = $("employeeId").value;
     if (!id) return;
-    pushUndo();
-    state.employees = state.employees.map((employee) => employee.id === id ? { ...employee, archived: true, active: false } : employee);
-    selectedCell = null;
-    selectedShiftId = null;
-    renderAll();
+    await archiveEmployeeWithFutureShiftDisposition(id);
   };
   $("restoreEmployeeBtn").onclick = () => {
     const id = $("employeeId").value;

@@ -2024,6 +2024,11 @@ async function handleSaveState(request: Request) {
         updated_at: savedAt
       }])
     });
+    // Keep the normalized employee status current before returning. This is a
+    // targeted profile operation, so it avoids the whole-schedule revision
+    // race while ensuring inactive or archived staff cannot reappear through
+    // normalized reads or floor-plan data after a refresh.
+    const normalizedSync = await syncNormalizedEmployeeProfile(locationId, employeeProfile);
     await Promise.race([
       logAuditEvent("employee_profile_saved", (validated.user as any).id, {
         documentKey: cfg.documentKey,
@@ -2034,12 +2039,12 @@ async function handleSaveState(request: Request) {
         saveScope,
         saveAttemptId: saveAttemptId || null,
         employeeId,
-        normalizedSync: { synced: false, reason: "normalized sync deferred" },
+        normalizedSync,
         changeSummary: { employeesChanged: 1 }
       }),
       new Promise<void>((resolve) => setTimeout(resolve, 500))
     ]);
-    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync: { synced: false, reason: "normalized sync deferred" } });
+    return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync });
   }
   const atomicRevisionMode = saveMode === "normalized-sandbox-atomic-revision" ||
     saveMode === "normalized-production-atomic-revision";

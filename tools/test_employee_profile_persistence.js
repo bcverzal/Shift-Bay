@@ -50,7 +50,7 @@ function run() {
   includes(edge, "profileOverrideSaved: true", "profile saves must return an explicit compatibility-override confirmation");
   includes(edge, 'employee_profile_saved', "profile saves must be auditable");
   includes(edge, "syncNormalizedEmployeeProfile", "profile saves must attempt normalized dual-write");
-  includes(edge, "normalized sync deferred", "profile saves must not wait indefinitely on normalized migration work");
+  includes(edge, "const normalizedSync = await syncNormalizedEmployeeProfile", "profile saves must mirror the employee status into normalized data before returning");
   includes(edge, 'if (!profileOnlySave && baseServerSavedAt', "API must keep the schedule stale guard scoped");
   console.log("employee profile persistence contract tests passed");
 }
