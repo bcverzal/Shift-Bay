@@ -905,6 +905,14 @@ function updateStorageStatus() {
   button.setAttribute("aria-label", `Storage status: ${label.textContent}`);
 }
 
+function currentCloudSaveMode() {
+  if (!NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE) return "snapshot-bridge";
+  if (NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE) return "normalized-production-atomic-revision";
+  if (NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE) return "normalized-sandbox-atomic-revision";
+  if (NORMALIZED_SCHEDULE_REVISION_CANARY_MODE) return "normalized-sandbox-direct-revision";
+  return "normalized-sandbox-direct";
+}
+
 function serverEnvelope(options = {}) {
   const sourceState = options.stateOverride || state;
   const employeeId = options.employeeId || "";
@@ -1103,7 +1111,7 @@ async function persistStateToServer(options = {}) {
     }
     if (response.status === 409) {
       const conflict = await response.json().catch(() => ({}));
-      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, conflict.existingUpdatedAt || "");
+      const recovery = createCloudRecovery(state, lastKnownServerSavedAt, conflict.existingUpdatedAt || "", lastKnownServerState, currentCloudSaveMode());
       // A recovery replay is already the one automatic retry. If that retry
       // loses another race, preserve the copy for review without creating a
       // refresh loop that keeps the scheduler read-only.
@@ -2468,7 +2476,9 @@ async function hydrateStateFromServer() {
         recovery.quarantinedByLegacySnapshot = true;
         saveCloudRecovery(recovery);
       }
-      if (recovery?.autoReapplyPending && recovery.baseData) {
+      const recoveryModeCompatible = !NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE
+        || recovery?.writeMode === currentCloudSaveMode();
+      if (recovery?.autoReapplyPending && recovery.baseData && recoveryModeCompatible) {
         state = serverState;
         localStorage.setItem(STORE_KEY, JSON.stringify(state));
         serverStorageReady = true;
@@ -2490,6 +2500,15 @@ async function hydrateStateFromServer() {
           showStaleRecoveryAlert(readCloudRecovery() || recovery);
         }
         return;
+      }
+      if (recovery?.autoReapplyPending && recovery.baseData && !recoveryModeCompatible) {
+        // Do not replay a recovery copy created by the old snapshot bridge into
+        // the normalized atomic schedule. Keep it for review, but prevent an
+        // old browser copy from creating repeated stale-save attempts.
+        recovery.autoReapplyPending = false;
+        recovery.presentedAt = nowIso();
+        recovery.quarantinedByWriteMode = currentCloudSaveMode();
+        saveCloudRecovery(recovery);
       }
       // `legacySnapshot=1` is a diagnostic rollback view, not a competing
       // browser edit. Never turn that deliberate source switch into a stale
@@ -8842,13 +8861,14 @@ function rebaseCloudRecovery(baseState = {}, localState = {}, latestState = {}) 
   return { state: rebased, applied, conflicts };
 }
 
-function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "", baseState = lastKnownServerState) {
+function createCloudRecovery(localState, baseServerSavedAt = "", existingUpdatedAt = "", baseState = lastKnownServerState, writeMode = currentCloudSaveMode()) {
   return {
     savedAt: nowIso(),
     baseServerSavedAt,
     existingUpdatedAt,
     data: cloneSchedulerState(localState),
     baseData: baseState ? cloneSchedulerState(baseState) : null,
+    writeMode,
     changes: [],
     autoReapplyPending: Boolean(baseState)
   };
