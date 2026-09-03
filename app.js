@@ -556,7 +556,9 @@ function migrateState(loadedState, parsed = {}) {
     training: normalizeShiftTraining(shift.training),
     isCloser: Boolean(shift.isCloser),
     isLunchCloser: Boolean(shift.isLunchCloser),
-    isFlexDouble: Boolean(shift.isFlexDouble)
+    isFlexDouble: Boolean(shift.isFlexDouble),
+    isLocked: Boolean(shift.isLocked),
+    lockNote: String(shift.lockNote || "").trim()
   }));
   loadedState.unassignedShifts = (loadedState.unassignedShifts || []).map((shift) => ({
     ...shift,
@@ -3491,6 +3493,10 @@ function moveAssignedShiftsToBay(shiftIds = []) {
   if (!ids.size) return [];
   const moved = state.shifts.filter((shift) => ids.has(String(shift.id || "")));
   if (!moved.length) return [];
+  if (moved.some(shiftIsLocked)) {
+    showConflict("A selected shift is locked. Unlock it before moving it back to the Shift Bay.");
+    return [];
+  }
   const staged = moved.map((shift) => ({
     id: uid("unassigned"),
     templateId: shift.templateId || "",
@@ -6095,6 +6101,8 @@ function wireDayFocusTimeline(root) {
       event.preventDefault();
       event.stopPropagation();
       const shiftId = bar.dataset.timelineShift;
+      const shift = state.shifts.find((item) => item.id === shiftId);
+      if (lockedShiftNotice(shift, "deleted")) return;
       pushUndo();
       state.shifts = state.shifts.filter((item) => item.id !== shiftId);
       selectedShiftId = null;
@@ -7681,6 +7689,83 @@ function addManualRequestOffRange(employeeId, startKey, endKey) {
   showConflict(`Added ${added} RO day${added === 1 ? "" : "s"} for ${displayName(employeeById(employeeId))}.`);
 }
 
+function updateRequestOffTimeControls() {
+  const allDay = $("requestOffAllDay")?.checked;
+  ["requestOffStart", "requestOffEnd"].forEach((id) => {
+    const input = $(id);
+    if (!input) return;
+    input.disabled = Boolean(allDay);
+    input.closest("label")?.classList.toggle("muted", Boolean(allDay));
+  });
+}
+
+function openManualRequestOffDialog(employeeId, dateKey, start = "", end = "") {
+  if (!employeeId || !dateKey) return showConflict("Choose an employee and date before adding RO.");
+  const dialog = $("requestOffDialog");
+  if (!dialog) return;
+  $("requestOffEmployeeId").value = employeeId;
+  $("requestOffEmployee").value = displayName(employeeById(employeeId));
+  $("requestOffStartDate").value = dateKey;
+  $("requestOffEndDate").value = dateKey;
+  $("requestOffAllDay").checked = !(start && end);
+  $("requestOffStart").value = start || "";
+  $("requestOffEnd").value = end || "";
+  $("requestOffNote").value = "";
+  $("requestOffWarnings").innerHTML = "";
+  updateRequestOffTimeControls();
+  attachTimePickerInput($("requestOffStart"));
+  attachTimePickerInput($("requestOffEnd"));
+  dialog.showModal();
+}
+
+function saveManualRequestOff(event) {
+  event.preventDefault();
+  const employeeId = $("requestOffEmployeeId").value;
+  const startKey = $("requestOffStartDate").value;
+  const endKey = $("requestOffEndDate").value;
+  const allDay = $("requestOffAllDay").checked;
+  const start = allDay ? "" : normalizeTime($("requestOffStart").value);
+  const end = allDay ? "" : normalizeTime($("requestOffEnd").value);
+  const warnings = $("requestOffWarnings");
+  const startDate = parseDateKey(startKey);
+  const endDate = parseDateKey(endKey);
+  const errors = [];
+  if (!employeeId || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) errors.push("Choose a valid start and end date.");
+  if (!allDay && (!start || !end)) errors.push("Use both a start and end time, or choose All day.");
+  if (!allDay && start && end) {
+    const startMinutes = minutesFromTime(start);
+    let endMinutes = minutesFromTime(end);
+    if (startMinutes == null || endMinutes == null) errors.push("Use valid times such as 9a or 5p.");
+    else {
+      if (endMinutes <= startMinutes) endMinutes += 1440;
+      if (endMinutes <= startMinutes || endMinutes - startMinutes > 1440) errors.push("The end time must be after the start time.");
+    }
+  }
+  if (errors.length) {
+    if (warnings) warnings.innerHTML = errors.map((error) => `<div>${escapeHtml(error)}</div>`).join("");
+    return;
+  }
+  state.timeOffRequests = state.timeOffRequests || [];
+  const note = cleanCell($("requestOffNote").value) || "Manual grid entry";
+  const additions = [];
+  for (let date = new Date(startDate); date <= endDate; date = addDays(date, 1)) {
+    const dateValue = formatDateKey(date);
+    if (state.timeOffRequests.some((request) => request.employeeId === employeeId && request.date === dateValue)) continue;
+    additions.push({ id: uid("timeoff"), employeeId, date: dateValue, daypart: allDay ? "All day" : "Partial day", allDay, start, end, note, source: "Manual" });
+  }
+  if (!additions.length) {
+    if (warnings) warnings.innerHTML = "<div>That request-off range is already entered.</div>";
+    return;
+  }
+  pushUndo();
+  state.timeOffRequests.push(...additions);
+  $("requestOffDialog").close();
+  $("shiftDialog")?.close();
+  saveState();
+  renderAllPreservingScheduleScroll();
+  showConflict(`Added ${additions.length} request-off day${additions.length === 1 ? "" : "s"} for ${displayName(employeeById(employeeId))}.`);
+}
+
 function updateTimeOffEditTimeControls() {
   const coverage = $("timeOffEditDaypart")?.value || "allDay";
   const disabled = coverage !== "custom";
@@ -8290,6 +8375,7 @@ function renderShiftCard(shift, options = {}) {
   const showShiftLabel = !hideScheduleLabels && Boolean(state.settings.showShiftNameFields) && rawShiftLabel && rawShiftLabel !== titleText && !/regular\s+week/i.test(rawShiftLabel);
   const card = document.createElement("div");
   card.className = "shift-card";
+  if (shiftIsLocked(shift)) card.classList.add("is-locked");
   if (options.ghost) card.classList.add("ghost-shift-card");
   if (options.preview) card.classList.add("copy-paint-preview-card");
   const issueMessages = shiftIssueMessages(shift);
@@ -8311,6 +8397,7 @@ function renderShiftCard(shift, options = {}) {
   if (trainingBadges) card.classList.add("has-training-badge");
   const flexBadge = shift.isFlexDouble ? `<span class="shift-trait-badge flex-double-badge" title="Flex Double">Flex</span>` : "";
   const lunchCloserBadge = shift.isLunchCloser ? `<span class="shift-trait-badge lunch-closer-badge" title="Lunch closer">Lunch CL</span>` : "";
+  const lockBadge = shiftIsLocked(shift) ? `<span class="shift-trait-badge shift-lock-badge" title="Locked shift${shift.lockNote ? `: ${escapeHtml(shift.lockNote)}` : ""}">Locked</span>` : "";
   const selectedActions = (!options.ghost && selectedShiftId === shift.id && pendingDeleteShiftId !== shift.id) ? `
     <div class="shift-action-strip" aria-label="Selected shift actions">
       <button type="button" data-shift-action="edit" title="Edit shift">Edit</button>
@@ -8320,7 +8407,7 @@ function renderShiftCard(shift, options = {}) {
   ` : "";
   card.innerHTML = `
     <div class="shift-title"><span>${escapeHtml(titleText)}</span><span class="shift-dept">${escapeHtml(shift.department || "")}</span></div>
-    ${flexBadge}${lunchCloserBadge}
+    ${flexBadge}${lunchCloserBadge}${lockBadge}
     ${selectedActions}
     ${options.ghost ? "" : `<button class="closer-toggle ${shift.isCloser ? "active" : ""}" type="button" title="${shift.isCloser ? "Marked as closer shift" : "Mark as closer shift"}" aria-label="${shift.isCloser ? "Unmark closer shift" : "Mark closer shift"}">Close</button>`}
     ${showShiftLabel ? `<div class="shift-notes">${escapeHtml(rawShiftLabel)}</div>` : ""}
@@ -8414,6 +8501,7 @@ function renderShiftCard(shift, options = {}) {
         });
         card.querySelector(".delete-confirm-button")?.addEventListener("click", (confirmEvent) => {
           confirmEvent.stopPropagation();
+          if (lockedShiftNotice(shift, "deleted")) return;
           pushUndo();
           state.shifts = state.shifts.filter((item) => item.id !== shift.id);
           selectedShiftId = null;
@@ -8459,6 +8547,7 @@ function renderShiftCard(shift, options = {}) {
   if (confirmDeleteButton) {
     confirmDeleteButton.onclick = (event) => {
       event.stopPropagation();
+      if (lockedShiftNotice(shift, "deleted")) return;
       pushUndo();
       state.shifts = state.shifts.filter((item) => item.id !== shift.id);
       selectedShiftId = null;
@@ -8512,6 +8601,7 @@ function renderShiftCard(shift, options = {}) {
 function toggleShiftCloser(shiftId) {
   const shift = state.shifts.find((item) => item.id === shiftId);
   if (!shift) return;
+  if (lockedShiftNotice(shift, "changed")) return;
   pushUndo();
   state.shifts = state.shifts.map((item) => item.id === shiftId ? { ...item, isCloser: !item.isCloser } : item);
   selectedShiftId = shiftId;
@@ -8612,6 +8702,11 @@ async function moveAssignedShiftToEmployee(shiftId, employeeId, dateKey = null, 
   if (!source || !employeeId) {
     showConflict("Drop the shift onto an employee or schedule cell to move it.");
     endAnyDrag();
+    return;
+  }
+  if (!isCopy && lockedShiftNotice(source, "moved")) {
+    endAnyDrag();
+    renderSchedule();
     return;
   }
   const nextShift = {
@@ -8743,6 +8838,7 @@ function stagedShiftToShift(source, employeeId) {
 function unassignShift(shiftId) {
   const shift = state.shifts.find((item) => item.id === shiftId);
   if (!shift) return;
+  if (lockedShiftNotice(shift, "moved back to the Shift Bay")) return;
   pushUndo();
   const staged = {
     id: uid("unassigned"),
@@ -8800,7 +8896,7 @@ function hideAppNotice() {
   }, 180);
 }
 
-function showAppAlert({ title = "Notice", message = "", items = [], type = "info" } = {}) {
+function showAppAlert({ title = "Notice", message = "", items = [], details = "", type = "info" } = {}) {
   const dialog = $("appAlertDialog");
   if (!dialog) {
     showConflict(message || title);
@@ -8812,7 +8908,7 @@ function showAppAlert({ title = "Notice", message = "", items = [], type = "info
   $("appAlertIcon").textContent = type === "error" ? "!" : type === "warning" ? "!" : "i";
   $("appAlertTitle").textContent = title;
   $("appAlertMessage").textContent = message;
-  $("appAlertList").innerHTML = items.map((item) => `<div>${escapeHtml(item)}</div>`).join("");
+  $("appAlertList").innerHTML = `${items.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}${details}`;
   $("appAlertCloseBtn").onclick = () => dialog.close();
   if (dialog.open) dialog.close();
   dialog.showModal();
@@ -9125,6 +9221,27 @@ function shiftChangeMetadata(existing, source = "Manual") {
   };
 }
 
+function shiftIsLocked(shift) {
+  return Boolean(shift?.isLocked);
+}
+
+function lockedShiftNotice(shift, action = "change") {
+  if (!shiftIsLocked(shift)) return false;
+  const note = cleanCell(shift.lockNote);
+  showConflict(`This shift is locked and cannot be ${action}. ${note ? `Reason: ${note}` : "Unlock it first."}`);
+  return true;
+}
+
+function lockedShiftWasEdited(existing, next) {
+  if (!shiftIsLocked(existing)) return false;
+  const comparable = (shift) => {
+    const copy = { ...shift };
+    ["id", "createdAt", "createdBy", "updatedAt", "updatedBy", "changeSource", "isLocked", "lockNote"].forEach((key) => delete copy[key]);
+    return copy;
+  };
+  return JSON.stringify(comparable(existing)) !== JSON.stringify(comparable(next));
+}
+
 function openShiftDialog(shift = null) {
   const dialog = $("shiftDialog");
   const roleOptions = state.roles.map((role) => `<option value="${role.id}">${role.name}</option>`).join("");
@@ -9180,6 +9297,8 @@ function openShiftDialog(shift = null) {
   $("shiftIsCloser").checked = Boolean(base.isCloser);
   $("shiftIsLunchCloser").checked = Boolean(base.isLunchCloser);
   $("shiftFlexDouble").checked = Boolean(base.isFlexDouble);
+  $("shiftIsLocked").checked = Boolean(base.isLocked);
+  $("shiftLockNote").value = base.lockNote || "";
   $("shiftIsTraining").checked = Boolean(base.training?.isTraining);
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
@@ -9246,6 +9365,8 @@ function openStagedShiftDialog(stagedShift = null) {
   $("shiftIsCloser").checked = Boolean(base.isCloser);
   $("shiftIsLunchCloser").checked = Boolean(base.isLunchCloser);
   $("shiftFlexDouble").checked = Boolean(base.isFlexDouble);
+  $("shiftIsLocked").checked = Boolean(base.isLocked);
+  $("shiftLockNote").value = base.lockNote || "";
   base.training = normalizeShiftTraining(base.training);
   $("shiftIsTraining").checked = Boolean(base.training?.isTraining);
   $("shiftTrainee").value = base.training?.traineeId || "";
@@ -9421,6 +9542,8 @@ function collectShiftFromDialog() {
     isCloser: $("shiftIsCloser").checked,
     isLunchCloser: $("shiftIsLunchCloser").checked,
     isFlexDouble: $("shiftFlexDouble").checked,
+    isLocked: $("shiftIsLocked").checked,
+    lockNote: $("shiftIsLocked").checked ? $("shiftLockNote").value.trim() : "",
     meals: [],
     training: {
       isTraining,
@@ -11811,6 +11934,7 @@ function clearSelectedDay() {
   const dateKey = selectedScheduleDate();
   const shifts = state.shifts.filter((shift) => shift.date === dateKey && visibleShift(shift));
   if (!shifts.length) return showConflict("No visible shifts found on the selected day.");
+  if (shifts.some(shiftIsLocked)) return showConflict("The selected day contains a locked shift. Unlock it before clearing the day.");
   pushUndo();
   state.shifts = state.shifts.filter((shift) => !(shift.date === dateKey && visibleShift(shift)));
   selectedShiftId = null;
@@ -11825,6 +11949,7 @@ function clearSelectedEmployee() {
   const dates = new Set(weekDates().map(formatDateKey));
   const shifts = state.shifts.filter((shift) => shift.employeeId === employeeId && dates.has(shift.date) && visibleShift(shift));
   if (!shifts.length) return showConflict("No visible shifts found for that employee this week.");
+  if (shifts.some(shiftIsLocked)) return showConflict("This employee has a locked shift in the selected week. Unlock it before clearing the row.");
   pushUndo();
   state.shifts = state.shifts.filter((shift) => !(shift.employeeId === employeeId && dates.has(shift.date) && visibleShift(shift)));
   selectedShiftId = null;
@@ -14408,6 +14533,7 @@ async function parseRequestOffPdfFilesInBrowser(files) {
   const pdfjs = await loadRequestOffPdfJs();
   const results = [];
   const errors = [];
+  const duplicateRows = [];
   for (const [index, file] of files.entries()) {
     const fileName = cleanCell(file.name) || `request-off-${index + 1}.pdf`;
     try {
@@ -14432,7 +14558,10 @@ async function parseRequestOffPdfFilesInBrowser(files) {
           const key = [request.firstName, request.lastName, request.date, request.daypart]
             .map((value) => cleanCell(value).toLowerCase())
             .join("|");
-          if (pageSeen.has(key)) return;
+          if (pageSeen.has(key)) {
+            duplicateRows.push({ ...request, reason: "Duplicate row found on the same PDF page" });
+            return;
+          }
           pageSeen.add(key);
           requests.push(request);
         });
@@ -14445,7 +14574,10 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         const key = [request.firstName, request.lastName, request.date, request.daypart]
           .map((value) => cleanCell(value).toLowerCase())
           .join("|");
-        if (seen.has(key) || !roPdfPlausibleRequest(request)) return;
+        if (seen.has(key) || !roPdfPlausibleRequest(request)) {
+          if (seen.has(key)) duplicateRows.push({ ...request, reason: "Duplicate row found during PDF extraction" });
+          return;
+        }
         seen.add(key);
         combinedRequests.push(request);
       });
@@ -14464,13 +14596,14 @@ async function parseRequestOffPdfFilesInBrowser(files) {
         .join("|");
       if (seen.has(key)) {
         duplicates++;
+        duplicateRows.push({ ...request, reason: "Duplicate row found across PDF pages or files" });
         return;
       }
       seen.add(key);
       requests.push(request);
     });
   });
-  return { requests, source: "Ctuit RO PDF", diagnostics: { files: results, errors, duplicates } };
+  return { requests, source: "Ctuit RO PDF", diagnostics: { files: results, errors, duplicates: duplicateRows.length, duplicateRows } };
 }
 function parseCtuitAvailabilityTimeOffText(text, fileName = "Ctuit RO PDF") {
   const lines = text.split(/\r?\n/).map((line) => cleanCell(line)).filter(Boolean);
@@ -14571,13 +14704,14 @@ function arrayBufferToBase64(buffer) {
 function mergeRequestOffParses(groups) {
   const requests = [];
   const seen = new Set();
-  const diagnostics = { undatedSections: [], errors: [], files: [], duplicates: 0 };
+  const diagnostics = { undatedSections: [], errors: [], files: [], duplicates: 0, duplicateRows: [] };
   groups.filter(Boolean).forEach((group) => {
     (group.requests || []).forEach((request) => {
       const key = [request.firstName, request.lastName, request.date, request.daypart]
         .map((value) => cleanCell(value).toLowerCase()).join("|");
       if (seen.has(key)) {
         diagnostics.duplicates++;
+        diagnostics.duplicateRows.push({ ...request, reason: "Duplicate row found across selected files or parser results" });
         return;
       }
       seen.add(key);
@@ -14587,6 +14721,7 @@ function mergeRequestOffParses(groups) {
     diagnostics.errors.push(...(group.diagnostics?.errors || []));
     diagnostics.files.push(...(group.diagnostics?.files || []));
     diagnostics.duplicates += Number(group.diagnostics?.duplicates) || 0;
+    diagnostics.duplicateRows.push(...(group.diagnostics?.duplicateRows || []));
   });
   return { requests, source: groups.find((group) => group?.source)?.source || "Request Off", diagnostics };
 }
@@ -14600,12 +14735,18 @@ function applyParsedRequestOffs(parsed) {
   const unmatched = new Set();
   const unmatchedRequests = [];
   const duplicateRequests = [];
+  const auditRows = (parsed.diagnostics?.duplicateRows || []).map((request) => ({
+    ...request,
+    status: "duplicate",
+    reason: request.reason || "Duplicate row found during parsing"
+  }));
   parsed.requests.forEach((request) => {
     const employee = findEmployeeByReportName(request.lastName, request.firstName);
     if (!employee) {
       skipped++;
       unmatched.add(`${request.firstName} ${request.lastName}`.trim());
       unmatchedRequests.push({ ...request, reason: "No matching employee found" });
+      auditRows.push({ ...request, status: "skipped", reason: "No matching employee found" });
       return;
     }
     const nextRequest = {
@@ -14624,9 +14765,11 @@ function applyParsedRequestOffs(parsed) {
     if (!duplicate) {
       state.timeOffRequests.push(nextRequest);
       imported++;
+      auditRows.push({ ...request, status: "created", reason: "New RO card created" });
     } else {
       duplicates++;
       duplicateRequests.push({ ...request, reason: "Already exists for this employee and date" });
+      auditRows.push({ ...request, status: "already-imported", reason: "Matching RO already exists in the schedule" });
     }
   });
   const parserDuplicates = Number(parsed.diagnostics?.duplicates) || 0;
@@ -14643,7 +14786,8 @@ function applyParsedRequestOffs(parsed) {
     alreadyExisting: duplicates,
     duplicateRowsInFiles: parserDuplicates,
     unmatched: unmatchedRequests,
-    duplicates: duplicateRequests
+    duplicates: duplicateRequests,
+    auditRows
   });
   state.requestOffImportLog = state.requestOffImportLog.slice(0, 50);
   if (!imported && undoStack.length) undoStack.pop();
@@ -14656,12 +14800,41 @@ function applyParsedRequestOffs(parsed) {
     : "";
   const fileItems = (parsed.diagnostics?.files || []).map((file) => `${file.fileName}: ${file.requests?.length || 0} readable RO row${file.requests?.length === 1 ? "" : "s"}`);
   const errorItems = (parsed.diagnostics?.errors || []).map((item) => `${item.fileName}: ${item.error}`);
+  const auditDetails = renderRequestOffImportAudit(auditRows);
   showAppAlert({
     title: "RO Import Complete",
     message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} already-imported entr${duplicates === 1 ? "y" : "ies"}.` : ""}${parserDuplicates ? ` Ignored ${parserDuplicates} duplicate row${parserDuplicates === 1 ? "" : "s"} found within the selected files.` : ""}${suffix}${diagnostic}`,
     type: skipped || diagnostic || errorItems.length ? "warning" : "info",
-    items: [...fileItems, ...errorItems]
+    items: [...fileItems, ...errorItems],
+    details: auditDetails
   });
+}
+
+function requestOffAuditLabel(request) {
+  const name = `${cleanCell(request.firstName)} ${cleanCell(request.lastName)}`.trim() || "Unidentified employee";
+  return `${name} | ${request.date || "No date"} | ${request.daypart || "All day"}`;
+}
+
+function renderRequestOffImportAudit(rows = []) {
+  if (!rows.length) return "";
+  const counts = rows.reduce((result, row) => {
+    result[row.status] = (result[row.status] || 0) + 1;
+    return result;
+  }, {});
+  const summary = [
+    ["created", "Created"],
+    ["already-imported", "Already imported"],
+    ["duplicate", "Duplicate parser rows"],
+    ["skipped", "Skipped"]
+  ].filter(([key]) => counts[key]).map(([key, label]) => `${label}: ${counts[key]}`).join(" | ");
+  const rowsHtml = rows.map((row) => `
+    <div class="ro-import-audit-row ro-import-audit-${escapeHtml(row.status)}">
+      <strong>${escapeHtml(row.status === "created" ? "Created" : row.status === "already-imported" ? "Already imported" : row.status === "duplicate" ? "Duplicate" : "Skipped")}</strong>
+      <span>${escapeHtml(requestOffAuditLabel(row))}</span>
+      <em>${escapeHtml(row.reason || "")}</em>
+    </div>
+  `).join("");
+  return `<details class="ro-import-audit"><summary>Show row-by-row import audit (${escapeHtml(summary)})</summary><div class="ro-import-audit-list">${rowsHtml}</div></details>`;
 }
 
 function sameRequestOffDaypart(left, right) {
@@ -15168,7 +15341,7 @@ function setupTimePicker() {
   picker.className = "time-picker";
   document.body.append(picker);
 
-  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd", "timeOffEditStart", "timeOffEditEnd"].forEach((id) => attachTimePickerInput($(id)));
+  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd", "timeOffEditStart", "timeOffEditEnd", "requestOffStart", "requestOffEnd"].forEach((id) => attachTimePickerInput($(id)));
 
   document.addEventListener("mousedown", (event) => {
     if (!event.target.closest("#timePicker") && event.target !== activeTimeInput) closeTimePicker();
@@ -15575,17 +15748,15 @@ function wireEvents() {
       $("shiftDialog").close();
       return;
     }
-    const startKey = window.prompt("RO start date", dateKey) || "";
-    if (!startKey) return;
-    const endKey = window.prompt("RO end date", startKey) || "";
-    if (!endKey) return;
-    addManualRequestOffRange(employeeId, startKey, endKey);
-    updateRequestOffShiftButton();
-    $("shiftDialog").close();
+    const shift = state.shifts.find((item) => item.id === selectedShiftId && item.employeeId === employeeId && item.date === dateKey);
+    openManualRequestOffDialog(employeeId, dateKey, shift?.start || "", shift?.untilVolume ? "" : (shift?.end || ""));
   };
   $("dayBlockAllDay").onchange = updateDayBlockTimeControls;
   $("dayBlockForm").onsubmit = saveDayBlock;
   $("cancelDayBlockBtn").onclick = () => $("dayBlockDialog").close();
+  $("requestOffAllDay").onchange = updateRequestOffTimeControls;
+  $("requestOffForm").onsubmit = saveManualRequestOff;
+  $("cancelRequestOffBtn").onclick = () => $("requestOffDialog").close();
   $("timeOffEditDaypart").onchange = updateTimeOffEditTimeControls;
   $("timeOffEditForm").onsubmit = saveTimeOffEdit;
   $("cancelTimeOffEditBtn").onclick = () => $("timeOffEditDialog").close();
@@ -16326,6 +16497,11 @@ function wireEvents() {
       return;
     }
     const shift = collectShiftFromDialog();
+    const existingShift = state.shifts.find((item) => item.id === shift.id);
+    if (lockedShiftWasEdited(existingShift, shift)) {
+      $("shiftWarnings").innerHTML = "<div>This shift is locked. Unlock it and save that change before editing any other shift details.</div>";
+      return;
+    }
     const result = validateShift(shift);
     $("shiftWarnings").innerHTML = [...result.errors, ...result.warnings].map((item) => `<div>${item}</div>`).join("");
     if (result.errors.length) return;
@@ -16340,12 +16516,16 @@ function wireEvents() {
   $("unassignShiftBtn").onclick = () => {
     const id = $("shiftId").value;
     if (!id || $("shiftDialogMode").value !== "assigned") return;
+    const shift = state.shifts.find((item) => item.id === id);
+    if (lockedShiftNotice(shift, "unassigned")) return;
     unassignShift(id);
   };
   $("deleteShiftBtn").onclick = () => {
     const id = $("shiftId").value;
     if (!id) return;
     armDeleteButton($("deleteShiftBtn"), () => {
+      const current = state.shifts.find((shift) => shift.id === id);
+      if (lockedShiftNotice(current, "deleted")) return;
       pushUndo();
       if ($("shiftDialogMode").value === "staged") {
         state.unassignedShifts = (state.unassignedShifts || []).filter((shift) => shift.id !== id);

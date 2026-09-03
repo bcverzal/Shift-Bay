@@ -780,6 +780,8 @@
             <div class="checkbox checkbox-direct"><input id="shiftIsLunchCloser" type="checkbox"><span>Lunch closer</span></div>
             <div class="checkbox checkbox-direct"><input id="shiftFlexDouble" type="checkbox"><span>Flex Double</span></div>
             <div class="checkbox checkbox-direct"><input id="shiftIsCloser" type="checkbox"><span>Closer shift</span></div>
+            <div class="checkbox checkbox-direct shift-lock-control"><input id="shiftIsLocked" type="checkbox"><span>Lock shift</span></div>
+            <label id="shiftLockNoteControl">Lock note <input id="shiftLockNote" placeholder="Why this shift is locked"></label>
           </div>
         </section>
         <section class="shift-dialog-card shift-dialog-side">
@@ -834,6 +836,28 @@
       <div class="form-actions">
         <button id="saveDayBlockBtn" type="submit">Save Block</button>
         <button id="cancelDayBlockBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="requestOffDialog">
+    <form id="requestOffForm" method="dialog" class="editor modal-editor request-off-editor">
+      <h2>Add Request Off</h2>
+      <p class="hint">Choose the dates and time coverage for this request off.</p>
+      <input id="requestOffEmployeeId" type="hidden">
+      <div class="form-grid">
+        <label>Employee<input id="requestOffEmployee" type="text" readonly></label>
+        <label>Start date<input id="requestOffStartDate" type="date" required></label>
+        <label>End date<input id="requestOffEndDate" type="date" required></label>
+        <div class="checkbox checkbox-direct"><input id="requestOffAllDay" type="checkbox"><span>All day</span></div>
+        <label>Start time<input id="requestOffStart" data-time-picker placeholder="9a"></label>
+        <label>End time<input id="requestOffEnd" data-time-picker placeholder="5p"></label>
+        <label class="full-width">Note<textarea id="requestOffNote" rows="3" placeholder="Optional note"></textarea></label>
+      </div>
+      <div id="requestOffWarnings" class="warnings"></div>
+      <div class="form-actions">
+        <button id="saveRequestOffBtn" class="primary" type="submit">Add Request Off</button>
+        <button id="cancelRequestOffBtn" type="button">Cancel</button>
       </div>
     </form>
   </dialog>

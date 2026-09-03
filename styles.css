@@ -5288,6 +5288,17 @@ body.problem-focus .shift-card.has-issue {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
+.shift-lock-badge {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  text-shadow: none;
+}
+
+.shift-card.is-locked {
+  box-shadow: inset 0 0 0 2px rgba(251, 146, 60, 0.72), 0 3px 8px rgba(15, 23, 42, 0.18);
+}
+
 .flex-double-badge {
   background: linear-gradient(180deg, rgba(219, 234, 254, 0.42), rgba(37, 99, 235, 0.3));
 }
@@ -9559,6 +9570,63 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .modal-editor > .form-action
   font-weight: 750;
 }
 
+.ro-import-audit {
+  margin-top: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.ro-import-audit summary {
+  padding: 9px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.ro-import-audit-list {
+  display: grid;
+  gap: 5px;
+  max-height: 310px;
+  padding: 0 8px 8px;
+  overflow: auto;
+}
+
+.ro-import-audit-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+}
+
+.ro-import-audit-row strong {
+  color: #166534;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.ro-import-audit-row em {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.ro-import-audit-already-imported strong,
+.ro-import-audit-duplicate strong {
+  color: #9a3412;
+}
+
+.ro-import-audit-skipped strong {
+  color: #b42318;
+}
+
 .availability-conflict-review-item {
   display: flex;
   align-items: center;
@@ -9877,6 +9945,47 @@ dialog:not(#shiftDialog):not(#warningConfirmDialog) .password-change-editor {
 
 #timeOffEditDialog {
   width: min(560px, calc(100vw - 28px));
+}
+
+#requestOffDialog {
+  width: min(560px, calc(100vw - 28px));
+}
+
+#requestOffDialog .request-off-editor {
+  min-width: 0;
+}
+
+#requestOffDialog .hint {
+  margin-top: 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#requestOffDialog .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+#requestOffDialog .form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+#requestOffDialog input[readonly] {
+  background: #eef4fb;
+  color: #475569;
+}
+
+@media (max-width: 560px) {
+  #requestOffDialog .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #requestOffDialog .form-grid .full-width {
+    grid-column: auto;
+  }
 }
 
 #timeOffEditDialog .time-off-edit-editor {
