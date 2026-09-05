@@ -28,10 +28,12 @@ const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvai
 const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
 const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
-// Keep the production root on the protected compatibility snapshot until the
-// normalized reader proves that it returns every assigned and open Bay shift.
-// Normalized modes remain explicit query-string opt-ins for repair and testing.
-const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = false;
+// The hosted root now uses the verified normalized atomic path. Local test mode
+// stays on the compatibility path, and legacySnapshot=1 remains the rollback.
+const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = !IS_LOCAL_TEST_HOST &&
+  !LEGACY_SNAPSHOT_OVERRIDE &&
+  !NORMALIZED_SCHEDULE_SHADOW_MODE &&
+  !NORMALIZED_SCHEDULE_MODE;
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
