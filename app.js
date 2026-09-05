@@ -1420,6 +1420,7 @@ function updateNormalizedReadBadge() {
   const labels = {
     requested: "Read check...",
     active: "Normalized Read",
+    protected: "Protected snapshot",
     unavailable: "Read unavailable",
     availabilityRequested: "Availability check...",
     availabilityActive: "Normalized Availability Read",
@@ -2417,7 +2418,11 @@ async function hydrateStateFromServer() {
     }
     if (response.ok) {
       const envelope = await response.json();
-      setNormalizedScheduleReadBadge(envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary" ? "active" : "unavailable");
+      const normalizedFallbackCollections = Array.isArray(envelope.normalizedFallbackCollections)
+        ? envelope.normalizedFallbackCollections
+        : [];
+      const normalizedReadActive = envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary";
+      setNormalizedScheduleReadBadge(normalizedReadActive ? (normalizedFallbackCollections.length ? "protected" : "active") : "unavailable");
       let serverState = normalizeLoadedState(envelope.data || envelope);
       // The primary schedule document is connected at this point. Availability
       // normalization is a separate read and should not make the cloud status
@@ -2426,6 +2431,8 @@ async function hydrateStateFromServer() {
         "saved",
         normalizedSnapshotFallback
           ? "Normalized data was temporarily unavailable. Loaded the protected compatibility snapshot."
+          : normalizedFallbackCollections.length
+            ? `Normalized data was incomplete for ${normalizedFallbackCollections.join(", ")}. Loaded the protected compatibility data for those items.`
           : envelope.readSource === "normalized-sandbox"
             ? "Loaded normalized Sandbox schedule data."
             : envelope.readSource === "normalized-live-canary"

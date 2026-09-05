@@ -36,6 +36,18 @@ assert.match(productionAtomicSql, /on conflict \(location_id, document_key\) do 
 assert.match(productionAtomicSql, /revoke all on function public\.write_production_schedule_atomically_with_snapshot/i);
 assert.match(productionAtomicSql, /grant execute on function public\.write_production_schedule_atomically_with_snapshot[\s\S]*service_role/i);
 assert.match(edge, /async function writeNormalizedScheduleAtomically/);
+assert.match(edge, /const EDGE_BUILD_ID = "normalized-schedule-hardening-2026-09-05"/);
+assert.match(edge, /async function supabaseJsonAll\(/);
+assert.match(edge, /limit=\$\{pageSize\}&offset=\$\{offset\}/);
+assert.match(edge, /supabaseJsonAll\(`\/shifts\?/);
+assert.match(edge, /supabaseJsonAll\(`\/request_offs\?/);
+assert.match(edge, /supabaseJsonAll\(`\/schedule_blocks\?/);
+assert.match(edge, /supabaseJsonAll\(`\/templates\?/);
+assert.match(edge, /supabaseJsonAll\(`\/template_shifts\?/);
+assert.match(edge, /function normalizedCollectionFallback\(/);
+assert.match(edge, /normalizedFallbackCollections/);
+assert.match(edge, /function destructiveScheduleWriteReason\(/);
+assert.match(edge, /scheduler_state_destructive_write_blocked/);
 assert.match(edge, /\/rpc\/write_normalized_schedule_atomically/);
 assert.match(edge, /async function writeProductionScheduleAtomicallyWithSnapshot/);
 assert.match(edge, /\/rpc\/write_production_schedule_atomically_with_snapshot/);
