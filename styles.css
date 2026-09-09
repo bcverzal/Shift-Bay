@@ -5959,6 +5959,24 @@ body.problem-focus .shift-card.has-issue {
   line-height: 1.3;
 }
 
+.training-day-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.training-day-control strong {
+  color: #1e40af;
+  font-size: 13px;
+}
+
 .training-meal-start-settings {
   display: grid;
   gap: 10px;

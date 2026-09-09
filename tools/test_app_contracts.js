@@ -169,6 +169,9 @@ function run() {
   includes(app, "function isEndedAvailabilityPattern", "replaced availability tabs must disappear after their end date");
   includes(app, "!isEndedAvailabilityPattern(pattern)", "replaced availability tabs must use the end-date filter");
   includes(app, "if (!rawEndsOn) return false", "an availability without an end date must remain active");
+  includes(app, "trainerSourcesCoveringTrainingShift", "training shifts must require full trainer coverage");
+  includes(app, "is not scheduled for the full", "the editor must reject a trainer who starts after the trainee");
+  includes(index, "trainingDayControl", "the shift editor must show the training day");
   includes(app, "function availabilityShiftConflictDetails", "availability activation must identify already-scheduled conflicts");
   includes(app, "function showAvailabilityShiftConflictReview", "availability activation must provide a manager conflict review");
   includes(app, "Move Selected to Shift Bay", "availability conflict review must offer an explicit unassign action");

@@ -3038,9 +3038,7 @@ function trainingShiftMatchesTrainerShift(trainingShift, trainerShift) {
   if (trainingShift.training.trainerId !== trainerShift.employeeId) return false;
   if (trainingShift.date !== trainerShift.date) return false;
   if (trainingShift.roleId !== trainerShift.roleId) return false;
-  const trainingRange = getCoverageRange(trainingShift);
-  const trainerRange = getCoverageRange(trainerShift);
-  return rangesOverlap(trainingRange.start, trainingRange.end, trainerRange.start, trainerRange.end);
+  return trainerSourceCoversTrainingShift(trainingShift, trainerShift);
 }
 
 function trainerSourceCoversTrainingShift(trainingShift, trainerShift) {
@@ -3492,9 +3490,15 @@ function validateShift(shift, options = {}) {
     const trainee = employeeById(shift.training.traineeId);
     const trainer = employeeById(shift.training.trainerId);
     if (!trainee && !trainer) warnings.push("Training shift needs both a trainee and a trainer.");
-    else if (trainee && !trainer) warnings.push(`${displayName(trainee)} is marked as training, but no trainer is assigned.`);
+    else if (trainee && !trainer) {
+      if (isTraineeTrainingShift(shift)) errors.push(`${displayName(trainee)} needs a trainer assigned before this training shift can be saved.`);
+      else warnings.push(`${displayName(trainee)} is marked as training, but no trainer is assigned.`);
+    }
     else if (!trainee && trainer) warnings.push(`${displayName(trainer)} is marked as training someone, but no trainee is assigned.`);
     if (trainer && !trainer.trainerRoles?.includes(shift.roleId)) warnings.push(`${displayName(trainer)} is not marked as a trainer for ${role?.name || "this role"}.`);
+    if (trainer && isTraineeTrainingShift(shift) && !trainerSourcesCoveringTrainingShift(shift).length) {
+      errors.push(`${displayName(trainer)} is not scheduled for the full ${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end} training shift.`);
+    }
   }
   if (employee) warnings.push(...weeklyRuleWarnings(employee, shift));
   if (employee) warnings.push(...sameEmployeeOverlapWarnings(shift));
@@ -8623,6 +8627,18 @@ function trainingDayNumber(shift) {
     .findIndex((item) => item.id === traineeShift.id) + 1;
 }
 
+function updateTrainingDayControl() {
+  const control = $("trainingDayControl");
+  const value = $("shiftTrainingDay");
+  if (!control || !value) return;
+  const shift = state.shifts.find((item) => item.id === $("shiftId")?.value);
+  const isTraining = Boolean($("shiftIsTraining")?.checked);
+  control.hidden = !isTraining;
+  if (!isTraining) return;
+  const day = shift?.training?.isTraining ? trainingDayNumber(shift) : null;
+  value.textContent = day ? `Day ${day}` : "Assigned after saving";
+}
+
 function trainingBadgesForShift(shift) {
   const badges = [];
   const trainerLinks = state.shifts.filter((item) => trainingShiftMatchesTrainerShift(item, shift));
@@ -9661,6 +9677,16 @@ function trainerSourcesForMovedTrainingShift(trainingShift, reusableSourceId = "
     || displayName(employeeById(left.employeeId)).localeCompare(displayName(employeeById(right.employeeId))));
 }
 
+function trainerSourcesCoveringTrainingShift(trainingShift) {
+  if (!isTraineeTrainingShift(trainingShift) || !trainingShift.training?.trainerId) return [];
+  return (state.shifts || []).filter((candidate) => (
+    candidate.id !== trainingShift.id &&
+    candidate.employeeId === trainingShift.training.trainerId &&
+    (!candidate.training?.isTraining || (candidate.training?.isTrainerShift && candidate.training?.pairedTraineeShiftId === trainingShift.id)) &&
+    trainerSourceCoversTrainingShift(trainingShift, candidate)
+  ));
+}
+
 function pairTrainingShiftWithTrainerSource(traineeShift, trainerSource) {
   if (!traineeShift || !trainerSource) return;
   trainerSource.training = {
@@ -9837,6 +9863,7 @@ function openShiftDialog(shift = null, options = {}) {
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
   refreshTrainingOptions(base.training?.traineeId || base.employeeId || "", base.training?.trainerId || "");
+  updateTrainingDayControl();
   updateRequestOffShiftButton();
   updateShiftDialogContext();
   dialog.showModal();
@@ -10026,14 +10053,25 @@ function refreshTrainingOptions(preferredTraineeId = "", preferredTrainerId = ""
   const start = normalizeTime($("shiftStart")?.value || "");
   const end = normalizeTime($("shiftEnd")?.value || "");
   const currentTrainee = employeeById(preferredTraineeId);
-  const currentTrainer = employeeById(preferredTrainerId);
+  const draftTrainingShift = {
+    id: $("shiftId")?.value || "",
+    date,
+    roleId,
+    start,
+    end,
+    untilVolume: Boolean($("shiftUntilVolume")?.checked),
+    training: { isTraining: true, traineeId: preferredTraineeId, trainerId: preferredTrainerId }
+  };
   const trainees = schedulableEmployees().filter((employee) => employee.roleTraining?.includes(roleId));
   if (currentTrainee && !trainees.includes(currentTrainee)) trainees.unshift(currentTrainee);
   const trainers = schedulableEmployees().filter((employee) => {
     if (!employee.trainerRoles?.includes(roleId)) return false;
-    return state.shifts.some((shift) => shift.employeeId === employee.id && shift.date === date && shift.roleId === roleId && !shift.training?.isTraining && rangesOverlap(minutesFromTime(start), minutesFromTime(end), minutesFromTime(shift.start), minutesFromTime(shift.end)));
+    return state.shifts.some((shift) => (
+      shift.employeeId === employee.id &&
+      (!shift.training?.isTraining || (shift.training?.isTrainerShift && shift.training?.pairedTraineeShiftId === draftTrainingShift.id)) &&
+      trainerSourceCoversTrainingShift(draftTrainingShift, shift)
+    ));
   });
-  if (currentTrainer && !trainers.includes(currentTrainer)) trainers.unshift(currentTrainer);
   const option = (employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employeeOptionLabel(employee))}</option>`;
   $("shiftTrainee").innerHTML = `<option value="">Choose trainee</option>${trainees.sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b))).map(option).join("")}`;
   $("shiftTrainer").innerHTML = `<option value="">Choose scheduled trainer</option>${trainers.sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b))).map(option).join("")}`;
@@ -10041,8 +10079,9 @@ function refreshTrainingOptions(preferredTraineeId = "", preferredTrainerId = ""
   $("shiftTrainer").value = preferredTrainerId && trainers.some((employee) => employee.id === preferredTrainerId) ? preferredTrainerId : "";
   const guidance = $("trainingEditorGuidance");
   if (guidance) guidance.textContent = $("shiftIsTraining")?.checked
-    ? `${trainers.length} qualified trainer${trainers.length === 1 ? "" : "s"} scheduled in this role and time.`
+    ? `${trainers.length} qualified trainer${trainers.length === 1 ? "" : "s"} scheduled for the full shift.`
     : "Mark this shift as training to choose a trainee and an eligible trainer.";
+  updateTrainingDayControl();
 }
 
 function collectStagedShiftFromDialog() {
