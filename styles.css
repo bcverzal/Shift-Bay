@@ -830,6 +830,12 @@ summary:focus-visible {
   color: #92400e;
 }
 
+.normalized-read-badge[data-state="protected"] {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .login-card label {
   display: grid;
   gap: 5px;

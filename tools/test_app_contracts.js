@@ -100,7 +100,7 @@ function run() {
   includes(app, "function attachUnambiguousTrainerSource", "manual training shifts must only retain a trainer when one scheduled source shift is unambiguous");
   includes(app, "const clearedTrainingAssignments = reconcileTrainingAssignments()", "dragging or editing a shift must immediately revalidate its training assignment");
   includes(app, "trainerSourceShiftId: preservesExistingPair", "ordinary shift edits must retain a valid accepted training pair until it is revalidated");
-  includes(app, "reconcileTrainingAssignments();\n  normalizeSavedEmployeePhones();", "full renders must repair orphaned trainer markers after manual schedule changes");
+  assert.match(app, /function renderAll\(options = \{\}\) \{[\s\S]*?reconcileTrainingAssignments\(\);[\s\S]*?normalizeSavedEmployeePhones\(\);/, "full renders must repair orphaned trainer markers after manual schedule changes");
   includes(app, "function prepareMovedTrainingShift", "moving a training shift must resolve its trainer before committing the move");
   includes(app, "function trainerSourcesForMovedTrainingShift", "training moves must search eligible scheduled trainer sources on the target date");
   includes(app, "function pairTrainingShiftWithTrainerSource", "a selected trainer source must be linked atomically to the moved trainee shift");
@@ -258,8 +258,11 @@ function run() {
   includes(app, '"/api/state?normalizedSchedule=read"', "normalized schedule read mode must request the guarded state path");
   includes(app, "Loaded normalized Sandbox schedule data.", "normalized read testing must identify the active read source");
   includes(app, "function setNormalizedScheduleReadBadge", "normalized read mode must expose a persistent confirmed source marker");
-  includes(app, 'setNormalizedScheduleReadBadge(envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary" ? "active" : "unavailable")', "normalized read marker must only show as active after a confirmed normalized response");
+  includes(app, 'const normalizedReadActive = envelope.readSource === "normalized-sandbox" || envelope.readSource === "normalized-live-canary";', "normalized read marker must only show as active after a confirmed normalized response");
+  includes(app, 'normalizedReadActive ? (normalizedFallbackCollections.length ? "protected" : "active") : "unavailable"', "normalized read marker must identify protected fallback data instead of claiming a clean normalized read");
   includes(index, 'id="normalizedReadBadge"', "normalized read marker must be present in the header");
+  includes(app, 'Protected snapshot', "normalized read fallback must be visible to the manager");
+  includes(app, 'normalizedFallbackCollections', "normalized collection fallback must be surfaced by the app");
   includes(index, 'data-password-toggle="loginPassword"', "manager login must provide a show-password control");
   includes(index, 'data-password-toggle="newManagerPassword"', "manager password creation must provide a show-password control");
   excludes(index, "Staff Portal sign in", "the manager login must not expose a separate staff sign-in link");
