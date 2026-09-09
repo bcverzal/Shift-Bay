@@ -4635,6 +4635,9 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
 
 .schedule-role-group,
 .schedule-role-group-fill {
+  position: sticky;
+  top: calc(62px * var(--schedule-zoom, 1));
+  z-index: 20;
   min-height: 36px;
   padding: 8px 10px;
   border-top: 2px solid #b8c7dc;
@@ -4645,9 +4648,8 @@ body:has(#schedule.panel.active):not(.compact-preview).dragging-open-shift .sche
 }
 
 .schedule-role-group {
-  position: sticky;
   left: 0;
-  z-index: 11;
+  z-index: 30;
   letter-spacing: 0.01em;
   text-transform: uppercase;
   display: flex;
