@@ -170,6 +170,8 @@ let gridFiltersChangedWhileOpen = false;
 let recentActivityDetailsVisible = false;
 let recentActivityEvents = [];
 let focusedDateKey = "";
+let weeklyGridScrollPosition = null;
+const dayFocusGridScrollPositions = new Map();
 let dayFocusTimelineDrag = null;
 let dayFocusShowOpenShifts = loadDayFocusShowOpenShifts();
 let dayFocusSortMode = loadDayFocusSortMode();
@@ -4265,19 +4267,38 @@ function updateCompactPreviewButton() {
   button.classList.toggle("active", isCompactPreview);
 }
 
+function currentScheduleGridScrollPosition() {
+  const grid = $("scheduleGrid");
+  return { top: grid?.scrollTop || 0, left: grid?.scrollLeft || 0 };
+}
+
+function restoreScheduleGridScrollPosition(position = { top: 0, left: 0 }) {
+  window.requestAnimationFrame(() => {
+    const grid = $("scheduleGrid");
+    if (!grid) return;
+    grid.scrollTop = Math.max(0, Math.min(Number(position.top) || 0, grid.scrollHeight - grid.clientHeight));
+    grid.scrollLeft = Math.max(0, Math.min(Number(position.left) || 0, grid.scrollWidth - grid.clientWidth));
+  });
+}
+
 function enterDayFocus(dateKey = selectedCell?.date || formatDateKey(currentDate)) {
   // A day view request always leaves compact preview first so the grid cannot
   // remain hidden behind the print-style layer.
   if (document.body.classList.contains("compact-preview")) clearPrintView();
+  if (focusedDateKey) dayFocusGridScrollPositions.set(focusedDateKey, currentScheduleGridScrollPosition());
+  else weeklyGridScrollPosition = currentScheduleGridScrollPosition();
   focusedDateKey = dateKey;
   selectedCell = null;
   selectedShiftId = null;
   renderSchedule();
+  restoreScheduleGridScrollPosition(dayFocusGridScrollPositions.get(focusedDateKey));
 }
 
 function exitDayFocus() {
+  if (focusedDateKey) dayFocusGridScrollPositions.set(focusedDateKey, currentScheduleGridScrollPosition());
   focusedDateKey = "";
   renderSchedule();
+  restoreScheduleGridScrollPosition(weeklyGridScrollPosition);
 }
 
 function updateScheduleViewToggle() {
@@ -5295,6 +5316,8 @@ function focusDayOnOpenShiftDate(shift) {
   if (!weekDates().some((date) => formatDateKey(date) === shift.date)) {
     setCurrentWeek(shiftDate, { shared: false });
   }
+  if (focusedDateKey) dayFocusGridScrollPositions.set(focusedDateKey, currentScheduleGridScrollPosition());
+  else weeklyGridScrollPosition = currentScheduleGridScrollPosition();
   focusedDateKey = shift.date;
   return true;
 }
@@ -6160,10 +6183,12 @@ function dayFocusPrimaryRoleName(employee, dateKey, selectedRoleId = "") {
 
 function moveFocusedDay(delta) {
   if (!focusedDateKey) return;
+  dayFocusGridScrollPositions.set(focusedDateKey, currentScheduleGridScrollPosition());
   const date = addDays(parseDateKey(focusedDateKey), delta);
   focusedDateKey = formatDateKey(date);
   setCurrentWeek(date);
   renderSchedule();
+  restoreScheduleGridScrollPosition(dayFocusGridScrollPositions.get(focusedDateKey));
 }
 
 function renderDayFocusHeader(date, employees) {

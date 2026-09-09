@@ -174,6 +174,9 @@ function run() {
   includes(index, "trainingDayControl", "the shift editor must show the training day");
   includes(styles, "top: calc(62px * var(--schedule-zoom, 1));", "role headers must stay beneath the sticky date row while scrolling");
   includes(styles, ".schedule-role-group-fill", "the full role-header band must remain visible while scrolling");
+  includes(app, "weeklyGridScrollPosition", "switching to Day View must remember the weekly grid position");
+  includes(app, "dayFocusGridScrollPositions", "each focused day must retain its own grid position");
+  includes(app, "restoreScheduleGridScrollPosition(weeklyGridScrollPosition)", "returning to Week View must restore its prior position");
   includes(app, "function availabilityShiftConflictDetails", "availability activation must identify already-scheduled conflicts");
   includes(app, "function showAvailabilityShiftConflictReview", "availability activation must provide a manager conflict review");
   includes(app, "Move Selected to Shift Bay", "availability conflict review must offer an explicit unassign action");
