@@ -14,6 +14,7 @@ const DISMISSED_ISSUES_KEY = "restaurantScheduler.dismissedIssues.v1";
 const COLLAPSED_SETTINGS_SECTIONS_KEY = "restaurantScheduler.collapsedSettingsSections.v1";
 const DAY_FOCUS_SHOW_OPEN_KEY = "restaurantScheduler.dayFocusShowOpen.v1";
 const DAY_FOCUS_SORT_KEY = "restaurantScheduler.dayFocusSort.v1";
+const REFRESH_VIEW_RESTORE_KEY = "restaurantScheduler.refreshViewRestore.v1";
 const DATA_SCHEMA_VERSION = 2;
 const PUBLIC_CONFIG = window.SHIFT_BAY_CONFIG || {};
 const HOSTED_API_BASE = String(PUBLIC_CONFIG.apiBase || "").replace(/\/$/, "");
@@ -123,6 +124,7 @@ let storageStatus = SERVER_STORAGE_ENABLED ? "connecting" : "local";
 let storageStatusDetail = SERVER_STORAGE_ENABLED ? "Connecting to shared scheduler file..." : (IS_LOCAL_TEST_HOST ? "Local test mode: this browser is not saving to the cloud." : "Using this browser's local storage.");
 let currentDate = loadLocalActiveWeek(state.settings.weekStart);
 let currentMonth = new Date();
+let pendingRefreshViewRestore = loadRefreshViewRestore();
 
 function readSourceKey() {
   return `${STORE_KEY}.readSource.${selectedLocationId || "unknown"}`;
@@ -198,6 +200,86 @@ function uid(prefix) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function loadRefreshViewRestore() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(REFRESH_VIEW_RESTORE_KEY) || "null");
+    return saved && typeof saved === "object" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRefreshViewRestore() {
+  try {
+    const grid = $("scheduleGrid");
+    const roster = $("employeeRosterList");
+    const tray = $("unassignedShiftTray");
+    const activeTab = document.querySelector(".tab.active")?.dataset.tab || "schedule";
+    sessionStorage.setItem(REFRESH_VIEW_RESTORE_KEY, JSON.stringify({
+      activeTab,
+      employeeId: $("employeeId")?.value || "",
+      employeeProfileTab: document.querySelector("[data-employee-profile-tab].active")?.dataset.employeeProfileTab || "profile",
+      templateId: $("templateId")?.value || "",
+      templateShiftId: $("templateShiftId")?.value || "",
+      floorPlanDate: $("floorPlanDate")?.value || "",
+      floorPlanPeriod: $("floorPlanPeriod")?.value || "",
+      focusedDateKey,
+      gridScrollTop: grid?.scrollTop || 0,
+      gridScrollLeft: grid?.scrollLeft || 0,
+      rosterScrollTop: roster?.scrollTop || 0,
+      trayScrollLeft: tray?.scrollLeft || 0,
+      windowScrollX: window.scrollX || 0,
+      windowScrollY: window.scrollY || 0
+    }));
+  } catch {
+    // Restoring the work surface is a convenience only.
+  }
+}
+
+function restoreRefreshViewPosition() {
+  const restore = pendingRefreshViewRestore;
+  pendingRefreshViewRestore = null;
+  if (!restore) return;
+
+  if (restore.focusedDateKey && /^\d{4}-\d{2}-\d{2}$/.test(restore.focusedDateKey)) {
+    focusedDateKey = restore.focusedDateKey;
+  }
+  activateTab($(restore.activeTab) ? restore.activeTab : "schedule");
+  if (focusedDateKey) renderSchedule();
+  if (restore.employeeId && employeeById(restore.employeeId)) {
+    loadEmployee(restore.employeeId);
+    activateEmployeeProfileTab(restore.employeeProfileTab || "profile");
+  }
+  if (restore.templateId && templateById(restore.templateId)) {
+    loadTemplate(restore.templateId);
+    if (restore.templateShiftId && templateById(restore.templateId)?.shifts?.some((shift) => shift.id === restore.templateShiftId)) {
+      loadTemplateShift(restore.templateId, restore.templateShiftId);
+    }
+  }
+  if (restore.floorPlanDate && $("floorPlanDate")) {
+    $("floorPlanDate").value = restore.floorPlanDate;
+    if (restore.floorPlanPeriod) $("floorPlanPeriod").value = restore.floorPlanPeriod;
+    renderFloorPlan();
+  }
+
+  const restoreScroll = () => {
+    const grid = $("scheduleGrid");
+    const roster = $("employeeRosterList");
+    const tray = $("unassignedShiftTray");
+    if (grid) {
+      grid.scrollTop = Math.max(0, Math.min(Number(restore.gridScrollTop) || 0, grid.scrollHeight - grid.clientHeight));
+      grid.scrollLeft = Math.max(0, Math.min(Number(restore.gridScrollLeft) || 0, grid.scrollWidth - grid.clientWidth));
+    }
+    if (roster) roster.scrollTop = Math.max(0, Math.min(Number(restore.rosterScrollTop) || 0, roster.scrollHeight - roster.clientHeight));
+    if (tray) tray.scrollLeft = Math.max(0, Math.min(Number(restore.trayScrollLeft) || 0, tray.scrollWidth - tray.clientWidth));
+    window.scrollTo(Number(restore.windowScrollX) || 0, Number(restore.windowScrollY) || 0);
+  };
+  window.requestAnimationFrame(() => {
+    restoreScroll();
+    window.setTimeout(restoreScroll, 80);
+  });
 }
 
 function loadDayFocusShowOpenShifts() {
@@ -2723,6 +2805,7 @@ function finishInitialReadSourceHydrationRender() {
   initialReadSourceHydrationPending = false;
   renderAll({ skipSave: true });
   updateZoomVisibility();
+  restoreRefreshViewPosition();
 }
 
 function localStateIsNewerThanServer(localState, serverState) {
@@ -18588,6 +18671,7 @@ wireEvents();
 if (!initialReadSourceHydrationPending) {
   renderAll();
   updateZoomVisibility();
+  restoreRefreshViewPosition();
 }
 updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
@@ -18608,6 +18692,10 @@ importLocalCopyFromServer().then(() => initializeAuth()).then(async (canLoad) =>
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedCloudChanges);
 window.addEventListener("beforeunload", warnBeforeLeavingWithUnsavedEmployeeChanges);
 window.addEventListener("beforeunload", flushServerSaveOnClose);
+window.addEventListener("pagehide", saveRefreshViewRestore);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveRefreshViewRestore();
+});
 window.addEventListener("focus", () => { checkForNewerSharedSchedule(); });
 window.addEventListener("online", () => { checkForNewerSharedSchedule(); });
 document.addEventListener("visibilitychange", () => {

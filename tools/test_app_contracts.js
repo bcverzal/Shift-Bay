@@ -163,6 +163,9 @@ function run() {
   includes(app, 'data-availability-end-slot', "manager availability needs paired start/end time controls");
   includes(app, 'data-add-availability-window', "manager availability needs an add-window action");
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
+  includes(app, "REFRESH_VIEW_RESTORE_KEY", "a refresh must preserve the manager's working view");
+  includes(app, "restoreRefreshViewPosition()", "the saved working view must be restored after cloud hydration");
+  includes(app, "window.addEventListener(\"pagehide\", saveRefreshViewRestore)", "refresh restoration must capture the current view before navigation");
   includes(app, "function isEndedAvailabilityPattern", "replaced availability tabs must disappear after their end date");
   includes(app, "!isEndedAvailabilityPattern(pattern)", "replaced availability tabs must use the end-date filter");
   includes(app, "if (!rawEndsOn) return false", "an availability without an end date must remain active");
