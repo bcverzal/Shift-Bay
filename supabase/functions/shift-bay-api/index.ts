@@ -101,6 +101,20 @@ async function supabaseJson(pathOrUrl: string, options: RequestInit = {}) {
   return body;
 }
 
+// PostgREST caps an unpaged response. A schedule can easily exceed that cap,
+// so normalized reads must collect every row before rebuilding the Bay.
+async function supabaseJsonAll(path: string, options: RequestInit = {}, pageSize = 1000) {
+  const rows: any[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const page = await supabaseJson(`${path}${separator}limit=${pageSize}&offset=${offset}`, options);
+    if (!Array.isArray(page) || page.length === 0) break;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
 function serviceHeaders(extra: HeadersInit = {}) {
   const cfg = config();
   return {
@@ -1225,7 +1239,7 @@ async function handleNormalizedSchedule(request: Request) {
     supabaseJson(`/employees?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/roles?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_weeks?location_id=eq.${encodeURIComponent(locationId)}&select=id,week_start,status`, { headers: serviceHeaders() }),
-    supabaseJson(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata`, { headers: serviceHeaders() }),
+    supabaseJsonAll(`/shifts?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,role_id,department,shift_date,shift_name,start_time,end_time,until_volume,is_closer,is_lunch_closer,is_flex_double,is_open_bay,color,notes,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/request_offs?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,request_date,start_time,end_time,all_day,reason,source,kind,daypart,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/schedule_blocks?location_id=eq.${encodeURIComponent(locationId)}&select=legacy_id,employee_id,block_date,start_time,end_time,all_day,block_type,note,source,metadata`, { headers: serviceHeaders() }),
     supabaseJson(`/templates?location_id=eq.${encodeURIComponent(locationId)}&select=id,legacy_id,name,active,metadata`, { headers: serviceHeaders() }),
@@ -1318,6 +1332,33 @@ function scheduleChangeSummary(previous: JsonRecord = {}, next: JsonRecord = {})
     requestOffsDeleted: requestOffs.deleted,
     employeesChanged: employees.created + employees.edited + employees.deleted,
     templatesChanged: templates.created + templates.edited + templates.deleted
+  };
+}
+
+function schedulePopulationSummary(state: JsonRecord = {}) {
+  const employees = snapshotItems(state.employees).length;
+  const shifts = snapshotItems(state.shifts).length;
+  const openShifts = snapshotItems(state.unassignedShifts).length;
+  const timeOffRequests = snapshotItems(state.timeOffRequests).length;
+  return {
+    employees,
+    shifts,
+    openShifts,
+    timeOffRequests,
+    scheduleItems: shifts + openShifts + timeOffRequests
+  };
+}
+
+function destructiveScheduleWriteReason(previous: JsonRecord = {}, next: JsonRecord = {}) {
+  const before = schedulePopulationSummary(previous);
+  const after = schedulePopulationSummary(next);
+  const rosterCollapsed = before.employees >= 20 && after.employees < Math.max(10, Math.ceil(before.employees / 2));
+  const scheduleCollapsed = before.scheduleItems >= 100 && after.scheduleItems < Math.max(25, Math.ceil(before.scheduleItems / 4));
+  if (!rosterCollapsed && !scheduleCollapsed) return null;
+  return {
+    before,
+    after,
+    error: `Safety stop: this save would replace a populated schedule (${before.employees} employees and ${before.scheduleItems} schedule items) with an incomplete copy (${after.employees} employees and ${after.scheduleItems} schedule items). Refresh before trying again.`
   };
 }
 
@@ -1945,6 +1986,19 @@ async function handleLoadState(request: Request) {
     const normalizedResponse = await handleNormalizedSchedule(request);
     if (!normalizedResponse.ok) return normalizedResponse;
     const normalized = await normalizedResponse.json();
+    const snapshotOpenShifts = Array.isArray((snapshotState as any)?.unassignedShifts)
+      ? (snapshotState as any).unassignedShifts
+      : [];
+    const normalizedOpenShifts = Array.isArray(normalized?.unassignedShifts)
+      ? normalized.unassignedShifts
+      : [];
+    // Normalized reads are a reversible canary. A bad or incomplete normalized
+    // response must never make a populated Bay appear empty to a manager.
+    const normalizedOpenShiftIds = new Set(normalizedOpenShifts.map((shift: any) => String(shift?.id || "")).filter(Boolean));
+    const normalizedOpenShiftFallback = snapshotOpenShifts.length > 0 && (
+      normalizedOpenShifts.length !== snapshotOpenShifts.length ||
+      snapshotOpenShifts.some((shift: any) => !normalizedOpenShiftIds.has(String(shift?.id || "")))
+    );
     return json(200, {
       app: "restaurant-scheduler",
       schemaVersion: row.schema_version,
@@ -1953,10 +2007,11 @@ async function handleLoadState(request: Request) {
       savedByDeviceId: row.saved_by_device_id,
       readSource: locationId === SANDBOX_LOCATION_ID ? "normalized-sandbox" : "normalized-live-canary",
       normalizedScheduleRevision: normalized.normalizedScheduleRevision,
+      normalizedOpenShiftFallback,
       data: {
         ...snapshotState,
         shifts: normalized.shifts || [],
-        unassignedShifts: normalized.unassignedShifts || [],
+        unassignedShifts: normalizedOpenShiftFallback ? snapshotOpenShifts : normalizedOpenShifts,
         timeOffRequests: normalized.timeOffRequests || [],
         templates: normalized.templates || []
       }
@@ -2046,10 +2101,11 @@ async function handleSaveState(request: Request) {
     ]);
     return json(200, { ok: true, savedAt, saveAttemptId: saveAttemptId || null, profileOverrideSaved: true, normalizedSync });
   }
-  const atomicRevisionMode = saveMode === "normalized-sandbox-atomic-revision" ||
-    saveMode === "normalized-production-atomic-revision";
   const existingRow = await loadDocumentRow(
-    atomicRevisionMode ? "saved_at,updated_at" : "state,saved_at,updated_at",
+    // Atomic writes need the current state too: a revision check alone cannot
+    // tell the difference between an intentional edit and a browser that only
+    // loaded a fraction of the shared roster.
+    "state,saved_at,updated_at",
     locationId
   );
   const existingEmployees = Array.isArray(existingRow?.state?.employees) ? existingRow.state.employees : [];
@@ -2065,6 +2121,31 @@ async function handleSaveState(request: Request) {
       ok: false,
       error: "Rejected an empty employee roster because the shared schedule already contains employees. Refresh before saving again."
     });
+  }
+  if (!profileOnlySave) {
+    const safetyStop = destructiveScheduleWriteReason((existingRow?.state || {}) as JsonRecord, state);
+    if (safetyStop) {
+      try {
+        await logAuditEvent("scheduler_state_destructive_write_blocked", (validated.user as any).id, {
+          documentKey: cfg.documentKey,
+          saveScope,
+          saveMode,
+          savedByEmail: (validated.user as any).email || "",
+          savedByDeviceId: payload?.savedByDeviceId || (state.meta as any)?.deviceId || null,
+          before: safetyStop.before,
+          attempted: safetyStop.after
+        }, locationId);
+      } catch (error) {
+        console.warn("Could not audit blocked destructive schedule write:", error);
+      }
+      return json(409, {
+        ok: false,
+        destructiveWriteBlocked: true,
+        error: safetyStop.error,
+        before: safetyStop.before,
+        attempted: safetyStop.after
+      });
+    }
   }
   const existingSavedAt = existingRow?.saved_at || existingRow?.updated_at || "";
   if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {

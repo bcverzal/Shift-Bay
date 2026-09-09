@@ -11,7 +11,6 @@
     <button class="tab active" type="button" data-tab="schedule">Schedule</button>
     <button class="tab" type="button" data-tab="employees">Employees</button>
     <button class="tab" type="button" data-tab="templates">Templates</button>
-    <button class="tab" type="button" data-tab="roles">Roles</button>
     <button class="tab" type="button" data-tab="floorplans">Floor Plans</button>
     <button class="tab" type="button" data-tab="settings">Settings</button>
     <div class="header-actions">
@@ -145,6 +144,7 @@
           <button id="staffAccessBtn" type="button">Staff Access</button>
           <button id="requestOffImportBtn" type="button">Import ROs</button>
           <button id="printCallWeeklyBtn" type="button">Print Call Weekly Sheet</button>
+          <button id="employeeSetupReviewBtn" type="button">Setup Review</button>
           <details class="employee-advanced-tools">
             <summary>More</summary>
             <div class="employee-advanced-menu">
@@ -171,6 +171,7 @@
             <input id="employeeSearch" placeholder="Name, nickname, phone, note, role">
           </label>
           <div id="employeeRosterList" class="employee-roster-list"></div>
+          <div id="employeeSetupReview" class="employee-setup-review" hidden></div>
         </aside>
         <form id="employeeForm" class="editor employee-editor">
           <h2 id="employeeProfileTitle">Unsaved employee</h2>
@@ -193,7 +194,7 @@
           <label>Last name <input id="lastName" required></label>
           <label>Nickname <input id="employeeNickname" placeholder="Name used on schedule"></label>
           <label>Birthday <input id="employeeBirthday" type="date"></label>
-          <label>Phone <input id="employeePhone" type="tel" inputmode="tel" autocomplete="tel" data-phone-input></label>
+          <label>Phone <input id="employeePhone" type="tel" inputmode="tel" autocomplete="tel" data-phone-input required></label>
           <div class="checkbox checkbox-direct"><input id="employeeActive" type="checkbox" checked><span>Active</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanClose" type="checkbox"><span>Trained closer</span></div>
           <div class="checkbox checkbox-direct"><input id="employeeCanLunchClose" type="checkbox"><span>Lunch closer available</span></div>
@@ -290,23 +291,31 @@
           </fieldset>
           </div>
           <div class="employee-profile-panel employee-profile-roles" data-employee-profile-panel="roles" hidden>
-          <fieldset id="employeeMealTrainingSection">
-            <legend>Meal Training</legend>
-            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Breakfast"> Breakfast</label>
-            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Lunch"> Lunch</label>
-            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Dinner"> Dinner</label>
-            <label class="checkbox"><input type="checkbox" name="mealTraining" value="Brunch"> Brunch</label>
-          </fieldset>
-          <fieldset id="employeeTrainingSection">
-            <legend>Role Training</legend>
-            <p class="hint">Use Emergency only for roles they can work in a pinch but should not be recommended for. Meal boxes under a role override the broad meal training for that role.</p>
+          <section class="employee-roles-intro">
+            <div>
+              <h3>Work qualifications</h3>
+              <p>Choose the roles this employee can be scheduled for. Use Emergency only when they can cover a role in a pinch but should not be recommended for normal assignments.</p>
+            </div>
+            <div id="employeeRoleSummary" class="employee-role-summary" aria-live="polite"></div>
+          </section>
+          <fieldset id="employeeQualificationSection">
+            <legend>Scheduling qualifications</legend>
+          <section id="employeeTrainingSection" class="qualification-subsection">
+            <h3>Role qualifications</h3>
+            <p class="hint">Mark normal qualifications, emergency-only coverage, and meal-specific training where that role requires it.</p>
             <div id="employeeRoleChecks"></div>
+          </section>
           </fieldset>
           </div>
           <div class="employee-profile-panel employee-profile-training" data-employee-profile-panel="training" hidden>
           <fieldset id="trainerRoles">
             <legend>Trainer Eligibility</legend>
             <div id="employeeTrainerChecks"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Training Progress</legend>
+            <p class="hint">Start or continue a role's training plan here. Use the same plan to add a new meal period after the employee has already completed another one.</p>
+            <div id="employeeTrainingProgress"></div>
           </fieldset>
           </div>
           <div class="employee-profile-panel employee-profile-pay" data-employee-profile-panel="pay" hidden>
@@ -337,6 +346,7 @@
           </div>
         </form>
         <div id="callWeeklySheet" class="print-view" hidden></div>
+        <section id="trainingSchedulePrint" class="training-schedule-print" hidden></section>
         <div id="employeeSaveToast" class="employee-save-toast" hidden>Employee saved</div>
       </div>
     </section>
@@ -388,29 +398,6 @@
 
     <section id="roles" class="panel">
       <div class="split">
-        <form id="roleForm" class="editor">
-          <h2>Role</h2>
-          <input id="roleId" type="hidden">
-          <label>Name <input id="roleName" required></label>
-          <label>Department
-            <select id="roleDepartment">
-              <option>FOH</option>
-              <option>BOH</option>
-              <option>Exec</option>
-            </select>
-          </label>
-          <label>Default hourly rate <input id="roleDefaultRate" type="number" min="0" step="0.01" placeholder="0.00"></label>
-          <label>Color <input id="roleColor" type="color" value="#2563eb"></label>
-          <div class="form-actions">
-            <button type="submit">Save Role</button>
-            <button id="newRoleBtn" type="button">New</button>
-            <button id="deleteRoleBtn" class="danger" type="button">Delete</button>
-          </div>
-        </form>
-        <div class="list-panel">
-          <h2>Roles</h2>
-          <div id="roleList" class="entity-list"></div>
-        </div>
       </div>
     </section>
 
@@ -636,6 +623,52 @@
           <div id="trainingSettingsEditor" class="coverage-defaults"></div>
         </fieldset>
         <fieldset>
+          <legend>Training Setup Transfer</legend>
+          <p class="hint">Move training qualifications and priorities between a local training copy and the shared schedule. This never transfers shifts, availability, request-offs, templates, or other schedule data.</p>
+          <div class="settings-actions">
+            <button id="exportTrainingSetupBtn" type="button">Export Training Setup</button>
+            <label class="file-label">Import Training Setup
+              <input id="trainingSetupImportInput" type="file" accept=".json,application/json">
+            </label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Role Administration</legend>
+          <p class="hint">Define the roles available throughout Shift Bay. Employee profiles use these roles to record qualifications, training, and emergency-only eligibility.</p>
+          <div class="role-admin-layout">
+            <div id="roleForm" class="role-admin-editor">
+              <input id="roleId" type="hidden">
+              <label>Name <input id="roleName" placeholder="Role name"></label>
+              <label>Department
+                <select id="roleDepartment">
+                  <option>FOH</option>
+                  <option>BOH</option>
+                  <option>Exec</option>
+                </select>
+              </label>
+              <label>Default hourly rate <input id="roleDefaultRate" type="number" min="0" step="0.01" placeholder="0.00"></label>
+              <label>Trainee hourly rate <input id="roleTraineeRate" type="number" min="0" step="0.01" placeholder="Uses default when blank"></label>
+              <label>Trainer pay method
+                <select id="roleTrainerPayMode">
+                  <option value="additional">Additional amount</option>
+                  <option value="fixed">Fixed hourly rate</option>
+                </select>
+              </label>
+              <label>Trainer pay value <input id="roleTrainerPayValue" type="number" min="0" step="0.01" placeholder="0.00"></label>
+              <label>Color <input id="roleColor" type="color" value="#2563eb"></label>
+              <div class="form-actions">
+                <button id="saveRoleBtn" type="button">Save Role</button>
+                <button id="newRoleBtn" type="button">New</button>
+                <button id="deleteRoleBtn" class="danger" type="button">Delete</button>
+              </div>
+            </div>
+            <div class="list-panel role-admin-list-panel">
+              <h3>Defined roles</h3>
+              <div id="roleList" class="entity-list"></div>
+            </div>
+          </div>
+        </fieldset>
+        <fieldset>
           <legend>Schedule Utilities</legend>
           <p class="hint">Less common actions live here so the schedule builder stays clean.</p>
           <div class="settings-actions">
@@ -788,10 +821,10 @@
           <fieldset>
             <legend>Training</legend>
             <div class="checkbox checkbox-direct"><input id="shiftIsTraining" type="checkbox"><span>Training shift</span></div>
+            <p id="trainingEditorGuidance" class="training-editor-guidance">Mark this shift as training to choose a trainee and an eligible trainer.</p>
             <label>Trainee <select id="shiftTrainee"></select></label>
             <label>Trainer <select id="shiftTrainer"></select></label>
             <label>Training ends <input id="shiftTrainingSegmentEnd" placeholder="2p"></label>
-            <label>Training day override <input id="shiftTrainingDayOverride" type="number" min="1" step="1" placeholder="Auto"></label>
           </fieldset>
           <label>Notes <textarea id="shiftNotes" rows="3"></textarea></label>
         </section>
@@ -965,17 +998,76 @@
     </form>
   </dialog>
 
-  <dialog id="trainingPlanDialog">
+  <dialog id="trainingPlanDialog" data-stage="collect">
     <form id="trainingPlanForm" method="dialog" class="editor modal-editor coverage-editor">
       <h2>Build Training Plan</h2>
-      <label>Trainee <select id="planTrainee"></select></label>
-      <label>Role <select id="planRole"></select></label>
-      <label>Start date <input id="planStartDate" type="date"></label>
-      <div id="trainingPlanResults" class="analysis-table"></div>
+      <div class="training-plan-context-row">
+        <div class="training-plan-trainee-context">
+          <span>Trainee</span>
+          <strong id="planTraineeDisplay"></strong>
+          <select id="planTrainee" hidden aria-hidden="true" tabindex="-1"></select>
+        </div>
+        <label class="training-plan-role-context">Role <select id="planRole"></select></label>
+      </div>
+      <section class="training-plan-availability-source" aria-labelledby="trainingPlanAvailabilitySourceHeading">
+        <div>
+          <strong id="trainingPlanAvailabilitySourceHeading">Use saved availability</strong>
+          <span>Build possible training dates from the trainee's live availability and the shifts already on the schedule.</span>
+        </div>
+        <label id="planAvailabilityMealField">Training meal <select id="planAvailabilityMeal"></select></label>
+        <label>Start date <input id="planAvailabilityStartDate" type="date"></label>
+        <button id="useSavedAvailabilityForTrainingBtn" type="button">Use Saved Availability</button>
+      </section>
+      <section class="training-plan-slots" aria-labelledby="trainingPlanSlotsHeading">
+        <div class="training-plan-slots-heading">
+          <strong id="trainingPlanSlotsHeading">Trainee availability</strong>
+          <span>Add each date and time the trainee can attend training.</span>
+        </div>
+        <div class="training-plan-slot-inputs">
+          <label>Date <input id="planSlotDate" type="date"></label>
+          <label>Start <input id="planSlotStart" data-time-picker placeholder="7a" inputmode="numeric"></label>
+          <label>End <input id="planSlotEnd" data-time-picker placeholder="3p" inputmode="numeric"></label>
+          <label>Meal <select id="planSlotMeal"></select></label>
+          <button id="addTrainingPlanSlotBtn" type="button">Add Availability</button>
+        </div>
+        <div id="trainingPlanSlotList" class="training-plan-slot-list"></div>
+        <button id="saveTrainingDatesAsAvailabilityBtn" class="small-button" type="button">Save Listed Times as Live Availability</button>
+      </section>
+      <p id="trainingPlanGuidance" class="hint">Add every time the trainee is available to train. The planner only proposes trainers already scheduled in the matching role, time, and meal.</p>
+      <section id="trainingPlanResults" class="training-plan-review" aria-live="polite"></section>
       <div class="form-actions">
-        <button id="generateTrainingPlanBtn" type="button">Find Shifts</button>
-        <button id="addTrainingPlanBtn" type="button">Add Suggested Training Shifts</button>
+        <button id="generateTrainingPlanBtn" type="button">Build Proposed Schedule</button>
+        <button id="acceptAllTrainingPlanBtn" type="button">Accept All Shifts</button>
+        <button id="addTrainingPlanBtn" type="button">Accept Selected &amp; Find Replacements</button>
+        <button id="keepTrainingPlanBtn" type="button">Keep Accepted for Later</button>
         <button id="cancelTrainingPlanBtn" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="trainingOutcomeDialog">
+    <form id="trainingOutcomeForm" method="dialog" class="editor modal-editor coverage-editor">
+      <h2>Record Training Outcome</h2>
+      <input id="trainingOutcomeShiftId" type="hidden">
+      <p id="trainingOutcomeContext" class="hint"></p>
+      <label>Outcome
+        <select id="trainingOutcomeValue">
+          <option value="completed">Completed training shift</option>
+          <option value="noShow">No-show</option>
+          <option value="endTraining">Trainee declined / end training</option>
+        </select>
+      </label>
+      <label id="trainingNoShowActionField" hidden>No-show handling
+        <select id="trainingNoShowAction">
+          <option value="reschedule">Keep plan open for rescheduling</option>
+          <option value="cancel">Cancel this training shift only</option>
+          <option value="endTraining">End training and remove future training shifts</option>
+        </select>
+      </label>
+      <label>Manager note <textarea id="trainingOutcomeNote" rows="3" placeholder="Optional note"></textarea></label>
+      <div class="form-actions">
+        <button id="saveTrainingOutcomeBtn" class="primary" type="submit">Save Outcome</button>
+        <button id="cancelTrainingOutcomeBtn" type="button">Cancel</button>
       </div>
     </form>
   </dialog>
@@ -997,7 +1089,7 @@
       <h2>Print Options</h2>
       <label>Print layout
         <select id="printLayout">
-          <option value="grid">Current schedule grid</option>
+          <option value="grid">Weekly schedule grid</option>
           <option value="simpleRole">Compact weekly grid by role</option>
           <option value="simpleEmployee">Compact weekly grid by employee</option>
           <option value="simpleRoleWithBay">Compact grid + open shift boxes</option>

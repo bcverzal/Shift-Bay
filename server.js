@@ -1653,6 +1653,13 @@ async function handleApi(request, response) {
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody);
       const result = await schedulerStore.saveState(parsed, request.shiftBayUser || null);
+      if (result.destructiveWriteBlocked) {
+        sendJson(response, 409, {
+          error: result.error || "Rejected an incomplete schedule write. Refresh before trying again.",
+          destructiveWriteBlocked: true
+        });
+        return;
+      }
       if (result.stale) {
         sendJson(response, 409, {
           error: "Rejected stale scheduler data. Refresh the app to load the latest shared file.",

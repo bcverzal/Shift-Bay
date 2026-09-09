@@ -101,6 +101,18 @@ async function testSupabaseStoreWithMockFetch() {
     const loaded = await store.loadState();
     assert.equal(loaded.exists, true, "mock Supabase document should load after save");
     assert.equal(loaded.payload.data.employees[0].id, "emp_cloud", "mock Supabase state should round-trip");
+
+    const populated = envelope("2026-07-03T13:00:00.000Z", {
+      employees: Array.from({ length: 20 }, (_, index) => ({ id: `employee_${index}` })),
+      shifts: Array.from({ length: 100 }, (_, index) => ({ id: `shift_${index}` }))
+    });
+    const populatedSave = await store.saveState(populated);
+    assert.equal(populatedSave.ok, true, "a populated Supabase schedule should save");
+    const destructiveSave = await store.saveState(envelope("2026-07-03T14:00:00.000Z"));
+    assert.equal(destructiveSave.destructiveWriteBlocked, true, "a local Supabase bridge must reject a destructive whole-schedule replacement");
+    const preserved = await store.loadState();
+    assert.equal(preserved.payload.data.employees.length, 20, "a blocked destructive write must preserve the shared roster");
+    assert.equal(preserved.payload.data.shifts.length, 100, "a blocked destructive write must preserve shared shifts");
   } finally {
     global.fetch = originalFetch;
     process.env = originalEnv;

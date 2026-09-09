@@ -31,6 +31,7 @@ This is the short operational view to use when deciding what fits into an availa
 | B2 | B | Rebuild explainable recommendations using repeated shifts, availability, rules, seniority, and fairness | B1, A7 | 16-32h | 2-4h |
 | B3 | B | Add conflict-aware multi-user merging and record-level revisions | A7 | 16-32h | 1-3h |
 | B4 | B | Add mobile/read-only access and finish narrow-window usability | A1, A6, A8 | 8-16h | 1-2h |
+| B5 | B | Add batch trainee planning: optimize several trainees' proposed schedules together while respecting trainer capacity, priority, availability, and one-trainee-per-trainer-shift | B1 | 16-32h | 2-4h |
 | C1 | C | Add staff shift release, pickup, approvals, and notifications | A6, A8, B1 | 16-32h | 2-4h |
 | C2 | C | Build the assisted Ctuit transfer manifest, verification, and exception workflow | A3, A4, A7 | 20-40h | 3-6h |
 | C3 | C | Build autonomous scheduling and business/labor optimization | B1, B2, C1 | 40-80h+ | 4-8h |

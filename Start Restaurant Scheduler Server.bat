@@ -1,9 +1,4 @@
 @echo off
-cd /d "%~dp0"
-echo Starting Restaurant Scheduler...
-echo.
-echo Keep this window open while you are using the scheduler from this computer or another computer.
-echo.
-start "" "http://localhost:8787"
-node server.js
-pause
+REM Legacy name retained for existing shortcuts. The PowerShell launcher verifies
+REM that the server is local-json before it opens a browser.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch Shift Bay Local.ps1"

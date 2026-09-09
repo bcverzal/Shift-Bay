@@ -6,5 +6,6 @@ window.SHIFT_BAY_CONFIG = {
   apiBase: shiftBayIsLocalHost ? "" : "https://aynvsocycljrhmjtyjib.supabase.co/functions/v1/shift-bay-api",
   supabaseUrl: "https://aynvsocycljrhmjtyjib.supabase.co",
   locationId: "f477e013-0dee-470b-b2c6-595cef195b31",
-  enableCloudOnLocal: true
+  // Local development must never write to the shared restaurant schedule.
+  enableCloudOnLocal: false
 };

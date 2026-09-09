@@ -4,9 +4,15 @@ $appDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $port = 8798
 $envFile = Join-Path $appDir ".env"
 $portableNode = Join-Path $appDir "runtime\node\node.exe"
+$siblingNode = Join-Path (Split-Path $appDir -Parent) "restaurant-scheduler-supabase\runtime\node\node.exe"
+$workspaceNode = Join-Path ($env:USERPROFILE) ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 $nodeCommand = $null
 if (Test-Path $portableNode) {
   $nodeCommand = Get-Item $portableNode
+} elseif (Test-Path $siblingNode) {
+  $nodeCommand = Get-Item $siblingNode
+} elseif (Test-Path $workspaceNode) {
+  $nodeCommand = Get-Item $workspaceNode
 } else {
   $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 }
@@ -42,6 +48,18 @@ if (-not $nodeCommand) {
 if (-not (Test-ShiftBayServer)) {
   $env:PORT = "$port"
   $env:HOST = "127.0.0.1"
+  $env:SHIFT_BAY_STORAGE_MODE = "supabase"
+  $nodePath = if ($nodeCommand.FullName) { $nodeCommand.FullName } else { $nodeCommand.Source }
+  Start-Process -WindowStyle Hidden -FilePath $nodePath -ArgumentList "server.js" -WorkingDirectory $appDir
+  Start-Sleep -Seconds 2
+} else {
+  # An older local server may still be running from another checkout. Use a
+  # fresh port so this launcher serves the files from this checkout.
+  $port = 8799
+  $url = "http://localhost:$port/"
+  $env:PORT = "$port"
+  $env:HOST = "127.0.0.1"
+  $env:SHIFT_BAY_STORAGE_MODE = "supabase"
   $nodePath = if ($nodeCommand.FullName) { $nodeCommand.FullName } else { $nodeCommand.Source }
   Start-Process -WindowStyle Hidden -FilePath $nodePath -ArgumentList "server.js" -WorkingDirectory $appDir
   Start-Sleep -Seconds 2

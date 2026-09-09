@@ -22,6 +22,7 @@ const IS_LOCAL_TEST_HOST = LOCAL_TEST_HOSTS.has(location.hostname);
 const SERVER_STORAGE_ENABLED = (location.protocol === "http:" || location.protocol === "https:") &&
   (!IS_LOCAL_TEST_HOST || PUBLIC_CONFIG.enableCloudOnLocal === true);
 const NORMALIZED_QUERY = new URLSearchParams(window.location.search);
+const LOCAL_COPY_IMPORT_MODE = IS_LOCAL_TEST_HOST && NORMALIZED_QUERY.get("localCopy") === "1";
 const NORMALIZED_EMPLOYEE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedEmployees") === "shadow";
 const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule") === "shadow";
 const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
@@ -62,6 +63,8 @@ function apiUrl(path) {
 }
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MEALS = ["Breakfast", "Lunch", "Dinner", "Brunch"];
+const TRAINING_SETUP_TRANSFER_APP = "shift-bay-training-setup";
+const TRAINING_SETUP_TRANSFER_VERSION = 1;
 const DEPARTMENTS = ["FOH", "BOH", "Exec"];
 const MIN_REST_AFTER_CLOSE_HOURS = 10;
 const OPENING_SHIFT_CUTOFF_MINUTES = 10 * 60;
@@ -152,6 +155,8 @@ let suppressRoleGroupClickId = null;
 let lastOpenShiftPointerDownAt = 0;
 let activeTimeInput = null;
 let trainingPlanSuggestions = [];
+let trainingPlanSlots = [];
+let trainingProposalEditSourceId = "";
 let templateSuggestions = [];
 let projectionsDirty = false;
 let pendingTrayWarning = null;
@@ -399,6 +404,7 @@ function defaultState() {
       projectionRules: {},
       floorPlanPrintRules: defaultFloorPlanPrintRules(),
       floorPlanCrossRoleNotes: defaultFloorPlanNoteSettings(roles),
+      trainingMealStartTimes: defaultTrainingMealStartTimes(),
       trainingRequirements: {}
     },
     roles,
@@ -431,6 +437,15 @@ function defaultMealPeriods() {
       : normal.map((period) => ({ ...period }));
   });
   return periods;
+}
+
+function defaultTrainingMealStartTimes() {
+  return {
+    Breakfast: "6:45 AM",
+    Lunch: "11:00 AM",
+    Dinner: "4:00 PM",
+    Brunch: "8:00 AM"
+  };
 }
 
 function defaultFloorPlanPrintRules() {
@@ -499,6 +514,7 @@ function normalizeLoadedState(parsed = {}) {
       projectionRules: parsed.settings?.projectionRules || base.settings.projectionRules,
       floorPlanPrintRules: parsed.settings?.floorPlanPrintRules || base.settings.floorPlanPrintRules,
       floorPlanCrossRoleNotes: { ...base.settings.floorPlanCrossRoleNotes, ...(parsed.settings?.floorPlanCrossRoleNotes || {}) },
+      trainingMealStartTimes: { ...base.settings.trainingMealStartTimes, ...(parsed.settings?.trainingMealStartTimes || {}) },
       trainingRequirements: parsed.settings?.trainingRequirements || base.settings.trainingRequirements
     },
     templates: normalizeTemplates(parsed.templates || base.templates),
@@ -541,16 +557,32 @@ function migrateState(loadedState, parsed = {}) {
     ...template,
     shifts: normalizeRecordCollection(template.shifts || [], "templateShift")
   }));
-  loadedState.employees = (loadedState.employees || []).map((employee) => ({
-    ...employee,
-    departments: normalizeEmployeeDepartments(employee, loadedState.roles),
-    canClose: Boolean(employee.canClose),
-    canLunchClose: Boolean(employee.canLunchClose),
-    noDoubles: Boolean(employee.noDoubles),
-    alwaysPrintFloorEndTime: Boolean(employee.alwaysPrintFloorEndTime),
-    emergencyRoleIds: Array.isArray(employee.emergencyRoleIds) ? employee.emergencyRoleIds : [],
-    roleMealTraining: employee.roleMealTraining && typeof employee.roleMealTraining === "object" ? employee.roleMealTraining : {}
-  }));
+  loadedState.employees = (loadedState.employees || []).map((employee) => {
+    const legacyMeals = Array.isArray(employee.mealTraining) ? employee.mealTraining.filter((meal) => MEALS.includes(meal)) : [];
+    const existingRoleMeals = employee.roleMealTraining && typeof employee.roleMealTraining === "object" ? employee.roleMealTraining : {};
+    const roleMealTraining = { ...existingRoleMeals };
+    // Preserve the old global meal setting when upgrading to role-specific
+    // qualifications. This runs only for roles that use meal training.
+    (loadedState.roles || []).forEach((role) => {
+      const configured = loadedState.settings.trainingRequirements?.[role.id] || {};
+      const mealDependent = configured.mode
+        ? configured.mode === "meal"
+        : configured.mealDependent || /server|bartender|line\s*cook/i.test(role.name || "");
+      if (mealDependent && !Object.prototype.hasOwnProperty.call(roleMealTraining, role.id) && legacyMeals.length) {
+        roleMealTraining[role.id] = [...legacyMeals];
+      }
+    });
+    return {
+      ...employee,
+      departments: normalizeEmployeeDepartments(employee, loadedState.roles),
+      canClose: Boolean(employee.canClose),
+      canLunchClose: Boolean(employee.canLunchClose),
+      noDoubles: Boolean(employee.noDoubles),
+      alwaysPrintFloorEndTime: Boolean(employee.alwaysPrintFloorEndTime),
+      emergencyRoleIds: Array.isArray(employee.emergencyRoleIds) ? employee.emergencyRoleIds : [],
+      roleMealTraining
+    };
+  });
   loadedState.shifts = (loadedState.shifts || []).map((shift) => ({
     ...shift,
     training: normalizeShiftTraining(shift.training),
@@ -560,6 +592,33 @@ function migrateState(loadedState, parsed = {}) {
     isLocked: Boolean(shift.isLocked),
     lockNote: String(shift.lockNote || "").trim()
   }));
+  // Older locally created training plans only added the trainee-side shift.
+  // Pair those records to their existing trainer shift when the relationship
+  // is unambiguous, so both editors describe the same assignment.
+  loadedState.shifts.forEach((traineeShift) => {
+    const training = traineeShift.training || {};
+    if (!training.isTraining || training.isTrainerShift || !training.trainerId || training.trainerSourceShiftId) return;
+    const traineeRange = getCoverageRange(traineeShift);
+    const trainerShift = loadedState.shifts.find((candidate) => (
+      candidate.id !== traineeShift.id &&
+      candidate.employeeId === training.trainerId &&
+      candidate.date === traineeShift.date &&
+      candidate.roleId === traineeShift.roleId &&
+      !candidate.training?.isTraining &&
+      rangesOverlap(traineeRange.start, traineeRange.end, getCoverageRange(candidate).start, getCoverageRange(candidate).end)
+    ));
+    if (!trainerShift) return;
+    traineeShift.training = { ...training, isTrainerShift: false, trainerSourceShiftId: trainerShift.id };
+    trainerShift.training = {
+      isTraining: true,
+      isTrainerShift: true,
+      traineeId: training.traineeId || traineeShift.employeeId,
+      trainerId: training.trainerId,
+      pairedTraineeShiftId: traineeShift.id,
+      segmentEnd: "",
+      planMeal: training.planMeal || traineeShift.planMeal || ""
+    };
+  });
   loadedState.unassignedShifts = (loadedState.unassignedShifts || []).map((shift) => ({
     ...shift,
     training: normalizeShiftTraining(shift.training),
@@ -586,8 +645,9 @@ function migrateState(loadedState, parsed = {}) {
 }
 
 function normalizeShiftTraining(training = {}) {
+  const { dayOverride, dayOverrideManual, previewDay, ...normalized } = training || {};
   return {
-    ...training,
+    ...normalized,
     isTraining: Boolean(training?.isTraining),
     segmentEnd: normalizeTime(training?.segmentEnd || "")
   };
@@ -604,11 +664,11 @@ function normalizeRecordCollection(records, prefix = "record") {
 
 function normalizeEmployeeDepartments(employee, roles = state?.roles || []) {
   const saved = Array.isArray(employee.departments) ? employee.departments.filter((department) => DEPARTMENTS.includes(department)) : [];
-  if (saved.length) return [...new Set(saved)];
   const roleDepartments = (employee.roleTraining || [])
     .map((roleId) => roles.find((role) => role.id === roleId)?.department)
     .filter(Boolean);
-  return roleDepartments.length ? [...new Set(roleDepartments)] : ["FOH"];
+  const departments = [...new Set([...saved, ...roleDepartments])];
+  return departments.length ? departments : ["FOH"];
 }
 
 function employeeIsEmergencyOnlyForRole(employee, roleId) {
@@ -617,8 +677,59 @@ function employeeIsEmergencyOnlyForRole(employee, roleId) {
 
 function employeeMealsForRole(employee, roleId) {
   const roleMeals = employee?.roleMealTraining?.[roleId];
-  if (Array.isArray(roleMeals) && roleMeals.length) return roleMeals;
-  return employee?.mealTraining || [];
+  return Array.isArray(roleMeals) ? roleMeals : [];
+}
+
+function employeeMealQualificationSummary(employee) {
+  return [...new Set(Object.values(employee?.roleMealTraining || {}).flat().filter((meal) => MEALS.includes(meal)))];
+}
+
+function employeeQualificationForShift(employee, shift) {
+  const role = roleById(shift?.roleId);
+  const department = shift?.department || role?.department || "FOH";
+  const meals = getMealsForShift(shift);
+  const trainedMeals = employeeMealsForRole(employee, shift?.roleId);
+  const mealDependent = roleTrainingConfig(shift?.roleId).mode === "meal";
+  const plan = employee?.trainingPlans?.[shift?.roleId] || {};
+  const projectedMeals = Array.isArray(plan.meals) ? plan.meals : [];
+  const projectedDate = String(plan.projectedCompletionDate || "");
+  const projectedQualified = mealDependent && plan.status && plan.status !== "complete" && projectedDate && shift?.date >= projectedDate && meals.every((meal) => projectedMeals.includes(meal));
+  return {
+    departmentQualified: Boolean(employee && normalizeEmployeeDepartments(employee).includes(department)),
+    roleQualified: Boolean(employee && role && employee.roleTraining?.includes(role.id)),
+    mealDependent,
+    mealQualified: !mealDependent || meals.every((meal) => trainedMeals.includes(meal)) || projectedQualified,
+    missingMeals: mealDependent ? meals.filter((meal) => !trainedMeals.includes(meal)) : [],
+    qualified: Boolean(employee && role && normalizeEmployeeDepartments(employee).includes(department) && employee.roleTraining?.includes(role.id) && (!mealDependent || meals.every((meal) => trainedMeals.includes(meal)) || projectedQualified)),
+    projectedQualified
+  };
+}
+
+function roleTrainingConfig(roleId, settings = state.settings) {
+  const role = roleById(roleId);
+  const saved = settings?.trainingRequirements?.[roleId] || {};
+  const defaultMealDependent = /server|bartender|line\s*cook/i.test(role?.name || "");
+  const savedMealRequirements = saved.mealRequirements || {};
+  return {
+    mode: saved.mode || (saved.mealDependent || defaultMealDependent ? "meal" : "general"),
+    days: Number(saved.days) || 0,
+    mealRequirements: Object.fromEntries(MEALS.map((meal) => [meal, Math.max(0, Number(savedMealRequirements[meal]) || 0)])),
+    trainingOrder: Array.isArray(saved.trainingOrder) && saved.trainingOrder.length
+      ? saved.trainingOrder.filter((meal) => MEALS.includes(meal))
+      : ["Dinner", "Lunch", "Breakfast"],
+    menuTestRequired: saved.menuTestRequired !== false,
+    maxTrainerAssignments: Math.max(1, Number(saved.maxTrainerAssignments) || 2),
+    trainerPriorityIds: Array.isArray(saved.trainerPriorityIds) ? saved.trainerPriorityIds : [],
+    requiredShifts: saved.requiredShifts || (saved.requiredLabels || []).map((name) => ({ name, dayIndex: "" }))
+  };
+}
+
+function trainingMealStartTimes(settings = state.settings) {
+  const defaults = defaultTrainingMealStartTimes();
+  return Object.fromEntries(MEALS.map((meal) => [
+    meal,
+    normalizeTime(settings?.trainingMealStartTimes?.[meal] || defaults[meal]) || defaults[meal]
+  ]));
 }
 
 function applyOneTimeStaffReset(loadedState) {
@@ -1857,7 +1968,7 @@ function buildDemoEmployee(firstName, lastName, roleNames, options = {}) {
     roleTraining: roleNames.map(demoRoleId).filter(Boolean),
     trainerRoles: (options.trainerRoles || []).map(demoRoleId).filter(Boolean),
     emergencyRoleIds: (options.emergencyRoleIds || []).map(demoRoleId).filter(Boolean),
-    mealTraining: options.mealTraining || ["Breakfast", "Lunch", "Dinner", "Brunch"],
+    mealTraining: [],
     roleMealTraining: options.roleMealTraining || {},
     availability: options.availability || makeDemoAvailability(),
     availabilityPatterns: options.availabilityPatterns || [],
@@ -2842,6 +2953,15 @@ function trainingShiftMatchesTrainerShift(trainingShift, trainerShift) {
   return rangesOverlap(trainingRange.start, trainingRange.end, trainerRange.start, trainerRange.end);
 }
 
+function trainerSourceCoversTrainingShift(trainingShift, trainerShift) {
+  if (!trainingShift || !trainerShift) return false;
+  if (trainingShift.date !== trainerShift.date || trainingShift.roleId !== trainerShift.roleId) return false;
+  const trainingRange = getCoverageRange(trainingShift);
+  const trainerRange = getCoverageRange(trainerShift);
+  if (trainingRange.start == null || trainingRange.end == null || trainerRange.start == null || trainerRange.end == null) return false;
+  return trainerRange.start <= trainingRange.start && trainerRange.end >= trainingRange.end;
+}
+
 function getMealCoverageRange(shift) {
   const start = minutesFromTime(shift.start);
   if (start == null) return { start: null, end: null };
@@ -3071,7 +3191,7 @@ function renderRoleCapabilityStrip(employee) {
   if (!fohRoles.length) return "";
   const trainedRoles = new Set(employee.roleTraining || []);
   const trainingRoles = new Set(state.shifts
-    .filter((shift) => shift.training?.isTraining && (shift.training.traineeId || shift.employeeId) === employee.id)
+    .filter((shift) => isTraineeTrainingShift(shift, employee.id))
     .map((shift) => shift.roleId));
   return `
     <div class="role-capability-strip" aria-label="FOH role capabilities">
@@ -3254,13 +3374,12 @@ function validateShift(shift, options = {}) {
   if (!role) errors.push("Choose a role.");
   if (employee && role) {
     const trainingMessages = [];
-    if (!normalizeEmployeeDepartments(employee).includes(shift.department || role.department || "FOH")) {
+    const qualification = employeeQualificationForShift(employee, shift);
+    if (!qualification.departmentQualified) {
       trainingMessages.push(`${displayName(employee)} is not marked for ${shift.department || role.department || "this department"}.`);
     }
-    if (!employee.roleTraining?.includes(role.id)) trainingMessages.push(`${displayName(employee)} is not trained as ${role.name}.`);
-    const trainedMealsForRole = employeeMealsForRole(employee, role.id);
-    const missingMeals = getMealsForShift(shift).filter((meal) => !trainedMealsForRole.includes(meal));
-    if (missingMeals.length) trainingMessages.push(`${displayName(employee)} is not trained for ${missingMeals.join(", ")}.`);
+    if (!qualification.roleQualified) trainingMessages.push(`${displayName(employee)} is not trained as ${role.name}.`);
+    if (qualification.mealDependent && qualification.missingMeals.length) trainingMessages.push(`${displayName(employee)} is not trained for ${qualification.missingMeals.join(", ")}.`);
     if (shift.training?.isTraining) {
       // A trainee is expected to be missing this training; warn only on trainer setup below.
     } else if (shift.department === "FOH") errors.push(...trainingMessages);
@@ -3518,6 +3637,32 @@ function moveAssignedShiftsToBay(shiftIds = []) {
   state.shifts = state.shifts.filter((shift) => !ids.has(String(shift.id || "")));
   state.unassignedShifts = [...(state.unassignedShifts || []), ...staged];
   return moved;
+}
+
+async function importLocalCopyFromServer() {
+  if (!LOCAL_COPY_IMPORT_MODE) return false;
+  setStorageStatus("connecting", "Loading the isolated local copy...");
+  try {
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (!response.ok) throw new Error(`The local copy could not be read (${response.status}).`);
+    const envelope = await response.json();
+    const copiedState = normalizeLoadedState(envelope.data || envelope);
+    if (!Array.isArray(copiedState.employees) || copiedState.employees.length === 0) {
+      throw new Error("The local copy did not contain employees.");
+    }
+    state = copiedState;
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    currentDate = loadLocalActiveWeek(state.settings.weekStart);
+    history.replaceState({}, "", `${location.pathname}${location.hash}`);
+    setStorageStatus("saved", "Loaded isolated local copy.");
+    renderAll();
+    updateZoomVisibility();
+    return true;
+  } catch (error) {
+    setStorageStatus("stale", "Could not load the isolated local copy.");
+    showConflict(error.message || "Could not load the isolated local copy.");
+    return false;
+  }
 }
 
 function futureAssignedShiftDetails(employeeId, fromDate = formatDateKey(new Date())) {
@@ -3852,7 +3997,7 @@ function captureScheduleReturnContext(issue = {}) {
 
 function employeeProfileTabForTarget(targetId = "") {
   if (["availabilityEditor", "weeklyAvailabilityEditor", "employeeCallWeekly", "weeklyAvailabilityFieldset", "regularAvailabilityFieldset"].includes(targetId)) return "availability";
-  if (["employeeTrainingSection", "employeeRoleChecks", "employeeMealTrainingSection"].includes(targetId)) return "roles";
+  if (["employeeQualificationSection", "employeeTrainingSection", "employeeRoleChecks"].includes(targetId)) return "roles";
   if (["trainerRoles", "employeeTrainerChecks"].includes(targetId)) return "training";
   if (["employeePayRates"].includes(targetId)) return "pay";
   if (["weeklyRuleEditor"].includes(targetId)) return "rules";
@@ -3936,6 +4081,7 @@ function focusScheduleIssue(issue, number, total, options = {}) {
 }
 
 function renderAll(options = {}) {
+  reconcileTrainingAssignments();
   normalizeSavedEmployeePhones();
   bindPhoneFormatters();
   renderTabs();
@@ -5724,10 +5870,17 @@ function dayFocusEligibleEmployeesForOpenShift(openShift) {
     .map((employee) => {
       const proposed = stagedShiftToShift(openShift, employee.id);
       const result = validateShift(proposed);
-      return { employee, result };
+      return {
+        employee,
+        result,
+        qualification: employeeQualificationForShift(employee, proposed),
+        emergencyOnly: employeeIsEmergencyOnlyForRole(employee, openShift.roleId)
+      };
     })
-    .filter((item) => !item.result.errors.length && !item.result.warnings.length)
-    .sort((a, b) => displayName(a.employee).localeCompare(displayName(b.employee)));
+    .filter((item) => item.qualification.qualified)
+    .sort((a, b) => (Number(a.emergencyOnly) - Number(b.emergencyOnly))
+      || (a.result.warnings.length - b.result.warnings.length)
+      || displayName(a.employee).localeCompare(displayName(b.employee)));
 }
 
 function dayFocusEmployeeWeekSummary(employee, dateKey) {
@@ -5760,7 +5913,19 @@ function showDayFocusChipTooltip(chip) {
     tooltip.className = "day-focus-chip-tooltip";
     document.body.append(tooltip);
   }
-  tooltip.textContent = text;
+  const tier = chip.dataset.candidateTier || "recommended";
+  const tierLabel = tier === "emergency" ? "Emergency only" : tier === "available" ? "Available with note" : "Recommended";
+  const note = chip.dataset.candidateNote || "No additional scheduling note.";
+  const summary = chip.dataset.candidateSummary || text;
+  tooltip.className = `day-focus-chip-tooltip day-focus-chip-tooltip-${tier}`;
+  tooltip.innerHTML = "";
+  const heading = document.createElement("strong");
+  heading.textContent = tierLabel;
+  const noteLine = document.createElement("span");
+  noteLine.textContent = note;
+  const summaryLine = document.createElement("small");
+  summaryLine.textContent = summary;
+  tooltip.append(heading, noteLine, summaryLine);
   tooltip.hidden = false;
   const chipRect = chip.getBoundingClientRect();
   const tooltipRect = tooltip.getBoundingClientRect();
@@ -5847,8 +6012,14 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
-    ? eligible.map((item) => `<button type="button" class="day-focus-eligible-chip${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-chip-tip="${escapeHtml(dayFocusEmployeeWeekSummary(item.employee, openShift.date))}">${escapeHtml(displayName(item.employee))}</button>`).join("")
-    : `<em>No clean fits</em>`;
+    ? eligible.map((item) => {
+        const tier = item.emergencyOnly ? "emergency" : item.result.warnings.length ? "available" : "recommended";
+        const tierLabel = tier === "emergency" ? "Emergency only" : tier === "available" ? "Available with note" : "Recommended";
+        const note = item.result.warnings.join(" ") || "No additional scheduling note.";
+        const summary = dayFocusEmployeeWeekSummary(item.employee, openShift.date);
+        return `<button type="button" class="day-focus-eligible-chip day-focus-candidate-${tier}${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-candidate-tier="${tier}" data-candidate-note="${escapeHtml(note)}" data-candidate-summary="${escapeHtml(summary)}" aria-label="${escapeHtml(`${tierLabel}: ${displayName(item.employee)}`)}" data-chip-tip="${escapeHtml(`${tierLabel}. ${note} ${summary}`)}">${escapeHtml(displayName(item.employee))}</button>`;
+      }).join("")
+    : `<em>No eligible candidates</em>`;
   return `
     <div class="day-focus-row-timebar day-focus-open-timebar-wrap">
       <div class="day-focus-timebar day-focus-row-timeline day-focus-open-timeline" data-timeline-date="${openShift.date}" data-timeline-start="${window.start}" data-timeline-end="${window.end}">
@@ -5861,7 +6032,7 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
           </div>
         </div>
       </div>
-      ${expanded ? `<div class="day-focus-open-eligible"><span>Eligible</span><div>${chips}</div></div>` : ""}
+      ${expanded ? `<div class="day-focus-open-eligible"><span>Eligible</span><div class="day-focus-candidate-list">${chips}</div></div>` : ""}
     </div>
   `;
 }
@@ -6433,13 +6604,20 @@ async function finishDayFocusTimelineDrag(event) {
     return;
   }
   const targetEmployeeId = drag.mode === "move" && targetCell?.dataset.employeeId ? targetCell.dataset.employeeId : shift.employeeId;
-  const nextShift = {
+  let nextShift = {
     ...shift,
     employeeId: targetEmployeeId,
     start: timeFromMinutes(times.start),
     end: (drag.mode !== "move" || !drag.wasUntilVolume) ? timeFromMinutes(times.end) : shift.end,
     untilVolume: (drag.mode !== "move" || !drag.wasUntilVolume) ? false : shift.untilVolume
   };
+  const trainingMove = await prepareMovedTrainingShift(shift, nextShift);
+  if (!trainingMove) {
+    undoStack.pop();
+    renderSchedulePreservingGridScroll();
+    return;
+  }
+  nextShift = trainingMove.shift;
   const result = validateShift(nextShift);
   if (result.errors.length) {
     undoStack.pop();
@@ -6452,11 +6630,19 @@ async function finishDayFocusTimelineDrag(event) {
     renderSchedule();
     return;
   }
+  if (trainingMove.trainerSourceId) restoreTrainerSourceForTraineeShift(shift);
   state.shifts = state.shifts.map((item) => item.id === shift.id ? nextShift : item);
+  if (trainingMove.trainerSourceId) {
+    const savedTrainingShift = state.shifts.find((item) => item.id === nextShift.id);
+    const trainerSource = state.shifts.find((item) => item.id === trainingMove.trainerSourceId);
+    pairTrainingShiftWithTrainerSource(savedTrainingShift, trainerSource);
+  }
+  const clearedTrainingAssignments = reconcileTrainingAssignments();
   selectedShiftId = nextShift.id;
   selectedCell = { employeeId: nextShift.employeeId, date: nextShift.date };
   saveState();
   renderSchedulePreservingGridScroll();
+  trainingAssignmentClearedNotice(clearedTrainingAssignments);
 }
 
 function renderDayFocusEmployeeRow(grid, employee, dateKey, selectedRoleId = "", groupRole = null) {
@@ -7169,7 +7355,7 @@ function renderEmployeeScheduleRow(grid, employee, dates, groupRole = null) {
 }
 
 function renderEmployeeNameCell(employee, groupRole = null, options = {}) {
-  const meta = options.hideScheduleLabels ? "" : (employee.mealTraining?.join(", ") || "");
+  const meta = options.hideScheduleLabels ? "" : (employeeMealQualificationSummary(employee).join(", ") || "");
   const labor = employeeWeekLabor(employee.id);
   const payrollLine = `<div class="employee-labor-summary">${formatHours(labor.hours)} hrs | ${formatRate(labor.payroll)} projected</div>`;
   const groupLine = groupRole ? `<div class="employee-meta">${groupRole.name} group</div>` : "";
@@ -7220,7 +7406,7 @@ function applySelectedOpenShiftRowState(element, employee) {
 
 function renderEmployeeHoverCard(employee) {
   const roles = (employee.roleTraining || []).map((roleId) => roleById(roleId)?.name).filter(Boolean).join(", ") || "No roles set";
-  const meals = (employee.mealTraining || []).join(", ") || "No meals set";
+  const meals = employeeMealQualificationSummary(employee).join(", ") || "No meal-specific qualifications";
   const notes = employee.managerNotes ? `<small>${employee.managerNotes}</small>` : "";
   return `
     <div class="employee-hover-card">
@@ -8101,6 +8287,21 @@ function employeeRateForRole(employee, roleId) {
   return Number(roleById(roleId)?.defaultRate) || 0;
 }
 
+function employeeRateForShift(employee, shift) {
+  const role = roleById(shift?.roleId) || {};
+  const baseRate = employeeRateForRole(employee, shift?.roleId);
+  if (isTraineeTrainingShift(shift, employee?.id)) {
+    return Number(role.traineeRate) || baseRate;
+  }
+  const trainingLink = state.shifts.find((item) => trainingShiftMatchesTrainerShift(item, shift));
+  if (trainingLink && trainingLink.training?.trainerId === employee?.id) {
+    return role.trainerPayMode === "fixed"
+      ? (Number(role.trainerPayValue) || baseRate)
+      : baseRate + (Number(role.trainerPayValue) || 0);
+  }
+  return baseRate;
+}
+
 function shiftHours(shift) {
   const start = minutesFromTime(shift.start);
   if (start == null) return 0;
@@ -8127,7 +8328,7 @@ function employeeWeekLabor(employeeId) {
     .reduce((summary, shift) => {
       const hours = shiftHours(shift);
       summary.hours += hours;
-      summary.payroll += hours * employeeRateForRole(employee, shift.roleId);
+      summary.payroll += hours * employeeRateForShift(employee, shift);
       return summary;
     }, { hours: 0, payroll: 0 });
 }
@@ -8319,13 +8520,17 @@ function addWeekMissingCoverageToShiftBay() {
 
 function trainingDayNumber(shift) {
   if (!shift.training?.isTraining) return null;
-  if (shift.training.dayOverride) return Number(shift.training.dayOverride);
-  const traineeId = shift.training.traineeId || shift.employeeId;
-  const roleId = shift.roleId;
+  const traineeShift = isTraineeTrainingShift(shift)
+    ? shift
+    : state.shifts.find((item) => item.id === shift.training?.pairedTraineeShiftId)
+      || state.shifts.find((item) => isTraineeTrainingShift(item) && item.training?.trainerSourceShiftId === shift.id);
+  if (!traineeShift) return Number(shift.training?.previewDay) || null;
+  const traineeId = traineeShift.training.traineeId || traineeShift.employeeId;
+  const roleId = traineeShift.roleId;
   return state.shifts
-    .filter((item) => item.training?.isTraining && (item.training.traineeId || item.employeeId) === traineeId && item.roleId === roleId)
+    .filter((item) => isTraineeTrainingShift(item, traineeId) && item.roleId === roleId && item.training?.outcome !== "noShow")
     .sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))
-    .findIndex((item) => item.id === shift.id) + 1;
+    .findIndex((item) => item.id === traineeShift.id) + 1;
 }
 
 function trainingBadgesForShift(shift) {
@@ -8335,19 +8540,21 @@ function trainingBadgesForShift(shift) {
   if (shift.training?.isTraining) {
     const trainee = employeeById(shift.training.traineeId);
     const trainer = employeeById(shift.training.trainerId);
+    const dayText = trainingDayNumber(shift) ? ` | Day ${trainingDayNumber(shift)}` : "";
     if (shift.employeeId === shift.training.trainerId) {
-      if (trainee || !trainerLinks.length) badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${segmentText}`);
+      if (trainee || !trainerLinks.length) badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${dayText}${segmentText}`);
     } else if (shift.employeeId === shift.training.traineeId) {
-      if (trainer) badges.push(`Training with ${displayName(trainer)}${segmentText}`);
-      else if (!trainerLinks.length) badges.push("Training with trainer needed");
+      if (trainer) badges.push(`Training with ${displayName(trainer)}${dayText}${segmentText}`);
+      else if (!trainerLinks.length) badges.push(`Training day${dayText}`);
     } else {
-      badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${trainer ? ` with ${displayName(trainer)}` : ""}${segmentText}`);
+      badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${trainer ? ` with ${displayName(trainer)}` : ""}${dayText}${segmentText}`);
     }
   }
   trainerLinks.forEach((item) => {
     const trainee = employeeById(item.training.traineeId || item.employeeId);
     const linkedSegmentText = item.training?.segmentEnd ? ` until ${item.training.segmentEnd}` : "";
-    badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${linkedSegmentText}`);
+    const dayText = trainingDayNumber(item) ? ` | Day ${trainingDayNumber(item)}` : "";
+    badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${dayText}${linkedSegmentText}`);
   });
   return [...new Set(badges)];
 }
@@ -8394,13 +8601,15 @@ function renderShiftCard(shift, options = {}) {
   const detailText = options.ghost ? "Also scheduled" : (noteText || (hideScheduleLabels ? "" : coveredMeals));
   const detailClass = noteText && !options.ghost ? "shift-notes shift-note-badge" : "shift-notes";
   const trainingBadges = trainingBadgesForShift(shift).map((badge) => `<div class="training-badge">${badge}</div>`).join("");
-  if (trainingBadges) card.classList.add("has-training-badge");
+  const menuTestBadge = trainingTestForShift(shift) ? `<div class="training-badge menu-test-badge">Menu test | Schedule 1 hour early</div>` : "";
+  if (trainingBadges || menuTestBadge) card.classList.add("has-training-badge");
   const flexBadge = shift.isFlexDouble ? `<span class="shift-trait-badge flex-double-badge" title="Flex Double">Flex</span>` : "";
   const lunchCloserBadge = shift.isLunchCloser ? `<span class="shift-trait-badge lunch-closer-badge" title="Lunch closer">Lunch CL</span>` : "";
   const lockBadge = shiftIsLocked(shift) ? `<span class="shift-trait-badge shift-lock-badge" title="Locked shift${shift.lockNote ? `: ${escapeHtml(shift.lockNote)}` : ""}">Locked</span>` : "";
   const selectedActions = (!options.ghost && selectedShiftId === shift.id && pendingDeleteShiftId !== shift.id) ? `
     <div class="shift-action-strip" aria-label="Selected shift actions">
       <button type="button" data-shift-action="edit" title="Edit shift">Edit</button>
+      ${shift.training?.isTraining && shift.employeeId === shift.training.traineeId ? `<button type="button" data-shift-action="training-outcome" title="Record training outcome">Outcome</button>` : ""}
       <button type="button" data-shift-action="copy" title="Copy shift">Copy</button>
       <button type="button" data-shift-action="delete" title="Delete or move shift">Delete</button>
     </div>
@@ -8414,6 +8623,7 @@ function renderShiftCard(shift, options = {}) {
     <div class="shift-time">${shift.start} - ${end}</div>
     ${detailText ? `<div class="${detailClass}">${noteText && !options.ghost ? `Note: ${escapeHtml(noteText)}` : escapeHtml(detailText)}</div>` : ""}
     ${trainingBadges}
+    ${menuTestBadge}
     ${pendingDeleteShiftId === shift.id ? `
       <div class="shift-delete-options" aria-label="Choose what to do with this shift">
         <button class="unassign-confirm-button" type="button" title="Move back to Shift Bay" aria-label="Move back to Shift Bay">
@@ -8520,6 +8730,7 @@ function renderShiftCard(shift, options = {}) {
       selectedCell = { employeeId: shift.employeeId, date: shift.date };
       const action = button.dataset.shiftAction;
       if (action === "edit") openShiftDialog(shift);
+      if (action === "training-outcome") openTrainingOutcomeDialog(shift);
       if (action === "copy") copySelectedShift();
       if (action === "delete") {
         pendingDeleteShiftId = shift.id;
@@ -8709,13 +8920,24 @@ async function moveAssignedShiftToEmployee(shiftId, employeeId, dateKey = null, 
     renderSchedule();
     return;
   }
-  const nextShift = {
+  if (!isCopy && source.employeeId === employeeId && (!dateKey || source.date === dateKey)) {
+    endAnyDrag();
+    return;
+  }
+  let nextShift = {
     ...source,
     id: isCopy ? uid("shift") : source.id,
     employeeId,
     date: dateKey || source.date,
     color: shiftColor(source)
   };
+  const trainingMove = await prepareMovedTrainingShift(source, nextShift, { isCopy });
+  if (!trainingMove) {
+    endAnyDrag();
+    renderSchedule();
+    return;
+  }
+  nextShift = trainingMove.shift;
   const result = validateShift(nextShift);
   if (result.errors.length) {
     showConflict(result.errors.join(" "));
@@ -8729,12 +8951,20 @@ async function moveAssignedShiftToEmployee(shiftId, employeeId, dateKey = null, 
     return;
   }
   pushUndo();
+  if (trainingMove.trainerSourceId && !isCopy) restoreTrainerSourceForTraineeShift(source);
   if (isCopy) state.shifts.push(nextShift);
   else state.shifts = state.shifts.map((shift) => shift.id === source.id ? nextShift : shift);
+  if (trainingMove.trainerSourceId) {
+    const savedTrainingShift = state.shifts.find((shift) => shift.id === nextShift.id);
+    const trainerSource = state.shifts.find((shift) => shift.id === trainingMove.trainerSourceId);
+    pairTrainingShiftWithTrainerSource(savedTrainingShift, trainerSource);
+  }
+  const clearedTrainingAssignments = reconcileTrainingAssignments();
   selectedShiftId = nextShift.id;
   selectedCell = { employeeId: nextShift.employeeId, date: nextShift.date };
   endAnyDrag();
   renderAll();
+  trainingAssignmentClearedNotice(clearedTrainingAssignments);
 }
 
 async function assignUnassignedShift(unassignedId, employeeId, force = false) {
@@ -9221,6 +9451,206 @@ function shiftChangeMetadata(existing, source = "Manual") {
   };
 }
 
+function isTraineeTrainingShift(shift, traineeId = "") {
+  if (!shift?.training?.isTraining || shift.training?.isTrainerShift) return false;
+  const expectedTraineeId = traineeId || shift.training?.traineeId || shift.employeeId;
+  return shift.employeeId === expectedTraineeId;
+}
+
+function restoreTrainerSourceForTraineeShift(traineeShift) {
+  const sourceId = traineeShift?.training?.trainerSourceShiftId;
+  if (!sourceId) return;
+  const trainerSource = state.shifts.find((shift) => shift.id === sourceId);
+  if (!trainerSource || trainerSource.training?.pairedTraineeShiftId !== traineeShift.id) return;
+  trainerSource.training = { isTraining: false, traineeId: "", trainerId: "", segmentEnd: "" };
+}
+
+function trainingAssignmentIsValid(traineeShift) {
+  if (!isTraineeTrainingShift(traineeShift) || !traineeShift.training?.trainerId || !traineeShift.training?.trainerSourceShiftId) return false;
+  const trainerSource = state.shifts.find((shift) => shift.id === traineeShift.training.trainerSourceShiftId);
+  return Boolean(
+    trainerSource?.training?.isTrainerShift &&
+    trainerSource.training?.pairedTraineeShiftId === traineeShift.id &&
+    trainingShiftMatchesTrainerShift(traineeShift, trainerSource) &&
+    trainerSourceCoversTrainingShift(traineeShift, trainerSource)
+  );
+}
+
+function clearTrainingAssignment(traineeShift) {
+  if (!traineeShift?.training?.isTraining || traineeShift.training?.isTrainerShift) return null;
+  const trainer = employeeById(traineeShift.training?.trainerId);
+  restoreTrainerSourceForTraineeShift(traineeShift);
+  traineeShift.training = {
+    ...traineeShift.training,
+    isTraining: true,
+    isTrainerShift: false,
+    traineeId: traineeShift.training?.traineeId || traineeShift.employeeId,
+    trainerId: "",
+    trainerSourceShiftId: "",
+    segmentEnd: ""
+  };
+  return trainer ? displayName(trainer) : "the assigned trainer";
+}
+
+function attachUnambiguousTrainerSource(traineeShift) {
+  if (!isTraineeTrainingShift(traineeShift) || traineeShift.training?.trainerSourceShiftId || !traineeShift.training?.trainerId) return false;
+  const matches = (state.shifts || []).filter((candidate) => (
+    candidate.id !== traineeShift.id &&
+    candidate.employeeId === traineeShift.training.trainerId &&
+    !candidate.training?.isTraining &&
+    trainingShiftMatchesTrainerShift(traineeShift, candidate)
+  ));
+  if (matches.length !== 1) return false;
+  const trainerSource = matches[0];
+  trainerSource.training = {
+    isTraining: true,
+    isTrainerShift: true,
+    traineeId: traineeShift.training.traineeId || traineeShift.employeeId,
+    trainerId: traineeShift.training.trainerId,
+    pairedTraineeShiftId: traineeShift.id,
+    segmentEnd: "",
+    planMeal: traineeShift.planMeal || ""
+  };
+  traineeShift.training = { ...traineeShift.training, trainerSourceShiftId: trainerSource.id };
+  return true;
+}
+
+function reconcileTrainingAssignments() {
+  const cleared = [];
+  (state.shifts || []).filter((shift) => shift.training?.isTraining && !shift.training?.isTrainerShift).forEach((traineeShift) => {
+    if (!traineeShift.training?.trainerId && !traineeShift.training?.trainerSourceShiftId) return;
+    if (attachUnambiguousTrainerSource(traineeShift)) return;
+    if (trainingAssignmentIsValid(traineeShift)) return;
+    const trainerName = clearTrainingAssignment(traineeShift);
+    if (trainerName) cleared.push({ traineeShift, trainerName });
+  });
+  // A trainer shift can also be edited or removed directly. Do not leave its
+  // training marker behind when its linked trainee shift no longer exists.
+  (state.shifts || []).filter((shift) => shift.training?.isTrainerShift).forEach((trainerSource) => {
+    const traineeShift = state.shifts.find((shift) => shift.id === trainerSource.training?.pairedTraineeShiftId);
+    if (trainingAssignmentIsValid(traineeShift)) return;
+    trainerSource.training = { isTraining: false, traineeId: "", trainerId: "", segmentEnd: "" };
+  });
+  return cleared;
+}
+
+function trainingAssignmentClearedNotice(cleared) {
+  if (!cleared?.length) return;
+  const entry = cleared[0];
+  const trainee = employeeById(entry.traineeShift.employeeId);
+  const traineeName = trainee ? displayName(trainee) : "This trainee";
+  const plural = cleared.length > 1;
+  showConflict(`${plural ? `${cleared.length} training assignments were` : `${traineeName}'s training assignment was`} cleared because the trainer no longer works the same date, role, and overlapping time. ${entry.trainerName}'s original shift was restored.`);
+}
+
+function trainingShiftScheduleChanged(source, nextShift) {
+  return source.employeeId !== nextShift.employeeId ||
+    source.date !== nextShift.date ||
+    source.roleId !== nextShift.roleId ||
+    source.start !== nextShift.start ||
+    source.end !== nextShift.end ||
+    Boolean(source.untilVolume) !== Boolean(nextShift.untilVolume);
+}
+
+function trainerSourcesForMovedTrainingShift(trainingShift, reusableSourceId = "") {
+  const meal = trainingShift.planMeal || trainingShift.training?.planMeal || "";
+  return (state.shifts || []).filter((candidate) => {
+    const trainer = employeeById(candidate.employeeId);
+    if (!trainer || candidate.id === trainingShift.id || candidate.date !== trainingShift.date || candidate.roleId !== trainingShift.roleId) return false;
+    if (trainer.id === trainingShift.employeeId || !trainer.trainerRoles?.includes(trainingShift.roleId)) return false;
+    if (candidate.training?.isTraining && candidate.id !== reusableSourceId) return false;
+    if (meal && !getMealsForShift(candidate).includes(meal)) return false;
+    if (!trainerSourceCoversTrainingShift(trainingShift, candidate)) return false;
+    return !(state.shifts || []).some((other) => (
+      other.id !== trainingShift.id &&
+      isTraineeTrainingShift(other) &&
+      other.training?.trainerId === trainer.id &&
+      trainerSourceCoversTrainingShift(other, candidate)
+    ));
+  }).sort((left, right) => trainerPriorityWeight(trainingShift.roleId, left.employeeId) - trainerPriorityWeight(trainingShift.roleId, right.employeeId)
+    || displayName(employeeById(left.employeeId)).localeCompare(displayName(employeeById(right.employeeId))));
+}
+
+function pairTrainingShiftWithTrainerSource(traineeShift, trainerSource) {
+  if (!traineeShift || !trainerSource) return;
+  trainerSource.training = {
+    isTraining: true,
+    isTrainerShift: true,
+    traineeId: traineeShift.employeeId,
+    trainerId: trainerSource.employeeId,
+    pairedTraineeShiftId: traineeShift.id,
+    segmentEnd: "",
+    planMeal: traineeShift.planMeal || traineeShift.training?.planMeal || ""
+  };
+  traineeShift.training = {
+    ...traineeShift.training,
+    isTraining: true,
+    isTrainerShift: false,
+    traineeId: traineeShift.employeeId,
+    trainerId: trainerSource.employeeId,
+    trainerSourceShiftId: trainerSource.id,
+    segmentEnd: ""
+  };
+}
+
+async function prepareMovedTrainingShift(source, nextShift, { isCopy = false } = {}) {
+  if (!isTraineeTrainingShift(source) || !trainingShiftScheduleChanged(source, nextShift)) return { shift: nextShift, trainerSourceId: "" };
+  const target = {
+    ...nextShift,
+    training: { ...nextShift.training, traineeId: nextShift.employeeId }
+  };
+  const currentSource = state.shifts.find((shift) => shift.id === source.training?.trainerSourceShiftId);
+  const movedToAnotherTrainee = source.employeeId !== nextShift.employeeId;
+  if (!movedToAnotherTrainee && currentSource && trainingAssignmentIsValid(source) && trainerSourceCoversTrainingShift(target, currentSource)) {
+    return { shift: target, trainerSourceId: "" };
+  }
+  const candidates = trainerSourcesForMovedTrainingShift(target, source.training?.trainerSourceShiftId || "");
+  if (!candidates.length) {
+    showAppAlert({
+      title: "Training Shift Cannot Move",
+      message: "No qualified trainer is scheduled to cover this training shift on the new date and time. Keep the shift where it is or schedule a trainer first.",
+      type: "warning"
+    });
+    return null;
+  }
+  const trainee = employeeById(nextShift.employeeId);
+  const chosenSourceId = await showAppChoice({
+    title: "Choose a Trainer",
+    message: `Choose the trainer who will work with ${trainee ? displayName(trainee) : "this trainee"} after this move.`,
+    items: candidates.map((candidate) => {
+      const trainer = employeeById(candidate.employeeId);
+      return `${trainer ? displayName(trainer) : "Trainer"} | ${candidate.start} - ${candidate.untilVolume ? "Until Volume" : candidate.end}`;
+    }),
+    choices: [
+      ...candidates.map((candidate) => ({ value: candidate.id, label: `Assign ${displayName(employeeById(candidate.employeeId))}` })),
+      { value: "cancel", label: "Keep Original Shift" }
+    ]
+  });
+  if (!chosenSourceId || chosenSourceId === "cancel") return null;
+  const selectedTrainerSource = candidates.find((candidate) => candidate.id === chosenSourceId);
+  if (!selectedTrainerSource) return null;
+  return {
+    shift: {
+      ...target,
+      training: {
+        ...target.training,
+        trainerId: selectedTrainerSource.employeeId,
+        trainerSourceShiftId: selectedTrainerSource.id
+      }
+    },
+    trainerSourceId: selectedTrainerSource.id,
+    isCopy
+  };
+}
+
+function trainingTestForShift(shift) {
+  if (!shift || shift.training?.isTraining) return false;
+  const plan = employeeById(shift.employeeId)?.trainingPlans?.[shift.roleId];
+  if (!plan || plan.status === "complete" || !plan.projectedCompletionDate || shift.date <= plan.projectedCompletionDate) return false;
+  const meals = getMealsForShift(shift);
+  return Array.isArray(plan.meals) && meals.some((meal) => plan.meals.includes(meal)) && plan.menuTestPassed !== true;
+}
+
 function shiftIsLocked(shift) {
   return Boolean(shift?.isLocked);
 }
@@ -9242,19 +9672,26 @@ function lockedShiftWasEdited(existing, next) {
   return JSON.stringify(comparable(existing)) !== JSON.stringify(comparable(next));
 }
 
-function openShiftDialog(shift = null) {
+function openShiftDialog(shift = null, options = {}) {
   const dialog = $("shiftDialog");
   const roleOptions = state.roles.map((role) => `<option value="${role.id}">${role.name}</option>`).join("");
-  $("shiftDialogMode").value = "assigned";
-  $("shiftDialogTitle").textContent = shift ? "Edit Shift" : "Create Shift";
+  const trainingProposal = options.trainingProposal === true;
+  trainingProposalEditSourceId = trainingProposal ? shift?.sourceShiftId || "" : "";
+  $("shiftDialogMode").value = trainingProposal ? "training-proposal" : "assigned";
+  $("shiftDialogTitle").textContent = trainingProposal ? "Edit Proposed Training Shift" : (shift ? "Edit Shift" : "Create Shift");
   updateShiftUntilVolumeControl();
-  $("shiftEmployeeLabel").hidden = false;
+  $("shiftEmployeeLabel").hidden = trainingProposal;
+  $("shiftLabelControl").hidden = trainingProposal;
+  $("shiftDepartment").closest("label").hidden = trainingProposal;
+  $("shiftRole").closest("label").hidden = trainingProposal;
+  $("shiftIsTraining").closest(".shift-dialog-side").hidden = trainingProposal;
+  $("shiftDialog").querySelector(".shift-dialog-checks").hidden = trainingProposal;
+  $("saveShiftBtn").textContent = trainingProposal ? "Save Proposed Shift" : "Save";
   $("stagedShiftDateLabel").hidden = true;
-  $("shiftIsTraining").closest("fieldset").hidden = false;
-  $("requestOffShiftBtn").hidden = false;
-  $("dayBlockShiftBtn").hidden = false;
-  $("unassignShiftBtn").hidden = !shift;
-  $("deleteShiftBtn").hidden = !shift;
+  $("requestOffShiftBtn").hidden = trainingProposal;
+  $("dayBlockShiftBtn").hidden = trainingProposal;
+  $("unassignShiftBtn").hidden = !shift || trainingProposal;
+  $("deleteShiftBtn").hidden = !shift || trainingProposal;
   $("shiftRole").innerHTML = roleOptions;
   const employeesForSelect = sortedEmployeesForSelect();
   const employeeOptions = employeesForSelect
@@ -9303,13 +9740,13 @@ function openShiftDialog(shift = null) {
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
   $("shiftTrainingSegmentEnd").value = base.training?.segmentEnd || "";
-  $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
   renderShiftMetadata(shift);
   refreshShiftEmployeeOptions(base.employeeId);
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
+  refreshTrainingOptions(base.training?.traineeId || base.employeeId || "", base.training?.trainerId || "");
   updateRequestOffShiftButton();
   updateShiftDialogContext();
   dialog.showModal();
@@ -9372,10 +9809,10 @@ function openStagedShiftDialog(stagedShift = null) {
   $("shiftTrainee").value = base.training?.traineeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
   $("shiftTrainingSegmentEnd").value = base.training?.segmentEnd || "";
-  $("shiftTrainingDayOverride").value = base.training?.dayOverride || "";
   $("shiftNotes").value = base.notes || "";
   $("shiftWarnings").innerHTML = "";
   renderShiftMetadata(stagedShift);
+  refreshTrainingOptions(base.training?.traineeId || "", base.training?.trainerId || "");
   updateShiftDialogContext();
   dialog.showModal();
 }
@@ -9456,11 +9893,11 @@ function refreshShiftEmployeeOptions(preferredEmployeeId = "") {
   if (!select || $("shiftDialogMode")?.value !== "assigned") return;
   const roleId = $("shiftRole").value;
   const employees = schedulableEmployees();
-  const trained = employees.filter((employee) => employee.roleTraining?.includes(roleId));
+  const qualified = employees.filter((employee) => employeeQualificationForShift(employee, shiftDialogDraftForEmployee(employee.id)).qualified);
   const recommended = [];
   const emergency = [];
   const warning = [];
-  trained.forEach((employee) => {
+  qualified.forEach((employee) => {
     const result = validateShift(shiftDialogDraftForEmployee(employee.id));
     const row = { employee, result };
     if (result.errors.length || result.warnings.length) warning.push(row);
@@ -9468,7 +9905,7 @@ function refreshShiftEmployeeOptions(preferredEmployeeId = "") {
     else recommended.push(row);
   });
   const selectedEmployee = employeeById(preferredEmployeeId);
-  const selectedIncluded = trained.some((employee) => employee.id === preferredEmployeeId);
+  const selectedIncluded = qualified.some((employee) => employee.id === preferredEmployeeId);
   const option = ({ employee }) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employeeOptionLabel(employee))}</option>`;
   const groups = [];
   if (recommended.length) {
@@ -9493,6 +9930,31 @@ function refreshShiftEmployeeOptions(preferredEmployeeId = "") {
   updateRequestOffShiftButton();
 }
 
+function refreshTrainingOptions(preferredTraineeId = "", preferredTrainerId = "") {
+  const roleId = $("shiftRole")?.value;
+  const date = $("shiftDate")?.value || $("stagedShiftDate")?.value;
+  const start = normalizeTime($("shiftStart")?.value || "");
+  const end = normalizeTime($("shiftEnd")?.value || "");
+  const currentTrainee = employeeById(preferredTraineeId);
+  const currentTrainer = employeeById(preferredTrainerId);
+  const trainees = schedulableEmployees().filter((employee) => employee.roleTraining?.includes(roleId));
+  if (currentTrainee && !trainees.includes(currentTrainee)) trainees.unshift(currentTrainee);
+  const trainers = schedulableEmployees().filter((employee) => {
+    if (!employee.trainerRoles?.includes(roleId)) return false;
+    return state.shifts.some((shift) => shift.employeeId === employee.id && shift.date === date && shift.roleId === roleId && !shift.training?.isTraining && rangesOverlap(minutesFromTime(start), minutesFromTime(end), minutesFromTime(shift.start), minutesFromTime(shift.end)));
+  });
+  if (currentTrainer && !trainers.includes(currentTrainer)) trainers.unshift(currentTrainer);
+  const option = (employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employeeOptionLabel(employee))}</option>`;
+  $("shiftTrainee").innerHTML = `<option value="">Choose trainee</option>${trainees.sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b))).map(option).join("")}`;
+  $("shiftTrainer").innerHTML = `<option value="">Choose scheduled trainer</option>${trainers.sort((a, b) => employeeOptionLabel(a).localeCompare(employeeOptionLabel(b))).map(option).join("")}`;
+  $("shiftTrainee").value = preferredTraineeId && trainees.some((employee) => employee.id === preferredTraineeId) ? preferredTraineeId : "";
+  $("shiftTrainer").value = preferredTrainerId && trainers.some((employee) => employee.id === preferredTrainerId) ? preferredTrainerId : "";
+  const guidance = $("trainingEditorGuidance");
+  if (guidance) guidance.textContent = $("shiftIsTraining")?.checked
+    ? `${trainers.length} qualified trainer${trainers.length === 1 ? "" : "s"} scheduled in this role and time.`
+    : "Mark this shift as training to choose a trainee and an eligible trainer.";
+}
+
 function collectStagedShiftFromDialog() {
   const existing = (state.unassignedShifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
@@ -9511,12 +9973,11 @@ function collectStagedShiftFromDialog() {
     isLunchCloser: $("shiftIsLunchCloser").checked,
     isFlexDouble: $("shiftFlexDouble").checked,
     notes: $("shiftNotes").value.trim(),
-    training: {
-      isTraining,
-      traineeId: isTraining ? $("shiftTrainee").value : "",
-      trainerId: isTraining ? $("shiftTrainer").value : "",
-      segmentEnd: isTraining ? normalizeTime($("shiftTrainingSegmentEnd").value) : "",
-      dayOverride: isTraining ? $("shiftTrainingDayOverride").value : ""
+      training: {
+        isTraining,
+        traineeId: isTraining ? $("shiftTrainee").value : "",
+        trainerId: isTraining ? $("shiftTrainer").value : "",
+        segmentEnd: isTraining ? normalizeTime($("shiftTrainingSegmentEnd").value) : ""
     },
     color: role?.color || "#2563eb",
     ...shiftChangeMetadata(existing, "Manual")
@@ -9528,6 +9989,12 @@ function collectShiftFromDialog() {
   const role = roleById($("shiftRole").value);
   const isTraining = $("shiftIsTraining").checked;
   const traineeId = $("shiftTrainee").value || $("shiftEmployee").value;
+  const existingTraining = normalizeShiftTraining(existing?.training);
+  const trainerId = isTraining ? $("shiftTrainer").value : "";
+  // Keep an accepted plan's source link while ordinary fields are edited.
+  // Reconciliation below will deliberately clear it if the edited shift no
+  // longer overlaps that trainer's real scheduled shift.
+  const preservesExistingPair = isTraining && trainerId === (existingTraining.trainerId || "");
   const untilVolume = state.settings.showUntilVolumeInShiftEditor && $("shiftUntilVolume").checked;
   return {
     id: $("shiftId").value || uid("shift"),
@@ -9547,10 +10014,12 @@ function collectShiftFromDialog() {
     meals: [],
     training: {
       isTraining,
-      traineeId,
-      trainerId: $("shiftTrainer").value,
-      segmentEnd: normalizeTime($("shiftTrainingSegmentEnd").value),
-      dayOverride: Number($("shiftTrainingDayOverride").value) || null
+      isTrainerShift: preservesExistingPair && Boolean(existingTraining.isTrainerShift),
+      traineeId: isTraining ? traineeId : "",
+      trainerId,
+      trainerSourceShiftId: preservesExistingPair && !existingTraining.isTrainerShift ? existingTraining.trainerSourceShiftId || "" : "",
+      pairedTraineeShiftId: preservesExistingPair && existingTraining.isTrainerShift ? existingTraining.pairedTraineeShiftId || "" : "",
+      segmentEnd: isTraining ? normalizeTime($("shiftTrainingSegmentEnd").value) : ""
     },
     notes: $("shiftNotes").value.trim(),
     color: role?.color || "#2563eb",
@@ -9561,31 +10030,178 @@ function collectShiftFromDialog() {
 function renderRoles() {
   $("roleList").innerHTML = state.roles.map((role) => `
     <div class="entity-item" data-role-id="${role.id}">
-      <div><strong>${role.name}</strong><br><small>${role.department} | ${formatRate(role.defaultRate)}/hr default</small></div>
+      <div><strong>${role.name}</strong><br><small>${role.department} | ${formatRate(role.defaultRate)}/hr default${role.traineeRate ? ` | ${formatRate(role.traineeRate)} trainee` : ""}${role.trainerPayValue ? ` | ${role.trainerPayMode === "fixed" ? formatRate(role.trainerPayValue) : `+${formatRate(role.trainerPayValue)}`} trainer` : ""}</small></div>
       <span style="width:22px;height:22px;border-radius:5px;background:${role.color};display:inline-block;"></span>
     </div>
   `).join("");
   document.querySelectorAll("[data-role-id]").forEach((item) => item.onclick = () => loadRole(item.dataset.roleId));
-  $("employeeRoleChecks").innerHTML = state.roles.map((role) => `
-    <div class="role-training-row" data-role-training-row="${role.id}">
-      <label class="checkbox"><input type="checkbox" name="roleTraining" value="${role.id}"> ${role.name} <small>${role.department}</small></label>
-      <label class="checkbox emergency-role-toggle"><input type="checkbox" name="emergencyRoleIds" value="${role.id}"> Emergency only</label>
-      <div class="role-meal-training" aria-label="${escapeHtml(role.name)} meal training">
-        ${MEALS.map((meal) => `
-          <label class="checkbox"><input type="checkbox" name="roleMealTraining:${role.id}" value="${meal}"> ${meal}</label>
-        `).join("")}
+  $("employeeRoleChecks").innerHTML = state.roles.map((role) => {
+    const mealDependent = roleTrainingConfig(role.id).mode === "meal";
+    return `
+      <div class="role-training-row${mealDependent ? " role-meal-dependent" : " role-general-training"}" data-role-training-row="${role.id}">
+        <label class="checkbox"><input type="checkbox" name="roleTraining" value="${role.id}"> ${role.name} <small>${role.department}</small></label>
+        <label class="checkbox emergency-role-toggle"><input type="checkbox" name="emergencyRoleIds" value="${role.id}"> Emergency only</label>
+        ${mealDependent
+          ? `<div class="role-meal-training" aria-label="${escapeHtml(role.name)} meal training">
+              <span class="role-meal-training-label">Qualified meals</span>
+              ${MEALS.map((meal) => `<label class="checkbox"><input type="checkbox" name="roleMealTraining:${role.id}" value="${meal}"> ${meal}</label>`).join("")}
+            </div>`
+          : `<small class="role-general-training-note">General role training; meal selection is not required.</small>`}
       </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
   $("employeeTrainerChecks").innerHTML = state.roles.map((role) => `
     <label class="checkbox"><input type="checkbox" name="trainerRoles" value="${role.id}"> ${role.name} <small>${role.department}</small></label>
   `).join("");
+  const profileEmployee = employeeById($("employeeId")?.value);
+  const qualifiedRoleCount = profileEmployee?.roleTraining?.length || 0;
+  const emergencyRoleCount = profileEmployee?.emergencyRoleIds?.length || 0;
+  const mealCount = profileEmployee
+    ? new Set(Object.values(profileEmployee.roleMealTraining || {}).flat()).size
+    : 0;
+  if ($("employeeRoleSummary")) {
+    $("employeeRoleSummary").innerHTML = profileEmployee
+      ? `<strong>${qualifiedRoleCount} role${qualifiedRoleCount === 1 ? "" : "s"}</strong><span>${mealCount} broad meal qualification${mealCount === 1 ? "" : "s"}</span>${emergencyRoleCount ? `<span>${emergencyRoleCount} emergency-only</span>` : ""}`
+      : "<span>Save the employee profile to assign qualifications.</span>";
+  }
   $("employeeDepartmentChecks").innerHTML = DEPARTMENTS.map((department) => `
     <label class="checkbox"><input type="checkbox" name="employeeDepartments" value="${department}"> ${department}</label>
   `).join("");
   $("templateRole").innerHTML = state.roles.map((role) => `<option value="${role.id}">${role.name}</option>`).join("");
   $("templateDepartment").innerHTML = DEPARTMENTS.map((dept) => `<option>${dept}</option>`).join("");
   renderEmployeePayRates(employeeById($("employeeId")?.value));
+  renderEmployeeTrainingProgress(employeeById($("employeeId")?.value));
+}
+
+function renderEmployeeTrainingProgress(employee = null) {
+  const target = $("employeeTrainingProgress");
+  if (!target) return;
+  const roles = (employee?.roleTraining || []).map((roleId) => roleById(roleId)).filter(Boolean);
+  if (!employee || !roles.length) {
+    target.innerHTML = `
+      <section class="employee-training-empty">
+        <strong>Choose an intended role to begin training</strong>
+        <span>Add the employee's role in the Roles tab and save the profile. Their training requirements and plan controls will then appear here.</span>
+        <button type="button" class="small-button primary-action" data-open-training-roles>Open Roles</button>
+      </section>`;
+    target.querySelector("[data-open-training-roles]").onclick = () => activateEmployeeProfileTab("roles");
+    return;
+  }
+  const plans = employee.trainingPlans || {};
+  target.innerHTML = roles.map((role) => {
+    const config = roleTrainingConfig(role.id);
+    const plan = plans[role.id] || {};
+    const sections = trainingProgressSections(employee, role.id, plan);
+    const required = sections.reduce((sum, section) => sum + section.required, 0);
+    const planInProgress = ["scheduled", "inProgress", "awaitingTest"].includes(plan.status);
+    const plannedShiftCount = state.shifts.filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === role.id).length;
+    const printableShiftCount = printableTrainingShifts(employee.id, role.id).length;
+    return `<div class="employee-training-progress-row">
+      <div class="employee-training-progress-heading">
+        <strong>${escapeHtml(role.name)}</strong>
+        <span>${config.mode === "meal" ? "Training sections" : "Role training"} | ${required || 0} required shift${required === 1 ? "" : "s"}</span>
+      </div>
+      <div class="employee-training-progress-actions">
+        <button type="button" class="small-button primary-action employee-training-progress-action" data-open-training-plan="${escapeHtml(role.id)}">${planInProgress ? "Continue Training Plan" : "Build Training Plan"}</button>
+        ${printableShiftCount ? `<button type="button" class="small-button" data-print-training-plan="${escapeHtml(role.id)}">Print Training Schedule</button>` : ""}
+        ${plannedShiftCount ? `<button type="button" class="small-button" data-reset-training-plan="${escapeHtml(role.id)}">Remove ${plannedShiftCount} planned shift${plannedShiftCount === 1 ? "" : "s"}</button>` : ""}
+      </div>
+      <div class="employee-training-section-list">
+        ${sections.map((section) => `<div class="employee-training-section-card">
+          <strong>${escapeHtml(section.name)}</strong>
+          <span><b>${section.completed}</b> completed <i>/</i> ${section.required} needed</span>
+          ${section.scheduled > section.completed ? `<small>${section.scheduled} scheduled</small>` : ""}
+        </div>`).join("") || `<span class="hint">Set the required training shifts in Settings.</span>`}
+      </div>
+      <div class="employee-training-progress-controls">
+        <label>Projected finish <input type="date" data-training-finish="${escapeHtml(role.id)}" value="${escapeHtml(plan.projectedCompletionDate || "")}"></label>
+        <label>Status <select data-training-status="${escapeHtml(role.id)}">
+        ${["notStarted", "scheduled", "inProgress", "complete"].map((status) => `<option value="${status}" ${plan.status === status ? "selected" : ""}>${status === "notStarted" ? "Not started" : status === "inProgress" ? "In progress" : status[0].toUpperCase() + status.slice(1)}</option>`).join("")}
+        </select></label>
+        <label class="checkbox"><input type="checkbox" data-training-menu-passed="${escapeHtml(role.id)}" ${plan.menuTestPassed ? "checked" : ""}> Menu test passed</label>
+      </div>
+    </div>`;
+  }).join("");
+  target.querySelectorAll("[data-open-training-plan]").forEach((button) => {
+    button.onclick = () => openTrainingPlanDialog({ traineeId: employee.id, roleId: button.dataset.openTrainingPlan });
+  });
+  target.querySelectorAll("[data-print-training-plan]").forEach((button) => {
+    button.onclick = () => printTrainingSchedule(employee.id, button.dataset.printTrainingPlan);
+  });
+  target.querySelectorAll("[data-reset-training-plan]").forEach((button) => {
+    button.onclick = () => resetEmployeeTrainingPlan(employee.id, button.dataset.resetTrainingPlan);
+  });
+}
+
+function trainingProgressSections(employee, roleId, plan = {}) {
+  const config = roleTrainingConfig(roleId);
+  const shifts = state.shifts.filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === roleId);
+  if (config.mode !== "meal") {
+    return [{
+      name: "Role training",
+      required: config.days,
+      completed: shifts.filter((shift) => shift.training?.outcome === "completed").length,
+      scheduled: shifts.filter((shift) => shift.training?.outcome !== "noShow").length
+    }];
+  }
+  const configuredMeals = MEALS.filter((meal) => Number(config.mealRequirements?.[meal]) > 0);
+  const selectedMeals = (plan.meals || []).filter((meal) => configuredMeals.includes(meal));
+  const meals = selectedMeals.length ? selectedMeals : configuredMeals;
+  return meals.map((meal) => {
+    const sectionShifts = shifts.filter((shift) => (shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0]) === meal);
+    return {
+      name: meal,
+      required: Number(config.mealRequirements?.[meal]) || 0,
+      completed: sectionShifts.filter((shift) => shift.training?.outcome === "completed").length,
+      scheduled: sectionShifts.filter((shift) => shift.training?.outcome !== "noShow").length
+    };
+  });
+}
+
+async function resetEmployeeTrainingPlan(employeeId, roleId) {
+  const employee = employeeById(employeeId);
+  if (!employee) return;
+  const planned = state.shifts.filter((shift) => isTraineeTrainingShift(shift, employeeId) && shift.roleId === roleId);
+  if (!planned.length) return;
+  const confirmed = await showAppConfirm({
+    title: "Remove Planned Training Shifts",
+    message: `Remove ${planned.length} planned training shift${planned.length === 1 ? "" : "s"} for ${displayName(employee)}? This returns the trainers and dates to the planner.`,
+    confirmText: "Remove Shifts",
+    cancelText: "Keep Plan"
+  });
+  if (!confirmed) return;
+  pushUndo();
+  const removedIds = new Set(planned.map((shift) => shift.id));
+  state.shifts = state.shifts.filter((shift) => !removedIds.has(shift.id));
+  planned.forEach(restoreTrainerSourceForTraineeShift);
+  const previous = employee.trainingPlans?.[roleId] || {};
+  employee.trainingPlans = {
+    ...(employee.trainingPlans || {}),
+    [roleId]: {
+      ...previous,
+      status: "notStarted",
+      completedShifts: 0,
+      projectedCompletionDate: "",
+      plannedShiftIds: [],
+      excludedSourceShiftIds: []
+    }
+  };
+  renderAll();
+  openTrainingPlanDialog({ traineeId: employeeId, roleId });
+}
+
+function collectEmployeeTrainingPlans() {
+  const plans = {};
+  document.querySelectorAll("[data-training-status]").forEach((select) => {
+    const roleId = select.dataset.trainingStatus;
+    plans[roleId] = {
+      ...(plans[roleId] || {}),
+      status: select.value,
+      projectedCompletionDate: document.querySelector(`[data-training-finish="${roleId}"]`)?.value || "",
+      menuTestPassed: document.querySelector(`[data-training-menu-passed="${roleId}"]`)?.checked === true
+    };
+  });
+  return plans;
 }
 
 function loadRole(id) {
@@ -9595,6 +10211,9 @@ function loadRole(id) {
   $("roleName").value = role.name;
   $("roleDepartment").value = role.department;
   $("roleDefaultRate").value = role.defaultRate || "";
+  $("roleTraineeRate").value = role.traineeRate || "";
+  $("roleTrainerPayMode").value = role.trainerPayMode || "additional";
+  $("roleTrainerPayValue").value = role.trainerPayValue || "";
   $("roleColor").value = role.color;
 }
 
@@ -9617,7 +10236,7 @@ function renderEmployees() {
           employee.archived ? "archived" : "",
           employee.callWeekly ? "call weekly" : "",
           ...(employee.departments || []),
-          ...(employee.mealTraining || []),
+          ...employeeMealQualificationSummary(employee),
           ...(employee.roleTraining || []).map((roleId) => roleById(roleId)?.name || "")
         ].join(" ").toLowerCase();
         return haystack.includes(search);
@@ -9631,6 +10250,7 @@ function renderEmployees() {
   if ($("restoreEmployeeBtn")) $("restoreEmployeeBtn").hidden = !selectedEmployee?.archived;
   if ($("deleteEmployeeBtn")) $("deleteEmployeeBtn").hidden = !selectedEmployee?.archived;
   renderEmployeeRoster(filteredEmployees, selectedEmployee);
+  renderEmployeeSetupReview();
   renderAvailabilityPatternWorkspace(selectedEmployee);
   renderAvailabilityEditor(selectedEmployee);
   renderWeeklyAvailabilityEditor(selectedEmployee);
@@ -9749,6 +10369,33 @@ function availabilityHasWindows(availability = {}) {
     Array.isArray(availability?.[dayIndex])
       && availability[dayIndex].some((range) => String(range?.start || "").trim() && String(range?.end || "").trim())
   ));
+}
+
+function employeeSetupStatus(employee) {
+  const reasons = [];
+  if (!String(employee?.phone || "").trim()) reasons.push("phone missing");
+  if (!Array.isArray(employee?.roleTraining) || !employee.roleTraining.length) reasons.push("role missing");
+  const hasAvailability = Boolean(employee?.callWeekly) || availabilityPatternsForEmployee(employee)
+    .some((pattern) => pattern.active !== false && availabilityHasWindows(pattern.availability));
+  if (!hasAvailability) reasons.push("availability missing");
+  return { complete: reasons.length === 0, reasons };
+}
+
+function renderEmployeeSetupReview() {
+  const target = $("employeeSetupReview");
+  if (!target) return;
+  const incomplete = (state.employees || [])
+    .filter((employee) => !employee.archived && !employeeSetupStatus(employee).complete)
+    .sort((a, b) => fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
+  target.innerHTML = incomplete.length
+    ? `<strong>${incomplete.length} employee${incomplete.length === 1 ? "" : "s"} need setup</strong>${incomplete.map((employee) => {
+        const status = employeeSetupStatus(employee);
+        return `<button type="button" data-setup-employee="${escapeHtml(employee.id)}"><span>${escapeHtml(fullEmployeeName(employee))}</span><small>${escapeHtml(status.reasons.join(" | "))}</small></button>`;
+      }).join("")}`
+    : `<strong>All active employees are set up</strong><small>Every active, non-archived employee has a phone, intended role, and availability choice.</small>`;
+  target.querySelectorAll("[data-setup-employee]").forEach((button) => {
+    button.onclick = () => loadEmployee(button.dataset.setupEmployee);
+  });
 }
 
 function currentWeekKey() {
@@ -10579,11 +11226,11 @@ function loadEmployee(id) {
   syncEmployeeAvailabilityMode();
   setWeeklyAvailabilityWeek(employeeWeeklyAvailabilityWeekKey || currentWeekKey(), { render: false });
   renderEmployeePayRates(employee);
-  setCheckedValues("mealTraining", employee.mealTraining || []);
   setCheckedValues("roleTraining", employee.roleTraining || []);
   setCheckedValues("emergencyRoleIds", employee.emergencyRoleIds || []);
   setRoleMealTrainingValues(employee.roleMealTraining || {});
   setCheckedValues("trainerRoles", employee.trainerRoles || []);
+  renderEmployeeTrainingProgress(employee);
   renderAvailabilityPatternWorkspace(employee);
   renderAvailabilityEditor(employee);
   renderWeeklyAvailabilityEditor(employee);
@@ -10644,6 +11291,7 @@ function resetEmployeeForm() {
   renderWeeklyRuleEditor();
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
+  renderEmployeeTrainingProgress(null);
   activateEmployeeProfileTab("profile");
   employeeFormHydrating = false;
   markEmployeeFormClean();
@@ -10936,6 +11584,65 @@ function renderSettings() {
   renderTrainingSettingsEditor();
   renderDismissedIssueSettings();
   setupSettingsCollapsibles();
+  setupSettingsTabs();
+}
+
+function setupSettingsTabs() {
+  const form = $("settingsForm");
+  if (!form || form.querySelector(".settings-layout")) return;
+  const overview = form.querySelector(".settings-overview-card");
+  const fieldsets = Array.from(form.querySelectorAll(":scope > fieldset"));
+  if (!overview || !fieldsets.length) return;
+  const tabs = [
+    { id: "overview", label: "Overview", matches: () => false },
+    { id: "schedule", label: "Schedule", matches: (title) => /role ordering|meal hours/i.test(title) },
+    { id: "coverage", label: "Coverage", matches: (title) => /default coverage|closer requirements|projection staffing/i.test(title) },
+    { id: "printing", label: "Printing", matches: (title) => /floor plan print/i.test(title) },
+    { id: "training", label: "Training", matches: (title) => /training settings|training setup transfer/i.test(title) },
+    { id: "roles", label: "Roles", matches: (title) => /role administration/i.test(title) },
+    { id: "data", label: "Data & Tools", matches: (title) => /schedule utilities|imports & data|recently dismissed/i.test(title) }
+  ];
+  const layout = document.createElement("div");
+  layout.className = "settings-layout";
+  const rail = document.createElement("nav");
+  rail.className = "settings-tab-rail";
+  rail.setAttribute("aria-label", "Settings sections");
+  const panels = document.createElement("div");
+  panels.className = "settings-tab-panels";
+  const panelById = new Map();
+  tabs.forEach((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "settings-tab-button";
+    button.dataset.settingsTab = tab.id;
+    button.textContent = tab.label;
+    rail.append(button);
+    const panel = document.createElement("div");
+    panel.className = "settings-tab-panel";
+    panel.dataset.settingsPanel = tab.id;
+    panel.hidden = tab.id !== "overview";
+    panels.append(panel);
+    panelById.set(tab.id, panel);
+    button.onclick = () => {
+      tabs.forEach((item) => {
+        const active = item.id === tab.id;
+        rail.querySelector(`[data-settings-tab="${item.id}"]`)?.classList.toggle("active", active);
+        const target = panelById.get(item.id);
+        if (target) target.hidden = !active;
+      });
+      form.dataset.activeSettingsTab = tab.id;
+    };
+  });
+  overview.parentElement.insertBefore(layout, overview);
+  panelById.get("overview")?.append(overview);
+  fieldsets.forEach((fieldset) => {
+    const title = fieldset.querySelector("legend")?.textContent || "";
+    const tab = tabs.find((item) => item.matches(title))?.id || "data";
+    panelById.get(tab)?.append(fieldset);
+  });
+  layout.append(rail, panels);
+  const initial = form.dataset.activeSettingsTab || "overview";
+  rail.querySelector(`[data-settings-tab="${initial}"]`)?.click();
 }
 
 function loadCollapsedSettingsSections() {
@@ -11047,18 +11754,20 @@ function renderDefaultCoverageEditor() {
   $("defaultCoverageEditor").innerHTML = DAYS.map((day, dayIndex) => {
     const dateForDay = formatDateKey(addDays(startOfWeek(new Date(), 0), dayIndex));
     const periods = state.settings.mealPeriods?.[dayIndex] || getMealPeriodsForDate(dateForDay);
+    const gridStyle = `--coverage-role-count:${roles.length};`;
+    const header = `<div class="coverage-default-header" style="${gridStyle}"><strong>Meal</strong>${roles.map((role) => `<span>${role.name}</span>`).join("")}</div>`;
     const rows = periods.map((period) => {
       const cells = roles.map((role) => {
         const value = state.settings.defaultCoverage?.[dayIndex]?.[period.name]?.[role.id] || "";
         return `
-          <label>${role.name}
-            <input type="number" min="0" step="1" data-default-coverage="${dayIndex}:${period.name}:${role.id}" value="${value}">
+          <label>
+            <input type="number" aria-label="${period.name} ${role.name}" min="0" step="1" data-default-coverage="${dayIndex}:${period.name}:${role.id}" value="${value}">
           </label>
         `;
       }).join("");
-      return `<div class="coverage-default-row"><strong>${period.name}</strong>${cells}</div>`;
+      return `<div class="coverage-default-row" style="${gridStyle}"><strong>${period.name}</strong>${cells}</div>`;
     }).join("");
-    return `<section class="settings-day"><h3>${day}</h3>${rows || `<p class="hint">No meal periods enabled.</p>`}</section>`;
+    return `<section class="settings-day"><h3>${day}</h3><div class="coverage-default-table">${header}${rows || `<p class="hint">No meal periods enabled.</p>`}</div></section>`;
   }).join("");
 }
 
@@ -11187,23 +11896,126 @@ function shouldShowFloorPlanCrossRoleNote(shift) {
   return settings[shift?.roleId] !== false;
 }
 function renderTrainingSettingsEditor() {
-  $("trainingSettingsEditor").innerHTML = state.roles.map((role) => {
-    const config = state.settings.trainingRequirements?.[role.id] || {};
-    const requiredShifts = config.requiredShifts || (config.requiredLabels || []).map((name) => ({ name, dayIndex: "" }));
+  const startTimes = trainingMealStartTimes();
+  $("trainingSettingsEditor").innerHTML = `
+    <section class="training-meal-start-settings">
+      <div>
+        <strong>Preferred training start times</strong>
+        <small>The planner uses these as a tie-breaker after trainer priority. When possible, a trainee starts with their trainer's scheduled shift.</small>
+      </div>
+      <div class="training-meal-start-grid">
+        ${MEALS.map((meal) => `<label>${meal}<input data-training-ideal-start="${meal}" value="${escapeHtml(startTimes[meal])}" placeholder="Start time"></label>`).join("")}
+      </div>
+    </section>
+  ` + state.roles.map((role) => {
+    const config = roleTrainingConfig(role.id);
+    const priority = config.trainerPriorityIds;
+    const trainers = state.employees.filter((employee) => !employee.archived && employee.active !== false && employee.trainerRoles?.includes(role.id))
+      .sort((left, right) => {
+        const leftIndex = priority.indexOf(left.id);
+        const rightIndex = priority.indexOf(right.id);
+        return (leftIndex < 0 ? 9999 : leftIndex) - (rightIndex < 0 ? 9999 : rightIndex) || fullEmployeeName(left).localeCompare(fullEmployeeName(right));
+      });
     return `
       <section class="settings-day training-role-settings" data-training-role="${role.id}">
         <h3>${role.name}</h3>
-        <label>Training shifts
-          <input type="number" min="0" step="1" data-training-days="${role.id}" value="${config.days || ""}">
+        <label>Qualification model
+          <select data-training-mode="${role.id}">
+            <option value="general" ${config.mode === "general" ? "selected" : ""}>General role training</option>
+            <option value="meal" ${config.mode === "meal" ? "selected" : ""}>Meal-specific training</option>
+          </select>
         </label>
+        <label>Maximum shifts with one trainer per trainee
+          <input type="number" min="1" step="1" data-training-trainer-limit="${role.id}" value="${config.maxTrainerAssignments}">
+        </label>
+        <div class="training-trainer-priority" data-training-priority="${role.id}">
+          <strong>Trainer priority</strong>
+          <small>Drag cards to set preference. Trainers at the top are selected first.</small>
+          ${trainers.length ? trainers.map((trainer, index) => `<div class="training-trainer-priority-card" data-training-priority-row="${escapeHtml(trainer.id)}" draggable="true" aria-label="${escapeHtml(displayName(trainer))}, trainer priority ${index + 1}"><span class="training-trainer-priority-grip" aria-hidden="true"></span><span class="training-trainer-priority-rank">${index + 1}</span><strong>${escapeHtml(displayName(trainer))}</strong><button type="button" data-training-priority-move="up" title="Move up" aria-label="Move ${escapeHtml(displayName(trainer))} up" ${index ? "" : "disabled"}>&uarr;</button><button type="button" data-training-priority-move="down" title="Move down" aria-label="Move ${escapeHtml(displayName(trainer))} down" ${index < trainers.length - 1 ? "" : "disabled"}>&darr;</button></div>`).join("") : `<p class="hint">No employees are marked as trainers for this role yet.</p>`}
+        </div>
+        <div class="training-general-fields" data-training-general-fields="${role.id}" ${config.mode === "meal" ? "hidden" : ""}>
+          <label>Required training shifts
+            <input type="number" min="0" step="1" data-training-days="${role.id}" value="${config.days || ""}">
+          </label>
+        </div>
+        <div class="training-meal-fields" data-training-meal-fields="${role.id}" ${config.mode !== "meal" ? "hidden" : ""}>
+          <strong>Required shifts by meal</strong>
+          <div class="training-meal-requirements">
+            ${MEALS.map((meal) => `<label>${meal}<input type="number" min="0" step="1" data-training-meal="${role.id}:${meal}" value="${config.mealRequirements[meal] || ""}"></label>`).join("")}
+          </div>
+          <label>Training order
+            <input data-training-order="${role.id}" value="${config.trainingOrder.join(", ")}" placeholder="Dinner, Lunch, Breakfast">
+          </label>
+          <label class="checkbox checkbox-direct"><input type="checkbox" data-training-menu-test="${role.id}" ${config.menuTestRequired ? "checked" : ""}> Menu test required for each meal</label>
+        </div>
         <div class="required-shift-list" data-required-shifts="${role.id}">
-          ${requiredShifts.map((item) => requiredShiftRow(role.id, item)).join("") || `<p class="hint">No specific required shifts.</p>`}
+          ${config.requiredShifts.map((item) => requiredShiftRow(role.id, item)).join("") || `<p class="hint">No specific required shifts.</p>`}
         </div>
         <button type="button" class="small-button" data-add-required-shift="${role.id}">Add Required Shift</button>
       </section>
     `;
   }).join("");
+  document.querySelectorAll("[data-training-ideal-start]").forEach(attachTimePickerInput);
+  document.querySelectorAll("[data-training-mode]").forEach((select) => {
+    select.onchange = () => {
+      const roleId = select.dataset.trainingMode;
+      const mealFields = document.querySelector(`[data-training-meal-fields="${roleId}"]`);
+      const generalFields = document.querySelector(`[data-training-general-fields="${roleId}"]`);
+      if (mealFields) mealFields.hidden = select.value !== "meal";
+      if (generalFields) generalFields.hidden = select.value === "meal";
+    };
+  });
   wireRequiredShiftButtons();
+  document.querySelectorAll("[data-training-priority]").forEach((container) => {
+    let draggedRow = null;
+    container.querySelectorAll("[data-training-priority-row]").forEach((row) => {
+      row.addEventListener("dragstart", (event) => {
+        draggedRow = row;
+        row.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.dataset.trainingPriorityRow || "");
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+        draggedRow = null;
+        container.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
+        syncTrainingPriorityRows(container);
+      });
+      row.addEventListener("dragover", (event) => {
+        if (!draggedRow || draggedRow === row) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        container.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
+        row.classList.add("drop-target");
+        const rect = row.getBoundingClientRect();
+        container.insertBefore(draggedRow, event.clientY < rect.top + rect.height / 2 ? row : row.nextElementSibling);
+      });
+      row.addEventListener("drop", (event) => {
+        event.preventDefault();
+        syncTrainingPriorityRows(container);
+      });
+    });
+  });
+  document.querySelectorAll("[data-training-priority-move]").forEach((button) => {
+    button.onclick = () => {
+      const row = button.closest("[data-training-priority-row]");
+      const container = button.closest("[data-training-priority]");
+      if (!row || !container) return;
+      if (button.dataset.trainingPriorityMove === "up") container.insertBefore(row, row.previousElementSibling?.matches("[data-training-priority-row]") ? row.previousElementSibling : row);
+      else if (row.nextElementSibling?.matches("[data-training-priority-row]")) container.insertBefore(row.nextElementSibling, row);
+      syncTrainingPriorityRows(container);
+    };
+  });
+}
+
+function syncTrainingPriorityRows(container) {
+  const rows = Array.from(container.querySelectorAll("[data-training-priority-row]"));
+  rows.forEach((row, index) => {
+    row.querySelector(".training-trainer-priority-rank").textContent = String(index + 1);
+    row.setAttribute("aria-label", `${row.querySelector("strong").textContent}, trainer priority ${index + 1}`);
+    row.querySelector('[data-training-priority-move="up"]').disabled = index === 0;
+    row.querySelector('[data-training-priority-move="down"]').disabled = index === rows.length - 1;
+  });
 }
 
 function requiredShiftRow(roleId, item = {}) {
@@ -11245,14 +12057,33 @@ function wireRequiredShiftButtons() {
 function collectTrainingRequirements() {
   const requirements = {};
   state.roles.forEach((role) => {
+    const mode = document.querySelector(`[data-training-mode="${role.id}"]`)?.value || "general";
     const days = Number(document.querySelector(`[data-training-days="${role.id}"]`)?.value) || 0;
+    const maxTrainerAssignments = Math.max(1, Number(document.querySelector(`[data-training-trainer-limit="${role.id}"]`)?.value) || 2);
     const names = Array.from(document.querySelectorAll(`[data-required-name="${role.id}"]`));
     const dayInputs = Array.from(document.querySelectorAll(`[data-required-day="${role.id}"]`));
     const requiredShifts = names.map((input, index) => ({
       name: input.value.trim(),
       dayIndex: dayInputs[index]?.value ?? ""
     })).filter((item) => item.name);
-    requirements[role.id] = { days, requiredShifts };
+    const trainingOrder = (document.querySelector(`[data-training-order="${role.id}"]`)?.value || "")
+      .split(",")
+      .map((meal) => normalizeMealName(meal))
+      .filter((meal, index, values) => MEALS.includes(meal) && values.indexOf(meal) === index);
+    const mealRequirements = Object.fromEntries(MEALS.map((meal) => [
+      meal,
+      Math.max(0, Number(document.querySelector(`[data-training-meal="${role.id}:${meal}"]`)?.value) || 0)
+    ]));
+    requirements[role.id] = {
+      mode,
+      days,
+      requiredShifts,
+      mealRequirements,
+      trainingOrder: trainingOrder.length ? trainingOrder : ["Dinner", "Lunch", "Breakfast"],
+      menuTestRequired: document.querySelector(`[data-training-menu-test="${role.id}"]`)?.checked !== false,
+      maxTrainerAssignments,
+      trainerPriorityIds: Array.from(document.querySelectorAll(`[data-training-priority="${role.id}"] [data-training-priority-row]`)).map((row) => row.dataset.trainingPriorityRow)
+    };
   });
   return requirements;
 }
@@ -11427,11 +12258,17 @@ function staffingRows() {
       fohRoles().forEach((role) => {
         const required = Number(state.settings.defaultCoverage?.[dayIndex]?.[period.name]?.[role.id]) || 0;
         if (!required) return;
-        const availableEmployees = schedulableEmployees().filter((employee) => (
-          employee.roleTraining?.includes(role.id) &&
-          employee.mealTraining?.includes(period.name) &&
-          rangeInsideAvailabilityByDay(employee, dayIndex, start, end, dateKeyForAvailabilityDay(dayIndex, currentWeekKey()))
-        ));
+        const availableEmployees = schedulableEmployees().filter((employee) => {
+          const qualified = employeeQualificationForShift(employee, {
+            employeeId: employee.id,
+            roleId: role.id,
+            department: role.department,
+            date: dateKeyForAvailabilityDay(dayIndex, currentWeekKey()),
+            start: period.start,
+            end: period.end
+          });
+          return qualified.qualified && rangeInsideAvailabilityByDay(employee, dayIndex, start, end, dateKeyForAvailabilityDay(dayIndex, currentWeekKey()));
+        });
         const target = required + buffer;
         const available = availableEmployees.length;
         rows.push({
@@ -12243,17 +13080,26 @@ function renderPrintWarningChecklist() {
 async function printSchedule() {
   const layout = $("printLayout").value;
   if (layout !== "currentPage" && layout !== "fullRoster" && !(await checkPrintCoverage())) return;
+  const dayViewToRestore = layout === "grid" ? focusedDateKey : "";
+  if (layout === "grid" && focusedDateKey) {
+    focusedDateKey = "";
+    renderSchedule();
+  }
   preparePrintView(layout, $("printSort").value, {
     shiftOrder: compactPrintShiftOrder(),
     departments: selectedPrintDepartments()
   });
-  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  window.addEventListener("afterprint", clearPrintView, { once: true });
-  window.print();
+  await runPreparedPrint(() => {
+    clearPrintView();
+    if (dayViewToRestore) {
+      focusedDateKey = dayViewToRestore;
+      renderSchedule();
+    }
+  });
 }
 
 function preparePrintView(layout, sortMode, options = {}) {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "printing-full-roster");
+  clearPrintModeClasses();
   if (layout === "currentPage") {
     clearPrintView();
     document.body.classList.add("printing-current-page");
@@ -12298,11 +13144,42 @@ function printLayoutDescription(layout) {
 }
 
 function clearPrintView() {
-  document.body.classList.remove("printing-simple", "printing-grid", "printing-ctuit-entry", "printing-employee-compact", "printing-current-page", "printing-full-roster", "compact-preview");
+  clearPrintModeClasses();
+  document.body.classList.remove("compact-preview");
   updateCompactPreviewButton();
   $("printView").hidden = true;
   $("printView").innerHTML = "";
   updateZoomVisibility();
+}
+
+function clearPrintModeClasses() {
+  document.body.classList.remove(
+    "printing-simple",
+    "printing-grid",
+    "printing-ctuit-entry",
+    "printing-employee-compact",
+    "printing-current-page",
+    "printing-full-roster",
+    "printing-staffing",
+    "printing-floor-plan",
+    "printing-floor-week",
+    "printing-completed-week",
+    "printing-call-weekly",
+    "printing-training-schedule"
+  );
+}
+
+async function runPreparedPrint(cleanup = clearPrintModeClasses) {
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  let cleaned = false;
+  const finish = () => {
+    if (cleaned) return;
+    cleaned = true;
+    cleanup();
+  };
+  window.addEventListener("afterprint", finish, { once: true });
+  window.print();
+  window.setTimeout(finish, 500);
 }
 
 function toggleCompactPreview() {
@@ -12511,6 +13388,14 @@ function renderFullRosterPrintView(departments = null) {
       </table>
     </section>
   `;
+}
+
+function collectTrainingMealStartTimes() {
+  const current = trainingMealStartTimes();
+  return Object.fromEntries(MEALS.map((meal) => [
+    meal,
+    normalizeTime(document.querySelector(`[data-training-ideal-start="${meal}"]`)?.value) || current[meal]
+  ]));
 }
 
 function renderOpenShiftPrintBoxes(departments = null) {
@@ -12739,10 +13624,11 @@ function comparePrintShifts(a, b, sortMode) {
   return (roleById(a.roleId)?.name || "").localeCompare(roleById(b.roleId)?.name || "") || comparePrintShifts(a, b, "time");
 }
 
-function printStaffingAnalysis() {
-  activateTab("staffing");
+async function printStaffingAnalysis() {
   renderStaffingAnalysis();
-  window.print();
+  clearPrintModeClasses();
+  document.body.classList.add("printing-staffing");
+  await runPreparedPrint(clearPrintModeClasses);
 }
 
 function syncFloorPlanDateToActiveWeek(options = {}) {
@@ -13096,10 +13982,11 @@ function setFloorText(key, values) {
   target.innerHTML = list.filter(Boolean).map((value) => `<div>${value}</div>`).join("");
 }
 
-function printFloorPlan() {
-  activateTab("floorplans");
+async function printFloorPlan() {
   renderFloorPlan({ forPrint: true });
-  window.print();
+  clearPrintModeClasses();
+  document.body.classList.add("printing-floor-plan");
+  await runPreparedPrint(clearPrintModeClasses);
 }
 
 function renderFloorPlanSheetMarkup(dateKey, period, options = {}) {
@@ -13138,8 +14025,7 @@ function floorPlanWeekJobs() {
   });
 }
 
-function printFloorPlanWeek() {
-  activateTab("floorplans");
+async function printFloorPlanWeek() {
   const jobs = floorPlanWeekJobs();
   if (!jobs.length) {
     showConflict("No floor plan sheets are selected in Settings.");
@@ -13147,18 +14033,17 @@ function printFloorPlanWeek() {
   }
   $("floorPlanWeekPrint").innerHTML = jobs.map((job) => renderFloorPlanSheetMarkup(job.dateKey, job.period, { forPrint: true })).join("");
   $("floorPlanWeekPrint").hidden = false;
+  clearPrintModeClasses();
   document.body.classList.add("printing-floor-week");
-  window.print();
-  window.setTimeout(() => {
-    document.body.classList.remove("printing-floor-week");
+  await runPreparedPrint(() => {
+    clearPrintModeClasses();
     $("floorPlanWeekPrint").hidden = true;
     $("floorPlanWeekPrint").innerHTML = "";
-  }, 250);
+  });
 }
 
 async function printCompletedWeek() {
   if (!(await checkPrintCoverage())) return;
-  activateTab("floorplans");
   const jobs = floorPlanWeekJobs();
   if (!jobs.length) {
     showConflict("No floor plan sheets are selected in Settings.");
@@ -13167,17 +14052,16 @@ async function printCompletedWeek() {
   renderSimpleRolePrintView("role");
   $("floorPlanWeekPrint").innerHTML = jobs.map((job) => renderFloorPlanSheetMarkup(job.dateKey, job.period, { forPrint: true })).join("");
   $("floorPlanWeekPrint").hidden = false;
+  clearPrintModeClasses();
   document.body.classList.add("printing-simple", "printing-floor-week", "printing-completed-week");
-  window.print();
-  window.setTimeout(() => {
-    document.body.classList.remove("printing-simple", "printing-floor-week", "printing-completed-week");
+  await runPreparedPrint(() => {
     $("floorPlanWeekPrint").hidden = true;
     $("floorPlanWeekPrint").innerHTML = "";
     clearPrintView();
-  }, 500);
+  });
 }
 
-function printCallWeeklySheet() {
+async function printCallWeeklySheet() {
   const employees = schedulableEmployees()
     .filter((employee) => employee.callWeekly)
     .sort((a, b) => fullEmployeeName(a).localeCompare(fullEmployeeName(b)));
@@ -13204,85 +14088,598 @@ function printCallWeeklySheet() {
       </tbody>
     </table>
   `;
-  activateTab("employees");
+  clearPrintModeClasses();
   document.body.classList.add("printing-call-weekly");
-  window.print();
-  window.setTimeout(() => {
-    document.body.classList.remove("printing-call-weekly");
+  await runPreparedPrint(() => {
+    clearPrintModeClasses();
     $("callWeeklySheet").hidden = true;
-  }, 250);
+    $("callWeeklySheet").innerHTML = "";
+  });
 }
 
-function openTrainingPlanDialog() {
+function printableTrainingShifts(traineeId, roleId) {
+  return state.shifts
+    .filter((shift) => isTraineeTrainingShift(shift, traineeId) && shift.roleId === roleId && shift.training?.outcome !== "noShow")
+    .sort((left, right) => `${left.date} ${String(minutesFromTime(left.start) ?? 0).padStart(4, "0")}`.localeCompare(`${right.date} ${String(minutesFromTime(right.start) ?? 0).padStart(4, "0")}`));
+}
+
+function clearTrainingSchedulePrint() {
+  clearPrintModeClasses();
+  const target = $("trainingSchedulePrint");
+  if (!target) return;
+  target.hidden = true;
+  target.innerHTML = "";
+}
+
+async function printTrainingSchedule(traineeId, roleId) {
+  const trainee = employeeById(traineeId);
+  const role = roleById(roleId);
+  const shifts = printableTrainingShifts(traineeId, roleId);
+  if (!trainee || !role || !shifts.length) {
+    showConflict("No scheduled training shifts are available to print for this role.");
+    return;
+  }
+  const traineeName = fullEmployeeName(trainee) || displayName(trainee);
+  const target = $("trainingSchedulePrint");
+  target.innerHTML = `
+    <header class="training-schedule-print-header">
+      <div>
+        <span>${escapeHtml(currentLocationName())}</span>
+        <h1>Training Schedule</h1>
+      </div>
+      <dl>
+        <div><dt>Trainee</dt><dd>${escapeHtml(traineeName)}</dd></div>
+        <div><dt>Role</dt><dd>${escapeHtml(role.name)}</dd></div>
+      </dl>
+    </header>
+    <table class="training-schedule-print-table">
+      <thead><tr><th>Day</th><th>Date</th><th>Time</th><th>Trainer</th></tr></thead>
+      <tbody>${shifts.map((shift) => {
+        const trainer = employeeById(shift.training?.trainerId);
+        const trainerName = trainer ? (fullEmployeeName(trainer) || displayName(trainer)) : "Manager will assign";
+        return `<tr>
+          <td><strong>Day ${trainingDayNumber(shift) || "-"}</strong></td>
+          <td>${escapeHtml(parseDateKey(shift.date).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}</td>
+          <td>${escapeHtml(`${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}`)}</td>
+          <td>${escapeHtml(trainerName)}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>
+    <footer class="training-schedule-print-footer">
+      <p>Please contact a manager as soon as possible if any of these training shifts need to change.</p>
+      <div><span>Trainee signature</span><span>Date</span></div>
+    </footer>`;
+  target.hidden = false;
+  clearPrintModeClasses();
+  document.body.classList.add("printing-training-schedule");
+  await runPreparedPrint(clearTrainingSchedulePrint);
+}
+
+function openTrainingPlanDialog(options = {}) {
   $("planTrainee").innerHTML = sortedEmployeesForSelect()
     .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employeeOptionLabel(employee))}</option>`)
     .join("");
   $("planRole").innerHTML = state.roles.map((role) => `<option value="${role.id}">${role.name}</option>`).join("");
-  $("planStartDate").value = formatDateKey(currentDate);
+  const selectedEmployee = employeeById(options.traineeId || $("employeeId")?.value);
+  if (selectedEmployee) $("planTrainee").value = selectedEmployee.id;
+  $("planTraineeDisplay").textContent = selectedEmployee ? displayName(selectedEmployee) : "No trainee selected";
+  const selectedRole = options.roleId || selectedEmployee?.roleTraining?.[0] || state.roles[0]?.id || "";
+  if (selectedRole) $("planRole").value = selectedRole;
+  loadTrainingPlanDraft();
   trainingPlanSuggestions = [];
-  $("trainingPlanResults").innerHTML = `<p class="hint">Choose a trainee, role, and start date, then find available trainer shifts.</p>`;
+  setTrainingPlanStage("collect");
+  $("trainingPlanResults").innerHTML = "";
   $("trainingPlanDialog").showModal();
+}
+
+function setTrainingPlanStage(stage = "collect") {
+  const dialog = $("trainingPlanDialog");
+  if (!dialog) return;
+  dialog.dataset.stage = stage;
+  const accepting = stage === "review" && trainingPlanSuggestions.length > 0;
+  const complete = stage === "complete";
+  const acceptedCount = accepting ? acceptedTrainingPlanShifts(trainingPlanSuggestions.meta || {}).length : 0;
+  const singleReplacement = accepting && acceptedCount > 0 && trainingPlanSuggestions.length === 1;
+  $("generateTrainingPlanBtn").hidden = stage !== "collect";
+  $("acceptAllTrainingPlanBtn").hidden = stage !== "review" || !accepting || trainingPlanSuggestions.length < 2;
+  $("addTrainingPlanBtn").hidden = stage !== "review";
+  $("keepTrainingPlanBtn").hidden = stage !== "review";
+  $("addTrainingPlanBtn").disabled = !accepting;
+  $("keepTrainingPlanBtn").disabled = !accepting;
+  $("acceptAllTrainingPlanBtn").disabled = !accepting;
+  $("addTrainingPlanBtn").textContent = singleReplacement ? "Save Decision" : "Save Choices & Find Replacements";
+  $("keepTrainingPlanBtn").textContent = "Save Accepted & Finish Later";
+  $("cancelTrainingPlanBtn").textContent = complete ? "Done" : "Cancel";
+}
+
+function acceptAllTrainingPlanShifts() {
+  document.querySelectorAll('[data-training-plan-decision][value="accept"]').forEach((input) => {
+    input.checked = true;
+  });
+  addTrainingPlan();
+}
+
+function trainingPlanMealOptions(roleId = $("planRole")?.value || "") {
+  const config = roleTrainingConfig(roleId);
+  if (config.mode !== "meal") return [{ value: "", label: "Not meal-specific" }];
+  const configuredMeals = MEALS.filter((meal) => Number(config.mealRequirements?.[meal]) > 0);
+  return (configuredMeals.length ? configuredMeals : MEALS).map((meal) => ({ value: meal, label: meal }));
+}
+
+function normalizeTrainingPlanSlot(slot = {}) {
+  return {
+    id: String(slot.id || uid("trainingWindow")),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(slot.date || "")) ? String(slot.date) : "",
+    start: String(slot.start || ""),
+    end: String(slot.end || ""),
+    meal: normalizeMealName(slot.meal || "")
+  };
+}
+
+function loadTrainingPlanDraft() {
+  const trainee = employeeById($("planTrainee").value);
+  const roleId = $("planRole").value;
+  const plan = trainee?.trainingPlans?.[roleId] || {};
+  const storedSlots = Array.isArray(plan.possibleTrainingSlots) ? plan.possibleTrainingSlots : [];
+  trainingPlanSlots = (storedSlots.length ? storedSlots : (plan.possibleDates || []).map((date) => ({
+    date,
+    meal: (plan.meals || [])[0] || ""
+  }))).map(normalizeTrainingPlanSlot);
+  $("planAvailabilityStartDate").value = plan.availabilityStartDate || formatDateKey(currentDate);
+  renderTrainingPlanSlotInputs();
+  renderSavedAvailabilityMealOptions(plan.availabilityMeal || ((plan.meals || []).length === 1 ? (plan.meals || [])[0] : ""));
+  renderTrainingPlanSlots();
+}
+
+function renderTrainingPlanSlotInputs() {
+  const options = trainingPlanMealOptions();
+  const select = $("planSlotMeal");
+  select.innerHTML = options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+  select.disabled = options.length === 1 && !options[0].value;
+}
+
+function renderSavedAvailabilityMealOptions(preferredMeal = "") {
+  const select = $("planAvailabilityMeal");
+  const field = $("planAvailabilityMealField");
+  const config = roleTrainingConfig($("planRole").value);
+  if (config.mode !== "meal") {
+    field.hidden = true;
+    select.innerHTML = `<option value="">Not meal-specific</option>`;
+    select.value = "";
+    return;
+  }
+  field.hidden = false;
+  const options = trainingPlanMealOptions().filter((option) => option.value);
+  const current = preferredMeal || select.value;
+  select.innerHTML = `<option value="">Choose a meal</option>${options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}`;
+  select.value = options.some((option) => option.value === current) ? current : "";
+}
+
+function renderTrainingPlanSlots() {
+  const target = $("trainingPlanSlotList");
+  $("saveTrainingDatesAsAvailabilityBtn").disabled = !trainingPlanSlots.length;
+  if (!trainingPlanSlots.length) {
+    target.innerHTML = `<p class="hint">No trainee availability has been added yet.</p>`;
+    return;
+  }
+  target.innerHTML = trainingPlanSlots
+    .slice()
+    .sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`))
+    .map((slot) => `<div class="training-plan-slot" data-training-plan-slot="${escapeHtml(slot.id)}">
+      <strong>${escapeHtml(slot.date ? displayDate(parseDateKey(slot.date)) : "Date needed")}</strong>
+      <span>${escapeHtml(slot.start ? `${normalizeTime(slot.start)} - ${normalizeTime(slot.end)}` : "Time needed")}${slot.meal ? ` | ${escapeHtml(slot.meal)}` : ""}</span>
+      <button type="button" class="icon-button" data-remove-training-plan-slot="${escapeHtml(slot.id)}" title="Remove this training availability" aria-label="Remove this training availability">x</button>
+    </div>`).join("");
+}
+
+function addTrainingPlanSlot() {
+  const date = $("planSlotDate").value;
+  const start = $("planSlotStart").value;
+  const end = $("planSlotEnd").value;
+  const meal = $("planSlotMeal").value;
+  const mealRequired = roleTrainingConfig($("planRole").value).mode === "meal";
+  if (!date || !start || !end || minutesFromTime(start) == null || minutesFromTime(end) == null || minutesFromTime(end) <= minutesFromTime(start) || (mealRequired && !meal)) {
+    showConflict("Choose a date, a valid start and end time, and a meal when this role uses meal-specific training.");
+    return;
+  }
+  const duplicate = trainingPlanSlots.some((slot) => slot.date === date && slot.start === start && slot.end === end && slot.meal === meal);
+  if (duplicate) {
+    showConflict("That training availability is already on the list.");
+    return;
+  }
+  trainingPlanSlots.push(normalizeTrainingPlanSlot({ date, start, end, meal }));
+  $("planSlotDate").value = "";
+  renderTrainingPlanSlots();
+  saveTrainingPlanDraft();
+  $("planSlotDate").focus();
+}
+
+async function useSavedAvailabilityForTraining() {
+  const trainee = employeeById($("planTrainee").value);
+  const roleId = $("planRole").value;
+  const startDate = $("planAvailabilityStartDate").value;
+  if (!trainee || !roleId || !startDate) {
+    showConflict("Choose a trainee, role, and availability start date first.");
+    return;
+  }
+  const config = roleTrainingConfig(roleId);
+  const selectedMeal = $("planAvailabilityMeal").value;
+  if (config.mode === "meal" && !selectedMeal) {
+    showConflict("Choose the meal this employee is training for before using saved availability.");
+    $("planAvailabilityMeal").focus();
+    return;
+  }
+  const dates = [...new Set(state.shifts
+    .filter((shift) => shift.roleId === roleId && !shift.training?.isTraining && shift.date >= startDate)
+    .map((shift) => shift.date))]
+    .sort();
+  const slots = [];
+  dates.forEach((date) => {
+    const ranges = employeeAvailability(trainee, parseDateKey(date).getDay(), date);
+    ranges.forEach((range) => {
+      const start = normalizeTime(range.start);
+      const end = normalizeTime(range.end);
+      if (minutesFromTime(start) == null || minutesFromTime(end) == null || minutesFromTime(end) <= minutesFromTime(start)) return;
+      const meals = config.mode === "meal" ? [selectedMeal] : [""];
+      meals.forEach((meal) => {
+        const period = meal ? getMealPeriodsForDate(date).find((item) => item.name === meal) : null;
+        if (period && !rangesOverlap(minutesFromTime(start), minutesFromTime(end), period.startMinutes, period.endMinutes)) return;
+        slots.push(normalizeTrainingPlanSlot({ date, start, end, meal }));
+      });
+    });
+  });
+  let mergedSlots = slots;
+  if (trainingPlanSlots.length) {
+    const replaceExisting = await showAppConfirm({
+      title: "Replace Training Availability?",
+      message: `There are already ${trainingPlanSlots.length} possible training time${trainingPlanSlots.length === 1 ? "" : "s"} in this plan. Replace them with the times from saved availability?`,
+      confirmText: "Replace List",
+      cancelText: "Add to List"
+    });
+    if (!replaceExisting) mergedSlots = [...trainingPlanSlots, ...slots];
+  }
+  trainingPlanSlots = mergedSlots.filter((slot, index, values) => values.findIndex((item) => item.date === slot.date && item.start === slot.start && item.end === slot.end && item.meal === slot.meal) === index);
+  renderTrainingPlanSlots();
+  saveTrainingPlanDraft();
+  showConflict(trainingPlanSlots.length
+    ? `Loaded ${trainingPlanSlots.length} possible training time${trainingPlanSlots.length === 1 ? "" : "s"} from ${displayName(trainee)}'s saved availability.`
+    : `No saved availability overlaps scheduled ${roleById(roleId)?.name || "role"} shifts from that date.`);
+}
+
+function saveTrainingSlotsAsLiveAvailability() {
+  const trainee = employeeById($("planTrainee").value);
+  const startDate = $("planAvailabilityStartDate").value || trainingPlanSlots.map((slot) => slot.date).filter(Boolean).sort()[0];
+  if (!trainee || !trainingPlanSlots.length || !startDate) return;
+  const availability = emptyAvailability();
+  trainingPlanSlots.forEach((slot) => {
+    const dayIndex = parseDateKey(slot.date).getDay();
+    const ranges = availability[dayIndex] || [];
+    if (!ranges.some((range) => range.start === slot.start && range.end === slot.end)) ranges.push({ start: slot.start, end: slot.end });
+    availability[dayIndex] = ranges.sort((left, right) => minutesFromTime(left.start) - minutesFromTime(right.start));
+  });
+  const patterns = Array.isArray(trainee.availabilityPatterns) ? trainee.availabilityPatterns.map((pattern) => ({ ...pattern })) : [];
+  patterns.forEach((pattern) => {
+    if (pattern.active !== false && pattern.effectiveDate && pattern.effectiveDate <= startDate && (!pattern.endsOn || pattern.endsOn > startDate)) pattern.endsOn = startDate;
+  });
+  const name = nextAvailabilityPatternName(trainee, "Training availability");
+  patterns.push({ id: uid("availability"), name, availability, repeatWeeks: 1, active: true, effectiveDate: startDate, endsOn: "" });
+  trainee.availabilityPatterns = patterns;
+  trainee.availabilitySchedule = [...(trainee.availabilitySchedule || []), { effectiveDate: startDate, availability }]
+    .sort((left, right) => String(left.effectiveDate).localeCompare(String(right.effectiveDate)));
+  if (startDate <= formatDateKey(currentDate)) trainee.availability = availability;
+  saveState();
+  renderAll();
+  showConflict(`Created live availability "${name}" starting ${displayDate(parseDateKey(startDate))}.`);
+}
+
+function trainingPlanMealsFromSlots() {
+  return [...new Set(trainingPlanSlots.map((slot) => slot.meal).filter(Boolean))];
+}
+
+function saveTrainingPlanDraft({ status } = {}) {
+  const trainee = employeeById($("planTrainee").value);
+  const roleId = $("planRole").value;
+  if (!trainee || !roleId) return;
+  const previous = trainee.trainingPlans?.[roleId] || {};
+  trainee.trainingPlans = {
+    ...(trainee.trainingPlans || {}),
+    [roleId]: {
+      ...previous,
+      ...(status ? { status } : {}),
+      meals: trainingPlanMealsFromSlots(),
+      availabilityStartDate: $("planAvailabilityStartDate").value || "",
+      availabilityMeal: $("planAvailabilityMeal").value || "",
+      possibleDates: [...new Set(trainingPlanSlots.map((slot) => slot.date).filter(Boolean))].sort(),
+      possibleTrainingSlots: trainingPlanSlots.map((slot) => ({ ...slot }))
+    }
+  };
+  saveState();
+}
+
+function trainerPriorityWeight(roleId, trainerId) {
+  const priorities = roleTrainingConfig(roleId).trainerPriorityIds || [];
+  const index = priorities.indexOf(trainerId);
+  return index >= 0 ? index + 1 : priorities.length + 10;
+}
+
+function trainingRequiredShiftCount(roleId, meals = []) {
+  const config = roleTrainingConfig(roleId);
+  if (config.mode !== "meal") return config.days;
+  return meals.reduce((total, meal) => total + (Number(config.mealRequirements?.[meal]) || 0), 0);
+}
+
+function trainingShiftTimingForSlot(slot, trainerShift) {
+  const availabilityStart = minutesFromTime(slot.start);
+  const availabilityEnd = minutesFromTime(slot.end);
+  const trainerRange = getCoverageRange(trainerShift);
+  if (availabilityStart == null || availabilityEnd == null || trainerRange.start == null || trainerRange.end == null) return null;
+  const overlapStart = Math.max(availabilityStart, trainerRange.start);
+  const overlapEnd = Math.min(availabilityEnd, trainerRange.end);
+  if (overlapEnd <= overlapStart) return null;
+
+  if (!slot.meal) {
+    return { start: timeFromMinutes(overlapStart), end: timeFromMinutes(overlapEnd) };
+  }
+
+  const preferredStart = minutesFromTime(trainingMealStartTimes()[slot.meal]);
+  if (preferredStart == null) return null;
+  const period = getMealPeriodsForDate(slot.date).find((item) => item.name === slot.meal);
+  const end = Math.min(overlapEnd, period?.endMinutes ?? overlapEnd);
+  const trainerStartFitsTraineeAvailability = trainerRange.start >= availabilityStart && trainerRange.start < availabilityEnd;
+  const start = trainerStartFitsTraineeAvailability
+    ? trainerRange.start
+    : overlapStart;
+  if (end <= start) return null;
+  return {
+    start: timeFromMinutes(start),
+    end: timeFromMinutes(end),
+    preferredStartDistance: Math.abs(start - preferredStart)
+  };
+}
+
+function trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds = new Set()) {
+  return state.shifts.filter((shift) => {
+    const trainer = employeeById(shift.employeeId);
+    if (!trainer || shift.date !== slot.date || shift.roleId !== roleId || shift.training?.isTraining || excludedSourceIds.has(shift.id)) return false;
+    if (!trainer.trainerRoles?.includes(roleId) || trainer.id === traineeId) return false;
+    if (slot.meal && !getMealsForShift(shift).includes(slot.meal)) return false;
+    const timing = trainingShiftTimingForSlot(slot, shift);
+    if (!timing) return false;
+    if (proposalOverlapsTraineeSchedule({ date: slot.date, start: timing.start, end: timing.end }, traineeId)) return false;
+    return !state.shifts.some((other) => other.training?.isTraining && other.training.trainerId === trainer.id && other.date === slot.date && other.roleId === roleId && trainingShiftMatchesTrainerShift(other, shift));
+  }).map((shift) => {
+    const timing = trainingShiftTimingForSlot(slot, shift);
+    return {
+      sourceShiftId: shift.id,
+      slotId: slot.id,
+      planMeal: slot.meal || "General",
+      date: slot.date,
+      trainerId: shift.employeeId,
+      start: timing.start,
+      end: timing.end,
+      untilVolume: false,
+      department: shift.department,
+      shiftLabel: shift.shiftLabel,
+      priority: trainerPriorityWeight(roleId, shift.employeeId),
+      preferredStartDistance: timing.preferredStartDistance || 0
+    };
+  });
+}
+
+function trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds = new Set()) {
+  const totals = {
+    scheduledRoleShifts: 0,
+    trainerRoleShifts: 0,
+    mealMatchingShifts: 0,
+    timeMatchingShifts: 0,
+    alreadyTrainingShifts: 0,
+    eligibleCandidates: 0
+  };
+  slots.forEach((slot) => {
+    state.shifts.filter((shift) => shift.date === slot.date && shift.roleId === roleId && !shift.training?.isTraining && !excludedSourceIds.has(shift.id)).forEach((shift) => {
+      totals.scheduledRoleShifts++;
+      const trainer = employeeById(shift.employeeId);
+      if (!trainer || trainer.id === traineeId || !trainer.trainerRoles?.includes(roleId)) return;
+      totals.trainerRoleShifts++;
+      if (slot.meal && !getMealsForShift(shift).includes(slot.meal)) return;
+      totals.mealMatchingShifts++;
+      if (!trainingShiftTimingForSlot(slot, shift)) return;
+      totals.timeMatchingShifts++;
+      const alreadyTraining = state.shifts.some((other) => other.training?.isTraining && other.training.trainerId === trainer.id && other.date === slot.date && other.roleId === roleId && trainingShiftMatchesTrainerShift(other, shift));
+      if (alreadyTraining) {
+        totals.alreadyTrainingShifts++;
+        return;
+      }
+      totals.eligibleCandidates++;
+    });
+  });
+  return totals;
+}
+
+function trainingProposalTimingBounds(proposal) {
+  const slot = trainingPlanSuggestions.meta?.slots?.find((item) => item.id === proposal.slotId);
+  const trainerShift = state.shifts.find((shift) => shift.id === proposal.sourceShiftId);
+  if (!slot || !trainerShift) return null;
+  const traineeStart = minutesFromTime(slot.start);
+  const traineeEnd = minutesFromTime(slot.end);
+  const trainerRange = getCoverageRange(trainerShift);
+  if (traineeStart == null || traineeEnd == null || trainerRange.start == null || trainerRange.end == null) return null;
+  let start = Math.max(traineeStart, trainerRange.start);
+  let end = Math.min(traineeEnd, trainerRange.end);
+  if (proposal.planMeal) {
+    const period = getMealPeriodsForDate(proposal.date).find((item) => item.name === proposal.planMeal);
+    if (!period) return null;
+    start = Math.max(start, period.startMinutes);
+    end = Math.min(end, period.endMinutes);
+  }
+  return end > start ? { start, end, trainerShift } : null;
+}
+
+function trainingProposalTimingMessage(proposal) {
+  const bounds = trainingProposalTimingBounds(proposal);
+  const start = minutesFromTime(proposal.start);
+  const end = minutesFromTime(proposal.end);
+  if (!bounds || start == null || end == null || start >= end) return "Choose a valid start and end time.";
+  if (start < bounds.start || end > bounds.end) {
+    return `Keep this trainee shift between ${timeFromMinutes(bounds.start)} and ${timeFromMinutes(bounds.end)} so it overlaps the trainer, trainee availability, and selected meal.`;
+  }
+  return "";
+}
+
+function trainingRangesOverlap(left, right) {
+  return left.date === right.date && rangesOverlap(
+    minutesFromTime(left.start),
+    left.untilVolume ? 1440 : minutesFromTime(left.end),
+    minutesFromTime(right.start),
+    right.untilVolume ? 1440 : minutesFromTime(right.end)
+  );
+}
+
+function proposalOverlapsTraineeSchedule(proposal, traineeId) {
+  return state.shifts.some((shift) => shift.employeeId === traineeId && trainingRangesOverlap(proposal, shift));
+}
+
+function bindTrainingProposalTimeInputs() {
+  document.querySelectorAll("[data-training-proposal-time]").forEach((input) => {
+    attachTimePickerInput(input);
+    input.addEventListener("input", () => {
+      const proposal = trainingPlanSuggestions.find((item) => item.sourceShiftId === input.dataset.trainingProposalTime);
+      if (!proposal) return;
+      proposal[input.dataset.trainingProposalField] = normalizeTime(input.value);
+      input.value = proposal[input.dataset.trainingProposalField] || input.value;
+      const message = trainingProposalTimingMessage(proposal);
+      const card = input.closest(".training-plan-proposal-card");
+      card?.classList.toggle("has-invalid-timing", Boolean(message));
+      const hint = card?.querySelector("[data-training-proposal-timing-hint]");
+      if (hint) hint.textContent = message || "Within the shared trainee and trainer availability.";
+    });
+  });
+}
+
+function openTrainingProposalEditor(sourceShiftId) {
+  const proposal = trainingPlanSuggestions.find((item) => item.sourceShiftId === sourceShiftId);
+  if (!proposal) return;
+  openShiftDialog({ ...proposal, id: `proposal_${proposal.sourceShiftId}` }, { trainingProposal: true });
+}
+
+function bindTrainingProposalEditors() {
+  document.querySelectorAll("[data-edit-training-proposal]").forEach((card) => {
+    card.ondblclick = (event) => {
+      event.preventDefault();
+      openTrainingProposalEditor(card.dataset.editTrainingProposal);
+    };
+    card.onkeydown = (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      openTrainingProposalEditor(card.dataset.editTrainingProposal);
+    };
+  });
+}
+
+function optimizeTrainingAssignments(candidatesBySlot, requirements, maxPerTrainer) {
+  const slots = [...candidatesBySlot.keys()];
+  // A one-point trainer-priority improvement must outweigh every possible
+  // start-time difference in this plan. Meal timing only resolves a tie.
+  const trainerPriorityWeight = (slots.length * (24 * 60)) + 1;
+  let best = [];
+  let bestScore = Infinity;
+  const totalNeeded = Object.values(requirements).reduce((total, value) => total + value, 0);
+  const visit = (index, selected, trainerCounts, mealCounts, score) => {
+    const maximumPossibleSelections = selected.length + (slots.length - index);
+    if (selected.length > totalNeeded || maximumPossibleSelections < best.length) return;
+    // Do not compare score until this branch can no longer beat the number of
+    // shifts already found. Otherwise the empty plan (score 0) rejects every
+    // real candidate before it can be considered.
+    if (maximumPossibleSelections === best.length && score > bestScore) return;
+    if (index === slots.length) {
+      if (selected.length > best.length || (selected.length === best.length && (score < bestScore || (score === bestScore && new Set(selected.map((item) => item.trainerId)).size > new Set(best.map((item) => item.trainerId)).size)))) {
+        best = selected.slice();
+        bestScore = score;
+      }
+      return;
+    }
+    visit(index + 1, selected, trainerCounts, mealCounts, score);
+    candidatesBySlot.get(slots[index]).forEach((candidate) => {
+      const used = trainerCounts.get(candidate.trainerId) || 0;
+      const mealUsed = mealCounts.get(candidate.planMeal) || 0;
+      if (used >= maxPerTrainer || mealUsed >= (requirements[candidate.planMeal] || 0)) return;
+      if (selected.some((chosen) => trainingRangesOverlap(chosen, candidate))) return;
+      trainerCounts.set(candidate.trainerId, used + 1);
+      mealCounts.set(candidate.planMeal, mealUsed + 1);
+      selected.push(candidate);
+      visit(
+        index + 1,
+        selected,
+        trainerCounts,
+        mealCounts,
+        score + (candidate.priority * trainerPriorityWeight) + candidate.preferredStartDistance
+      );
+      selected.pop();
+      if (used) trainerCounts.set(candidate.trainerId, used);
+      else trainerCounts.delete(candidate.trainerId);
+      if (mealUsed) mealCounts.set(candidate.planMeal, mealUsed);
+      else mealCounts.delete(candidate.planMeal);
+    });
+  };
+  visit(0, [], new Map(), new Map(), 0);
+  return best.sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`));
 }
 
 function generateTrainingPlan() {
   const traineeId = $("planTrainee").value;
   const roleId = $("planRole").value;
-  const startDate = $("planStartDate").value;
-  const config = state.settings.trainingRequirements?.[roleId] || {};
-  const needed = Number(config.days) || 0;
-  if (!traineeId || !roleId || !startDate || !needed) {
-    $("trainingPlanResults").innerHTML = `<p class="hint">Set a trainee, role, start date, and required training shift count in Settings.</p>`;
+  const meals = trainingPlanMealsFromSlots();
+  const slots = trainingPlanSlots.filter((slot) => slot.date && slot.start && slot.end);
+  const config = roleTrainingConfig(roleId);
+  const required = trainingRequiredShiftCount(roleId, meals);
+  const scheduledByMeal = state.shifts.filter((shift) => isTraineeTrainingShift(shift, traineeId) && shift.roleId === roleId && shift.training.outcome !== "noShow")
+    .reduce((counts, shift) => {
+      const key = shift.training?.planMeal || shift.planMeal || (config.mode === "meal" ? getMealsForShift(shift)[0] : "General");
+      if (key) counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+  const requirements = config.mode === "meal"
+    ? Object.fromEntries(meals.map((meal) => [meal, Math.max(0, (Number(config.mealRequirements?.[meal]) || 0) - (scheduledByMeal[meal] || 0))]))
+    : { General: Math.max(0, required - (scheduledByMeal.General || 0)) };
+  const needed = Object.values(requirements).reduce((total, value) => total + value, 0);
+  if (!traineeId || !roleId || !slots.length || !required || (config.mode === "meal" && !meals.length)) {
+    showConflict("Choose a trainee and role, then add complete training availability. This role also needs a required training-shift count in Settings.");
     return;
   }
-  const usedTrainerDateKeys = new Set(state.shifts
-    .filter((shift) => shift.training?.isTraining && shift.roleId === roleId)
-    .map((shift) => `${shift.training.trainerId}:${shift.date}`));
-  const candidates = state.shifts
-    .filter((shift) => {
-      const trainer = employeeById(shift.employeeId);
-      return shift.date >= startDate &&
-        shift.roleId === roleId &&
-        !shift.training?.isTraining &&
-        trainer?.trainerRoles?.includes(roleId) &&
-        !usedTrainerDateKeys.has(`${shift.employeeId}:${shift.date}`);
-    })
-    .sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`));
-  const requiredShifts = config.requiredShifts || (config.requiredLabels || []).map((name) => ({ name, dayIndex: "" }));
-  const chosen = [];
-  requiredShifts.forEach((requirement) => {
-    const label = String(requirement.name || "").toLowerCase();
-    const match = candidates.find((shift) => (
-      !chosen.includes(shift) &&
-      trainingCandidateText(shift).includes(label) &&
-      (requirement.dayIndex === "" || String(parseDateKey(shift.date).getDay()) === String(requirement.dayIndex))
-    ));
-    if (match) chosen.push(match);
-  });
-  candidates.forEach((shift) => {
-    if (chosen.length < needed && !chosen.includes(shift)) chosen.push(shift);
-  });
-  trainingPlanSuggestions = chosen.slice(0, needed).map((shift, index) => ({
-    sourceShiftId: shift.id,
-    date: shift.date,
+  if (!needed) {
+    trainingPlanSuggestions = [];
+    $("trainingPlanResults").innerHTML = `<p class="hint">This training plan already has all ${required} required shifts scheduled.</p>`;
+    setTrainingPlanStage("review");
+    return;
+  }
+  const plan = employeeById(traineeId)?.trainingPlans?.[roleId] || {};
+  const excludedSourceIds = new Set(plan.excludedSourceShiftIds || []);
+  const candidatesBySlot = new Map(slots.map((slot) => [slot.id, trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds)]));
+  const candidateDiagnostics = trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds);
+  const selected = optimizeTrainingAssignments(candidatesBySlot, requirements, config.maxTrainerAssignments || 2);
+  const noTrainerSlots = slots.filter((slot) => !candidatesBySlot.get(slot.id).length);
+  trainingPlanSuggestions = selected.map((shift, index) => ({
+    ...shift,
       employeeId: traineeId,
-      department: shift.department,
       shiftLabel: shift.shiftLabel || "Training",
-      roleId: shift.roleId,
-    start: shift.start,
-    end: shift.end,
-    untilVolume: shift.untilVolume,
+      roleId,
     meals: [],
     notes: "Training",
-    color: roleById(shift.roleId)?.color,
+    color: roleById(roleId)?.color,
     training: {
       isTraining: true,
       traineeId,
-      trainerId: shift.employeeId,
+      trainerId: shift.trainerId,
       segmentEnd: "",
-      dayOverride: index + 1
-    }
+      previewDay: index + 1,
+      planMeal: shift.planMeal
+    },
+    planMeals: meals,
+    planMeal: shift.planMeal
   }));
+  trainingPlanSuggestions.meta = { traineeId, roleId, meals, slots, needed, required, requirements, noTrainerSlots, candidateDiagnostics };
   renderTrainingPlanResults();
+  setTrainingPlanStage("review");
 }
 
 function trainingCandidateText(shift) {
@@ -13290,33 +14687,238 @@ function trainingCandidateText(shift) {
   return `${shift.shiftLabel || ""} ${role?.name || ""} ${getMealsForShift(shift).join(" ")} ${shift.start} ${shift.end} ${shift.notes || ""}`.toLowerCase();
 }
 
+function acceptedTrainingPlanShifts(meta = {}) {
+  return state.shifts
+    .filter((shift) => isTraineeTrainingShift(shift, meta.traineeId) && shift.roleId === meta.roleId && shift.training.outcome !== "noShow")
+    .sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`));
+}
+
+function trainingPlanShiftPreview(shift, { accepted = false, editable = false } = {}) {
+  const role = roleById(shift.roleId);
+  const trainer = employeeById(shift.training?.trainerId);
+  return `<article class="training-plan-grid-card${accepted ? " is-accepted" : ""}${editable ? " is-editable" : ""}" style="--shift-color:${escapeHtml(role?.color || "#2563eb")}"${editable ? ` data-edit-training-proposal="${escapeHtml(shift.sourceShiftId)}" role="button" tabindex="0" title="Double-click to edit this proposed shift"` : ""}>
+    <div class="training-plan-grid-card-head"><strong>${escapeHtml(role?.name || "Training")}</strong><span>${escapeHtml(shift.department || role?.department || "FOH")}</span></div>
+    <span class="training-plan-grid-card-date">${escapeHtml(displayDate(parseDateKey(shift.date)))}</span>
+    <span class="training-plan-grid-card-time">${escapeHtml(`${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}`)}</span>
+    <span class="training-plan-grid-card-badge">Training with ${escapeHtml(trainer ? displayName(trainer) : "trainer")}</span>
+    ${accepted ? `<span class="training-plan-accepted-check" aria-label="Accepted training shift">&#10003;</span>` : ""}
+  </article>`;
+}
+
+function acceptedTrainingPlanBay(meta = {}) {
+  const accepted = acceptedTrainingPlanShifts(meta);
+  if (!accepted.length) return "";
+  return `<section class="training-plan-bay training-plan-accepted-bay">
+    <div class="training-plan-bay-heading"><strong>Accepted training shifts</strong><span>${accepted.length} accepted and scheduled</span></div>
+    <div class="training-plan-proposals training-plan-accepted-cards">${accepted.map((shift) => trainingPlanShiftPreview(shift, { accepted: true })).join("")}</div>
+  </section>`;
+}
+
 function renderTrainingPlanResults() {
   if (!trainingPlanSuggestions.length) {
-    $("trainingPlanResults").innerHTML = `<p class="hint">No available trainer shifts were found after that start date.</p>`;
+    if (trainingPlanSuggestions.meta?.completed) {
+      const accepted = acceptedTrainingPlanShifts(trainingPlanSuggestions.meta);
+      $("trainingPlanResults").innerHTML = `
+        <div class="training-plan-review-heading training-plan-complete-heading">
+          <strong>Training plan complete</strong>
+          <span>${accepted.length} training shift${accepted.length === 1 ? " has" : "s have"} been added for ${escapeHtml(employeeById(trainingPlanSuggestions.meta.traineeId) ? displayName(employeeById(trainingPlanSuggestions.meta.traineeId)) : "this trainee")}. The plan is ready for the manager to monitor and record completion.</span>
+          <button type="button" class="small-button primary-action" data-print-training-plan-complete>Print Training Schedule</button>
+        </div>
+        ${acceptedTrainingPlanBay(trainingPlanSuggestions.meta)}`;
+      $("trainingPlanResults").querySelector("[data-print-training-plan-complete]").onclick = () => printTrainingSchedule(trainingPlanSuggestions.meta.traineeId, trainingPlanSuggestions.meta.roleId);
+      return;
+    }
+    const diagnostics = trainingPlanSuggestions.meta?.candidateDiagnostics;
+    const role = roleById(trainingPlanSuggestions.meta?.roleId);
+    const details = diagnostics
+      ? `${diagnostics.scheduledRoleShifts} scheduled ${role?.name || "role"} shift${diagnostics.scheduledRoleShifts === 1 ? "" : "s"} checked; ${diagnostics.trainerRoleShifts} assigned to qualified trainers; ${diagnostics.mealMatchingShifts} match the selected meal; ${diagnostics.timeMatchingShifts} overlap the trainee availability; ${diagnostics.alreadyTrainingShifts} already have a trainee; ${diagnostics.eligibleCandidates} remain available.`
+      : "No eligible trainer was already scheduled during the submitted availability.";
+    $("trainingPlanResults").innerHTML = `
+      <div class="training-plan-review-heading">
+        <strong>No proposed shifts</strong>
+        <span>${escapeHtml(details)}</span>
+      </div>
+      <p class="hint">Keep this plan and resume it later after collecting additional training availability.</p>`;
     return;
   }
   $("trainingPlanResults").innerHTML = `
-    <table>
-      <thead><tr><th>Day</th><th>Role</th><th>Trainer</th><th>Time</th><th>Training Day</th></tr></thead>
-      <tbody>
-        ${trainingPlanSuggestions.map((shift) => {
-          const role = roleById(shift.roleId);
-          const trainer = employeeById(shift.training.trainerId);
-          return `<tr><td>${displayDate(parseDateKey(shift.date))}</td><td>${role?.name || ""}</td><td>${trainer ? displayName(trainer) : ""}</td><td>${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}</td><td>${shift.training.dayOverride}</td></tr>`;
-        }).join("")}
-      </tbody>
-    </table>
+    <div class="training-plan-review-heading">
+      <strong>Review proposed training shifts</strong>
+      <span>Accept the shifts that work. Declined shifts will be excluded when you resume this plan later.</span>
+    </div>
+    ${acceptedTrainingPlanBay(trainingPlanSuggestions.meta)}
+    <section class="training-plan-bay training-plan-proposed-bay">
+      <div class="training-plan-bay-heading"><strong>Proposed training shifts</strong><span>Review each card before accepting it.</span></div>
+      <div class="training-plan-proposals">
+      ${trainingPlanSuggestions.map((shift) => {
+        const role = roleById(shift.roleId);
+        const trainer = employeeById(shift.training.trainerId);
+        const trainerShift = state.shifts.find((item) => item.id === shift.sourceShiftId);
+        const bounds = trainingProposalTimingBounds(shift);
+        const timingMessage = trainingProposalTimingMessage(shift);
+        return `<article class="training-plan-proposal-card${timingMessage ? " has-invalid-timing" : ""}" style="--training-role-color:${escapeHtml(role?.color || "#2563eb")}">
+          ${trainingPlanShiftPreview(shift, { editable: true })}
+          <div class="training-plan-trainer-context"><span>Trainer scheduled</span><strong>${escapeHtml(trainer ? displayName(trainer) : "Unassigned")}</strong><span>${escapeHtml(trainerShift ? `${trainerShift.start} - ${trainerShift.untilVolume ? "Until Volume" : trainerShift.end}` : "Scheduled shift unavailable")}</span></div>
+          <small class="training-plan-timing-hint${timingMessage ? " has-invalid-timing" : ""}">${escapeHtml(timingMessage || `${shift.planMeal || "General"} | Training day ${trainingDayNumber(shift) || shift.training.previewDay || "?"} | Double-click card to edit`)}</small>
+          <div class="training-plan-decision" role="radiogroup" aria-label="Decision for this proposed training shift">
+            <label><input type="radio" name="training-plan-choice-${escapeHtml(shift.sourceShiftId)}" data-training-plan-decision="${escapeHtml(shift.sourceShiftId)}" value="accept" checked> Accept</label>
+            <label><input type="radio" name="training-plan-choice-${escapeHtml(shift.sourceShiftId)}" data-training-plan-decision="${escapeHtml(shift.sourceShiftId)}" value="decline"> Decline</label>
+          </div>
+        </article>`;
+      }).join("")}
+      </div>
+    </section>${trainingPlanSuggestions.meta?.noTrainerSlots?.length ? `<p class="hint">No eligible trainer was scheduled for: ${trainingPlanSuggestions.meta.noTrainerSlots.map((slot) => `${displayDate(parseDateKey(slot.date))} ${normalizeTime(slot.start)}${slot.meal ? ` (${slot.meal})` : ""}`).join(", ")}.</p>` : ""}${trainingPlanSuggestions.length < (trainingPlanSuggestions.meta?.needed || 0) ? `<p class="warnings">${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length} more training shift${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length === 1 ? "" : "s"} still needed. Add more trainee availability, then build another proposal.</p>` : ""}
   `;
+  bindTrainingProposalEditors();
 }
 
-function addTrainingPlan() {
+function addTrainingPlan({ finishLater = false } = {}) {
   if (!trainingPlanSuggestions.length) return;
+  const selectedSourceIds = new Set(Array.from(document.querySelectorAll('[data-training-plan-decision]:checked'))
+    .filter((input) => input.value === "accept")
+    .map((input) => input.dataset.trainingPlanDecision));
+  const accepted = trainingPlanSuggestions.filter((shift) => selectedSourceIds.has(shift.sourceShiftId));
+  const invalidTiming = accepted.find((shift) => trainingProposalTimingMessage(shift));
+  if (invalidTiming) {
+    showConflict(trainingProposalTimingMessage(invalidTiming));
+    return;
+  }
+  const overlappingAcceptedShift = accepted.find((shift, index) => proposalOverlapsTraineeSchedule(shift, shift.employeeId) || accepted.slice(0, index).some((other) => trainingRangesOverlap(other, shift)));
+  if (overlappingAcceptedShift) {
+    showConflict("A trainee cannot have overlapping shifts on the same day. Adjust or decline the overlapping proposal before continuing.");
+    return;
+  }
   pushUndo();
-  trainingPlanSuggestions.forEach((shift) => {
-    state.shifts.push({ ...shift, id: uid("shift") });
+  const declinedSourceIds = trainingPlanSuggestions.filter((shift) => !selectedSourceIds.has(shift.sourceShiftId)).map((shift) => shift.sourceShiftId);
+  const createdShiftIds = accepted.map((shift) => {
+    const id = uid("shift");
+    const { previewDay, ...training } = shift.training;
+    const trainerSource = state.shifts.find((item) => item.id === shift.sourceShiftId);
+    if (trainerSource) {
+      trainerSource.training = {
+        isTraining: true,
+        isTrainerShift: true,
+        traineeId: shift.training.traineeId,
+        trainerId: shift.training.trainerId,
+        pairedTraineeShiftId: id,
+        segmentEnd: "",
+        planMeal: shift.planMeal
+      };
+    }
+    state.shifts.push({ ...shift, id, training: { ...training, isTrainerShift: false, trainerSourceShiftId: shift.sourceShiftId } });
+    return id;
   });
-  $("trainingPlanDialog").close();
+  const meta = trainingPlanSuggestions.meta || {};
+  const trainee = employeeById(meta.traineeId);
+  if (trainee) {
+    const plannedDates = state.shifts
+      .filter((shift) => isTraineeTrainingShift(shift, meta.traineeId) && shift.roleId === meta.roleId && shift.training.outcome !== "noShow")
+      .map((shift) => shift.date)
+      .filter(Boolean)
+      .sort();
+    trainee.trainingPlans = {
+      ...(trainee.trainingPlans || {}),
+      [meta.roleId]: {
+        ...(trainee.trainingPlans?.[meta.roleId] || {}),
+        status: accepted.length ? "scheduled" : (trainee.trainingPlans?.[meta.roleId]?.status || "notStarted"),
+        meals: meta.meals || [],
+        possibleDates: [...new Set((meta.slots || []).map((slot) => slot.date))].sort(),
+        possibleTrainingSlots: (meta.slots || []).map((slot) => ({ ...slot })),
+        excludedSourceShiftIds: [...new Set([...(trainee.trainingPlans?.[meta.roleId]?.excludedSourceShiftIds || []), ...declinedSourceIds])],
+        projectedCompletionDate: plannedDates.at(-1) || trainee.trainingPlans?.[meta.roleId]?.projectedCompletionDate || "",
+        plannedShiftIds: [...new Set([...(trainee.trainingPlans?.[meta.roleId]?.plannedShiftIds || []), ...createdShiftIds])]
+      }
+    };
+  }
   renderAll();
+  const required = trainingRequiredShiftCount(meta.roleId, meta.meals || []);
+  const scheduled = state.shifts.filter((shift) => isTraineeTrainingShift(shift, meta.traineeId) && shift.roleId === meta.roleId && shift.training.outcome !== "noShow").length;
+  if (scheduled < required && !finishLater) {
+    generateTrainingPlan();
+    return;
+  }
+  if (scheduled >= required) {
+    trainingPlanSuggestions = [];
+    trainingPlanSuggestions.meta = { ...meta, completed: true };
+    renderTrainingPlanResults();
+    setTrainingPlanStage("complete");
+    return;
+  }
+  $("trainingPlanDialog").close();
+  if (scheduled < required) showConflict(`${accepted.length} accepted training shift${accepted.length === 1 ? " was" : "s were"} added. This training plan is saved and can be continued when more trainee availability is available.`);
+}
+
+function openTrainingOutcomeDialog(shift) {
+  const trainee = employeeById(shift.training?.traineeId || shift.employeeId);
+  if (!shift?.training?.isTraining || !trainee) return;
+  $("trainingOutcomeShiftId").value = shift.id;
+  $("trainingOutcomeValue").value = "completed";
+  $("trainingNoShowAction").value = "reschedule";
+  $("trainingOutcomeNote").value = "";
+  syncTrainingOutcomeControls();
+  $("trainingOutcomeContext").textContent = `${displayName(trainee)} | ${roleById(shift.roleId)?.name || "Training"} | ${displayDate(parseDateKey(shift.date))} | Day ${trainingDayNumber(shift) || "?"}`;
+  $("trainingOutcomeDialog").showModal();
+}
+
+function syncTrainingOutcomeControls() {
+  const noShowSelected = $("trainingOutcomeValue").value === "noShow";
+  $("trainingNoShowActionField").hidden = !noShowSelected;
+  $("trainingNoShowAction").disabled = !noShowSelected;
+}
+
+function refreshTrainingPlanProgress(traineeId, roleId) {
+  const trainee = employeeById(traineeId);
+  if (!trainee) return;
+  const plan = trainee.trainingPlans?.[roleId] || {};
+  const completed = state.shifts.filter((shift) => isTraineeTrainingShift(shift, traineeId) && shift.roleId === roleId && shift.training.outcome === "completed").length;
+  const required = trainingRequiredShiftCount(roleId, plan.meals || []);
+  trainee.trainingPlans = {
+    ...(trainee.trainingPlans || {}),
+    [roleId]: {
+      ...plan,
+      completedShifts: completed,
+      status: completed >= required && required > 0 ? "awaitingTest" : (completed ? "inProgress" : plan.status || "scheduled")
+    }
+  };
+}
+
+function saveTrainingOutcome() {
+  const shift = state.shifts.find((item) => item.id === $("trainingOutcomeShiftId").value);
+  if (!shift?.training?.isTraining) return;
+  const outcome = $("trainingOutcomeValue").value;
+  const action = outcome === "noShow" ? $("trainingNoShowAction").value : outcome;
+  const traineeId = shift.training.traineeId || shift.employeeId;
+  const trainee = employeeById(traineeId);
+  pushUndo();
+  shift.training = {
+    ...shift.training,
+    outcome: outcome === "endTraining" ? "noShow" : outcome,
+    outcomeNote: $("trainingOutcomeNote").value.trim(),
+    outcomeAt: nowIso()
+  };
+  if (action === "cancel") {
+    restoreTrainerSourceForTraineeShift(shift);
+    state.shifts = state.shifts.filter((item) => item.id !== shift.id);
+    refreshTrainingPlanProgress(traineeId, shift.roleId);
+  } else if (action === "endTraining" && trainee) {
+    restoreTrainerSourceForTraineeShift(shift);
+    const affected = state.shifts.filter((item) => isTraineeTrainingShift(item, traineeId) && item.date > shift.date && item.id !== shift.id);
+    affected.forEach(restoreTrainerSourceForTraineeShift);
+    state.shifts = state.shifts.filter((item) => !affected.includes(item));
+    trainee.active = false;
+    trainee.archived = true;
+    trainee.trainingPlans = {
+      ...(trainee.trainingPlans || {}),
+      [shift.roleId]: { ...(trainee.trainingPlans?.[shift.roleId] || {}), status: "ended", endedAt: nowIso(), endedReason: $("trainingOutcomeNote").value.trim() || "Training ended" }
+    };
+    showConflict(`${displayName(trainee)} was archived and ${affected.length} future training shift${affected.length === 1 ? "" : "s"} were removed. Use Undo to restore this action.`);
+  } else {
+    if (outcome === "noShow") restoreTrainerSourceForTraineeShift(shift);
+    refreshTrainingPlanProgress(traineeId, shift.roleId);
+  }
+  $("trainingOutcomeDialog").close();
+  renderAll();
+  if (outcome === "noShow" && action === "reschedule") openTrainingPlanDialog({ traineeId, roleId: shift.roleId });
 }
 
 function csvCell(value) {
@@ -13334,6 +14936,218 @@ function backup() {
     data: state
   };
   downloadFile(`restaurant_scheduler_backup_${formatDateKey(new Date())}.json`, JSON.stringify(envelope, null, 2), "application/json");
+}
+
+function trainingSetupRoleIds(values, validRoleIds) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || ""))
+    .filter((roleId) => validRoleIds.has(roleId)))];
+}
+
+function trainingSetupMealsByRole(value, validRoleIds) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([roleId]) => validRoleIds.has(roleId))
+    .map(([roleId, meals]) => [
+      roleId,
+      [...new Set((Array.isArray(meals) ? meals : []).filter((meal) => MEALS.includes(meal)))]
+    ])
+    .filter(([, meals]) => meals.length));
+}
+
+function trainingSetupRequirement(value, validEmployeeIds) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const requiredShifts = (Array.isArray(source.requiredShifts) ? source.requiredShifts : [])
+    .map((shift) => ({
+      name: String(shift?.name || "").trim(),
+      dayIndex: String(shift?.dayIndex ?? "").trim()
+    }))
+    .filter((shift) => shift.name);
+  const trainingOrder = (Array.isArray(source.trainingOrder) ? source.trainingOrder : [])
+    .filter((meal, index, meals) => MEALS.includes(meal) && meals.indexOf(meal) === index);
+  return {
+    mode: source.mode === "meal" ? "meal" : "general",
+    days: Math.max(0, Number(source.days) || 0),
+    requiredShifts,
+    mealRequirements: Object.fromEntries(MEALS.map((meal) => [meal, Math.max(0, Number(source.mealRequirements?.[meal]) || 0)])),
+    trainingOrder: trainingOrder.length ? trainingOrder : ["Dinner", "Lunch", "Breakfast"],
+    menuTestRequired: source.menuTestRequired !== false,
+    maxTrainerAssignments: Math.max(1, Number(source.maxTrainerAssignments) || 2),
+    trainerPriorityIds: [...new Set((Array.isArray(source.trainerPriorityIds) ? source.trainerPriorityIds : [])
+      .map((employeeId) => String(employeeId || ""))
+      .filter((employeeId) => validEmployeeIds.has(employeeId)))]
+  };
+}
+
+function trainingSetupExportPayload() {
+  const validRoleIds = new Set((state.roles || []).map((role) => role.id));
+  const validEmployeeIds = new Set((state.employees || []).map((employee) => employee.id));
+  return {
+    app: TRAINING_SETUP_TRANSFER_APP,
+    version: TRAINING_SETUP_TRANSFER_VERSION,
+    exportedAt: nowIso(),
+    employees: (state.employees || []).map((employee) => ({
+      id: employee.id,
+      name: fullEmployeeName(employee) || displayName(employee),
+      roleTraining: trainingSetupRoleIds(employee.roleTraining, validRoleIds),
+      trainerRoles: trainingSetupRoleIds(employee.trainerRoles, validRoleIds),
+      roleMealTraining: trainingSetupMealsByRole(employee.roleMealTraining, validRoleIds)
+    })),
+    settings: {
+      trainingMealStartTimes: trainingMealStartTimes(),
+      trainingRequirements: Object.fromEntries((state.roles || []).map((role) => [
+        role.id,
+        trainingSetupRequirement(state.settings?.trainingRequirements?.[role.id], validEmployeeIds)
+      ]))
+    }
+  };
+}
+
+function exportTrainingSetup() {
+  const payload = trainingSetupExportPayload();
+  downloadFile(`shift_bay_training_setup_${formatDateKey(new Date())}.json`, JSON.stringify(payload, null, 2), "application/json");
+  showConflict("Training setup exported. Import this file from the shared schedule's Training settings when you are ready.");
+}
+
+function trainingSetupProtectedFingerprint(snapshot) {
+  const safeSnapshot = cloneSchedulerState(snapshot);
+  safeSnapshot.employees = (safeSnapshot.employees || []).map((employee) => {
+    const protectedEmployee = { ...employee };
+    delete protectedEmployee.roleTraining;
+    delete protectedEmployee.trainerRoles;
+    delete protectedEmployee.roleMealTraining;
+    return protectedEmployee;
+  });
+  safeSnapshot.settings = { ...(safeSnapshot.settings || {}) };
+  delete safeSnapshot.settings.trainingMealStartTimes;
+  delete safeSnapshot.settings.trainingRequirements;
+  return JSON.stringify(safeSnapshot);
+}
+
+function prepareTrainingSetupImport(payload) {
+  if (!payload || payload.app !== TRAINING_SETUP_TRANSFER_APP || Number(payload.version) !== TRAINING_SETUP_TRANSFER_VERSION || !Array.isArray(payload.employees) || !payload.settings || typeof payload.settings !== "object") {
+    throw new Error("This is not a valid Shift Bay training setup export.");
+  }
+  const validRoleIds = new Set((state.roles || []).map((role) => role.id));
+  const validEmployeeIds = new Set((state.employees || []).map((employee) => employee.id));
+  const incomingById = new Map(payload.employees
+    .filter((employee) => employee && typeof employee === "object" && typeof employee.id === "string")
+    .map((employee) => [employee.id, employee]));
+  const skippedEmployees = [...incomingById.values()].filter((employee) => !validEmployeeIds.has(employee.id));
+  const updatedEmployees = (state.employees || []).map((employee) => {
+    const incoming = incomingById.get(employee.id);
+    if (!incoming) return employee;
+    return {
+      ...employee,
+      roleTraining: trainingSetupRoleIds(incoming.roleTraining, validRoleIds),
+      trainerRoles: trainingSetupRoleIds(incoming.trainerRoles, validRoleIds),
+      roleMealTraining: trainingSetupMealsByRole(incoming.roleMealTraining, validRoleIds)
+    };
+  });
+  const currentRequirements = { ...(state.settings?.trainingRequirements || {}) };
+  const importedRequirements = payload.settings.trainingRequirements && typeof payload.settings.trainingRequirements === "object"
+    ? payload.settings.trainingRequirements
+    : {};
+  const updatedRequirements = { ...currentRequirements };
+  (state.roles || []).forEach((role) => {
+    if (!Object.prototype.hasOwnProperty.call(importedRequirements, role.id)) return;
+    updatedRequirements[role.id] = trainingSetupRequirement(importedRequirements[role.id], validEmployeeIds);
+  });
+  const updatedSettings = {
+    ...(state.settings || {}),
+    trainingMealStartTimes: Object.fromEntries(MEALS.map((meal) => [
+      meal,
+      normalizeTime(payload.settings.trainingMealStartTimes?.[meal]) || trainingMealStartTimes()[meal]
+    ])),
+    trainingRequirements: updatedRequirements
+  };
+  const changedEmployeeNames = updatedEmployees
+    .filter((employee, index) => !sameSchedulerValue(employee, state.employees[index]))
+    .map((employee) => fullEmployeeName(employee) || displayName(employee));
+  const changedRoleNames = (state.roles || []).filter((role) => !sameSchedulerValue(
+    updatedSettings.trainingRequirements[role.id],
+    state.settings?.trainingRequirements?.[role.id]
+  )).map((role) => role.name);
+  const mealStartTimesChanged = !sameSchedulerValue(updatedSettings.trainingMealStartTimes, trainingMealStartTimes());
+  return {
+    employees: updatedEmployees,
+    settings: updatedSettings,
+    changedEmployees: changedEmployeeNames.length,
+    changedEmployeeNames,
+    changedRequirements: changedRoleNames.length,
+    changedRoleNames,
+    mealStartTimesChanged,
+    skippedEmployees
+  };
+}
+
+async function importTrainingSetup(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!canEditScheduler()) {
+    showReadOnlyNotice();
+    input.value = "";
+    return;
+  }
+  let proposal;
+  try {
+    proposal = prepareTrainingSetupImport(JSON.parse(await file.text()));
+  } catch (error) {
+    input.value = "";
+    showAppAlert({ title: "Training Setup Not Imported", message: error.message || "Choose a valid training setup export.", type: "warning" });
+    return;
+  }
+  const changeCount = proposal.changedEmployees + proposal.changedRequirements + (proposal.mealStartTimesChanged ? 1 : 0);
+  if (!changeCount) {
+    input.value = "";
+    showAppAlert({ title: "Training Setup Already Matches", message: "This schedule already has the training setup contained in that file.", type: "info" });
+    return;
+  }
+  const reviewItems = [
+    `${proposal.changedEmployees} employee training profile${proposal.changedEmployees === 1 ? "" : "s"} will update.`,
+    `${proposal.changedRequirements} role training requirement${proposal.changedRequirements === 1 ? "" : "s"} will update.`,
+    proposal.mealStartTimesChanged ? "Preferred meal start times will update." : "Preferred meal start times already match.",
+    proposal.skippedEmployees.length ? `${proposal.skippedEmployees.length} unmatched local profile${proposal.skippedEmployees.length === 1 ? " was" : "s were"} skipped; no employee will be created or matched by name.` : "Every exported employee ID matches this schedule."
+  ];
+  if (proposal.changedEmployeeNames.length) {
+    const preview = proposal.changedEmployeeNames.slice(0, 8).join(", ");
+    reviewItems.push(`Employee profiles: ${preview}${proposal.changedEmployeeNames.length > 8 ? `, and ${proposal.changedEmployeeNames.length - 8} more` : ""}.`);
+  }
+  if (proposal.changedRoleNames.length) reviewItems.push(`Role requirements: ${proposal.changedRoleNames.join(", ")}.`);
+  const confirmed = await showAppConfirm({
+    title: "Apply Training Setup?",
+    message: "This updates role qualifications, trainer eligibility, meal qualifications, trainer priorities, and training requirements only. Shifts, availability, request-offs, templates, and other schedule data stay unchanged.",
+    items: reviewItems,
+    confirmText: "Apply Training Setup",
+    cancelText: "Cancel"
+  });
+  if (!confirmed) {
+    input.value = "";
+    return;
+  }
+  const previousState = cloneSchedulerState(state);
+  const protectedFingerprint = trainingSetupProtectedFingerprint(state);
+  try {
+    pushUndo();
+    state.employees = proposal.employees;
+    state.settings = proposal.settings;
+    if (trainingSetupProtectedFingerprint(state) !== protectedFingerprint) {
+      throw new Error("Training setup import tried to change schedule or availability data.");
+    }
+    const saved = SERVER_STORAGE_ENABLED ? await saveState({ immediate: true }) : (saveState(), true);
+    if (!saved) throw new Error("The training setup could not be saved to the shared schedule.");
+    renderAll({ skipSave: true });
+    showConflict(`Training setup applied: ${proposal.changedEmployees} employee profile${proposal.changedEmployees === 1 ? "" : "s"} and ${proposal.changedRequirements} role requirement${proposal.changedRequirements === 1 ? "" : "s"} updated. Shifts and availability were not changed.`);
+  } catch (error) {
+    state = previousState;
+    undoStack.pop();
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    renderAll({ skipSave: true });
+    showAppAlert({ title: "Training Setup Not Applied", message: error.message || "The training setup could not be saved.", type: "warning" });
+  } finally {
+    input.value = "";
+  }
 }
 
 function openStorageInfo() {
@@ -14934,7 +16748,7 @@ function findOrCreateEmployeeFromName(name) {
     alwaysPrintFloorEndTime: false,
     departments: ["FOH"],
     callWeekly: false,
-    mealTraining: [...MEALS],
+    mealTraining: [],
     roleTraining: [],
     trainerRoles: [],
     payRates: {},
@@ -15341,7 +17155,7 @@ function setupTimePicker() {
   picker.className = "time-picker";
   document.body.append(picker);
 
-  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd", "timeOffEditStart", "timeOffEditEnd", "requestOffStart", "requestOffEnd"].forEach((id) => attachTimePickerInput($(id)));
+  ["templateStart", "templateEnd", "shiftStart", "shiftEnd", "shiftTrainingSegmentEnd", "dayBlockStart", "dayBlockEnd", "timeOffEditStart", "timeOffEditEnd", "requestOffStart", "requestOffEnd", "planSlotStart", "planSlotEnd"].forEach((id) => attachTimePickerInput($(id)));
 
   document.addEventListener("mousedown", (event) => {
     if (!event.target.closest("#timePicker") && event.target !== activeTimeInput) closeTimePicker();
@@ -15588,6 +17402,8 @@ function wireEvents() {
   $("pasteBtn").onclick = pasteShift;
   $("undoBtn").onclick = restoreUndo;
   $("exportCsvBtn").onclick = exportCsv;
+  $("exportTrainingSetupBtn").onclick = exportTrainingSetup;
+  $("trainingSetupImportInput").onchange = importTrainingSetup;
   $("problemFocusBtn").onclick = () => {
     state.settings.problemFocusMode = !state.settings.problemFocusMode;
     saveState();
@@ -15705,6 +17521,12 @@ function wireEvents() {
   $("refreshStaffingBtn").onclick = renderStaffingAnalysis;
   $("printStaffingBtn").onclick = printStaffingAnalysis;
   $("printCallWeeklyBtn").onclick = printCallWeeklySheet;
+  $("employeeSetupReviewBtn").onclick = () => {
+    const review = $("employeeSetupReview");
+    if (!review) return;
+    review.hidden = !review.hidden;
+    if (!review.hidden) renderEmployeeSetupReview();
+  };
   $("floorPlanDate").onchange = renderFloorPlan;
   $("floorPlanPeriod").onchange = renderFloorPlan;
   $("printFloorPlanBtn").onclick = printFloorPlan;
@@ -15726,8 +17548,35 @@ function wireEvents() {
     renderAll();
   };
   $("generateTrainingPlanBtn").onclick = generateTrainingPlan;
+  $("acceptAllTrainingPlanBtn").onclick = acceptAllTrainingPlanShifts;
   $("addTrainingPlanBtn").onclick = addTrainingPlan;
+  $("keepTrainingPlanBtn").onclick = () => addTrainingPlan({ finishLater: true });
+  $("addTrainingPlanSlotBtn").onclick = addTrainingPlanSlot;
+  $("useSavedAvailabilityForTrainingBtn").onclick = useSavedAvailabilityForTraining;
+  $("saveTrainingDatesAsAvailabilityBtn").onclick = saveTrainingSlotsAsLiveAvailability;
+  $("planTrainee").onchange = () => {
+    trainingPlanSuggestions = [];
+    loadTrainingPlanDraft();
+    setTrainingPlanStage("collect");
+    $("trainingPlanResults").innerHTML = "";
+  };
+  $("planRole").onchange = () => {
+    trainingPlanSuggestions = [];
+    loadTrainingPlanDraft();
+    setTrainingPlanStage("collect");
+    $("trainingPlanResults").innerHTML = "";
+  };
+  $("trainingPlanSlotList").onclick = (event) => {
+    const button = event.target.closest("[data-remove-training-plan-slot]");
+    if (!button) return;
+    trainingPlanSlots = trainingPlanSlots.filter((slot) => slot.id !== button.dataset.removeTrainingPlanSlot);
+    renderTrainingPlanSlots();
+    saveTrainingPlanDraft();
+  };
   $("cancelTrainingPlanBtn").onclick = () => $("trainingPlanDialog").close();
+  $("trainingOutcomeValue").onchange = syncTrainingOutcomeControls;
+  $("trainingOutcomeForm").onsubmit = (event) => { event.preventDefault(); saveTrainingOutcome(); };
+  $("cancelTrainingOutcomeBtn").onclick = () => $("trainingOutcomeDialog").close();
   $("dayBlockShiftBtn").onclick = () => {
     const employeeId = $("shiftEmployee").value || $("shiftEmployeeId").value;
     const dateKey = $("shiftDate").value;
@@ -15766,12 +17615,16 @@ function wireEvents() {
     updateShiftDialogContext();
   };
   const refreshShiftEmployeeSelect = () => refreshShiftEmployeeOptions($("shiftEmployee").value || $("shiftEmployeeId").value);
+  const refreshTrainingSelect = () => refreshTrainingOptions($("shiftTrainee").value, $("shiftTrainer").value);
   ["shiftDate", "shiftRole", "shiftStart", "shiftEnd", "shiftUntilVolume", "shiftIsCloser", "shiftIsLunchCloser", "shiftFlexDouble"].forEach((id) => {
     const input = $(id);
     if (!input) return;
     input.addEventListener("change", refreshShiftEmployeeSelect);
     input.addEventListener("input", refreshShiftEmployeeSelect);
+    input.addEventListener("change", refreshTrainingSelect);
+    input.addEventListener("input", refreshTrainingSelect);
   });
+  $("shiftIsTraining").addEventListener("change", refreshTrainingSelect);
   $("shiftIsCloser").addEventListener("change", applyCloserEndTimeDefault);
   $("shiftFlexDouble").addEventListener("change", applyFlexDoubleEndTimeDefault);
   $("shiftIsLunchCloser").addEventListener("change", applyLunchCloserEndTimeDefault);
@@ -15793,24 +17646,37 @@ function wireEvents() {
     renderAll();
   };
 
-  $("roleForm").onsubmit = (event) => {
-    event.preventDefault();
+  $("saveRoleBtn").onclick = () => {
+    const name = $("roleName").value.trim();
+    if (!name) {
+      showAppAlert({ title: "Role Needs a Name", message: "Give this role a name before saving it.", type: "warning" });
+      $("roleName").focus();
+      return;
+    }
     pushUndo();
     const id = $("roleId").value || uid("role");
     const role = {
       id,
-      name: $("roleName").value.trim(),
+      name,
       department: $("roleDepartment").value,
       defaultRate: Number($("roleDefaultRate").value) || 0,
+      traineeRate: Number($("roleTraineeRate").value) || 0,
+      trainerPayMode: $("roleTrainerPayMode").value || "additional",
+      trainerPayValue: Number($("roleTrainerPayValue").value) || 0,
       color: $("roleColor").value
     };
     state.roles = state.roles.some((item) => item.id === id) ? state.roles.map((item) => item.id === id ? role : item) : [...state.roles, role];
-    $("roleForm").reset();
+    $("roleId").value = "";
+    $("roleName").value = "";
+    $("roleDepartment").value = "FOH";
     $("roleDefaultRate").value = "";
+    $("roleTraineeRate").value = "";
+    $("roleTrainerPayMode").value = "additional";
+    $("roleTrainerPayValue").value = "";
     $("roleColor").value = "#2563eb";
     renderAll();
   };
-  $("newRoleBtn").onclick = () => { $("roleForm").reset(); $("roleId").value = ""; $("roleDefaultRate").value = ""; $("roleColor").value = "#2563eb"; };
+  $("newRoleBtn").onclick = () => { $("roleId").value = ""; $("roleName").value = ""; $("roleDepartment").value = "FOH"; $("roleDefaultRate").value = ""; $("roleTraineeRate").value = ""; $("roleTrainerPayMode").value = "additional"; $("roleTrainerPayValue").value = ""; $("roleColor").value = "#2563eb"; $("roleName").focus(); };
   $("deleteRoleBtn").onclick = () => {
     const id = $("roleId").value;
     if (!id) return;
@@ -15849,6 +17715,19 @@ function wireEvents() {
     const existingEmployee = state.employees.find((item) => item.id === id);
     const firstName = $("firstName").value.trim();
     const lastName = $("lastName").value.trim();
+    const phone = formatPhoneNumber($("employeePhone").value.trim());
+    const intendedRoles = checkedValues("roleTraining");
+    if (!firstName || !lastName || !phone || !intendedRoles.length) {
+      undoStack.pop();
+      setEmployeeSaveDebugStatus("Save stopped: onboarding fields incomplete", "failed");
+      showAppAlert({
+        title: "Finish Employee Setup",
+        message: "Enter the employee's first name, last name, phone number, and at least one intended role before saving the profile.",
+        type: "warning"
+      });
+      activateEmployeeProfileTab(!phone ? "profile" : "roles");
+      return false;
+    }
     const importMatch = !existingEmployee ? findEmployeeImportMatch({
       firstName,
       lastName,
@@ -15979,7 +17858,7 @@ function wireEvents() {
       lastName,
       nickname: $("employeeNickname").value.trim(),
       birthday: $("employeeBirthday").value,
-      phone: formatPhoneNumber($("employeePhone").value.trim()),
+      phone,
       managerNotes: $("employeeManagerNotes").value.trim(),
       active: existingEmployee ? $("employeeActive").checked : true,
       canClose: $("employeeCanClose").checked,
@@ -15989,11 +17868,15 @@ function wireEvents() {
       archived: Boolean(existingEmployee?.archived),
       departments: checkedValues("employeeDepartments"),
       callWeekly,
-      mealTraining: checkedValues("mealTraining"),
-      roleTraining: checkedValues("roleTraining"),
-      emergencyRoleIds: checkedValues("emergencyRoleIds").filter((roleId) => checkedValues("roleTraining").includes(roleId)),
+      mealTraining: [],
+      roleTraining: intendedRoles,
+      emergencyRoleIds: checkedValues("emergencyRoleIds").filter((roleId) => intendedRoles.includes(roleId)),
       roleMealTraining: collectRoleMealTraining(),
       trainerRoles: checkedValues("trainerRoles"),
+      trainingPlans: {
+        ...(existingEmployee?.trainingPlans || {}),
+        ...collectEmployeeTrainingPlans()
+      },
       payRates: collectEmployeePayRates(),
       availabilityEffectiveDate: availabilityAction ? availabilityEffectiveDate : (existingEmployee?.availabilityEffectiveDate || availabilityEffectiveDate),
       availabilityPatternName: availabilityAction ? patternName : (existingEmployee?.availabilityPatternName || patternName),
@@ -16094,6 +17977,22 @@ function wireEvents() {
       if (statusChangedShifts.length) {
         const action = statusShiftReview.action === "delete" ? "deleted" : "returned to the Shift Bay";
         showConflict(`${statusChangedShifts.length} future ${statusChangedShifts.length === 1 ? "shift was" : "shifts were"} ${action}.`);
+      }
+      if (!isExisting) {
+        const trainingRoleId = intendedRoles.find((roleId) => {
+          const config = roleTrainingConfig(roleId);
+          return config.mode === "meal"
+            ? Object.values(config.mealRequirements || {}).some((value) => Number(value) > 0)
+            : Number(config.days) > 0;
+        });
+        if (trainingRoleId && await showAppConfirm({
+          title: "Plan Training Shifts?",
+          message: `${displayName(employee)} has a role with training requirements. Would you like to build their training plan now?`,
+          confirmText: "Build Training Plan",
+          cancelText: "Finish Later"
+        })) {
+          openTrainingPlanDialog({ traineeId: employee.id, roleId: trainingRoleId });
+        }
       }
       return true;
     } else {
@@ -16472,6 +18371,7 @@ function wireEvents() {
     state.settings.projectionRules = collectProjectionRules();
     state.settings.floorPlanPrintRules = collectFloorPlanPrintRules();
     state.settings.floorPlanCrossRoleNotes = collectFloorPlanNoteSettings();
+    state.settings.trainingMealStartTimes = collectTrainingMealStartTimes();
     state.settings.trainingRequirements = collectTrainingRequirements();
     setCurrentWeek(currentDate);
     renderAll();
@@ -16480,6 +18380,24 @@ function wireEvents() {
 
   $("shiftForm").onsubmit = async (event) => {
     event.preventDefault();
+    if ($("shiftDialogMode").value === "training-proposal") {
+      const proposal = trainingPlanSuggestions.find((item) => item.sourceShiftId === trainingProposalEditSourceId);
+      if (!proposal) {
+        $("shiftWarnings").innerHTML = "<div>This proposed shift is no longer available.</div>";
+        return;
+      }
+      proposal.start = normalizeTime($("shiftStart").value);
+      proposal.end = normalizeTime($("shiftEnd").value);
+      const timingMessage = trainingProposalTimingMessage(proposal);
+      if (timingMessage) {
+        $("shiftWarnings").innerHTML = `<div>${escapeHtml(timingMessage)}</div>`;
+        return;
+      }
+      $("shiftDialog").close();
+      trainingProposalEditSourceId = "";
+      renderTrainingPlanResults();
+      return;
+    }
     if ($("shiftDialogMode").value === "staged") {
       const staged = collectStagedShiftFromDialog();
       if (!staged.roleId || !staged.start) {
@@ -16496,22 +18414,33 @@ function wireEvents() {
       renderAll();
       return;
     }
-    const shift = collectShiftFromDialog();
+    let shift = collectShiftFromDialog();
     const existingShift = state.shifts.find((item) => item.id === shift.id);
     if (lockedShiftWasEdited(existingShift, shift)) {
       $("shiftWarnings").innerHTML = "<div>This shift is locked. Unlock it and save that change before editing any other shift details.</div>";
       return;
     }
+    const trainingMove = await prepareMovedTrainingShift(existingShift || shift, shift);
+    if (!trainingMove) return;
+    shift = trainingMove.shift;
     const result = validateShift(shift);
     $("shiftWarnings").innerHTML = [...result.errors, ...result.warnings].map((item) => `<div>${item}</div>`).join("");
     if (result.errors.length) return;
     if (!(await confirmWarnings(result.warnings, { confirmText: "Save Anyway" }))) return;
     pushUndo();
+    if (trainingMove.trainerSourceId && existingShift) restoreTrainerSourceForTraineeShift(existingShift);
     state.shifts = state.shifts.some((item) => item.id === shift.id) ? state.shifts.map((item) => item.id === shift.id ? shift : item) : [...state.shifts, shift];
+    if (trainingMove.trainerSourceId) {
+      const savedTrainingShift = state.shifts.find((item) => item.id === shift.id);
+      const trainerSource = state.shifts.find((item) => item.id === trainingMove.trainerSourceId);
+      pairTrainingShiftWithTrainerSource(savedTrainingShift, trainerSource);
+    }
+    const clearedTrainingAssignments = reconcileTrainingAssignments();
     selectedShiftId = shift.id;
     selectedCell = { employeeId: shift.employeeId, date: shift.date };
     $("shiftDialog").close();
     renderAll();
+    trainingAssignmentClearedNotice(clearedTrainingAssignments);
   };
   $("unassignShiftBtn").onclick = () => {
     const id = $("shiftId").value;
@@ -16653,7 +18582,7 @@ updateStorageStatus();
 if (!SERVER_STORAGE_ENABLED) {
   showConflict("This window is in local file mode. Use https://shift-bay.netlify.app or the Shift Bay Cloud launcher so employees save to the cloud schedule.");
 }
-initializeAuth().then(async (canLoad) => {
+importLocalCopyFromServer().then(() => initializeAuth()).then(async (canLoad) => {
   if (canLoad) {
     await hydrateStateFromServer();
     await runNormalizedEmployeeShadowCheck();

@@ -68,6 +68,24 @@ function scheduleChangeSummary(previous = {}, next = {}) {
   };
 }
 
+function schedulePopulationSummary(state = {}) {
+  const items = (key) => Array.isArray(state?.[key]) ? state[key].length : 0;
+  const employees = items("employees");
+  const shifts = items("shifts");
+  const openShifts = items("unassignedShifts");
+  const timeOffRequests = items("timeOffRequests");
+  return { employees, shifts, openShifts, timeOffRequests, scheduleItems: shifts + openShifts + timeOffRequests };
+}
+
+function destructiveScheduleWriteReason(previous = {}, next = {}) {
+  const before = schedulePopulationSummary(previous);
+  const after = schedulePopulationSummary(next);
+  const rosterCollapsed = before.employees >= 20 && after.employees < Math.max(10, Math.ceil(before.employees / 2));
+  const scheduleCollapsed = before.scheduleItems >= 100 && after.scheduleItems < Math.max(25, Math.ceil(before.scheduleItems / 4));
+  if (!rosterCollapsed && !scheduleCollapsed) return null;
+  return { before, after };
+}
+
 function mergeEmployeeProfileState(existingState = {}, incomingState = {}, employeeId = "") {
   const merged = { ...existingState };
   const incomingEmployees = Array.isArray(incomingState.employees) ? incomingState.employees : [];
@@ -164,6 +182,22 @@ function createSupabaseStore() {
         : null;
       if (profileMerge) state = profileMerge;
       const profileOnlySave = Boolean(profileMerge);
+      if (!profileOnlySave) {
+        const safetyStop = destructiveScheduleWriteReason(existingRow?.state || {}, state);
+        if (safetyStop) {
+          await logAuditEvent("scheduler_state_destructive_write_blocked", user, {
+            documentKey,
+            saveScope,
+            before: safetyStop.before,
+            attempted: safetyStop.after
+          });
+          return {
+            ok: false,
+            destructiveWriteBlocked: true,
+            error: `Safety stop: this save would replace a populated schedule (${safetyStop.before.employees} employees and ${safetyStop.before.scheduleItems} schedule items) with an incomplete copy (${safetyStop.after.employees} employees and ${safetyStop.after.scheduleItems} schedule items). Refresh before trying again.`
+          };
+        }
+      }
       if (!profileOnlySave && baseServerSavedAt && existingSavedAt && Date.parse(existingSavedAt) > Date.parse(baseServerSavedAt) + 1000) {
         return {
           ok: false,
