@@ -165,6 +165,7 @@ function run() {
   includes(app, "availabilityEffectiveDate", "manager availability must preserve the effective date");
   includes(app, "function isEndedAvailabilityPattern", "replaced availability tabs must disappear after their end date");
   includes(app, "!isEndedAvailabilityPattern(pattern)", "replaced availability tabs must use the end-date filter");
+  includes(app, "if (!rawEndsOn) return false", "an availability without an end date must remain active");
   includes(app, "function availabilityShiftConflictDetails", "availability activation must identify already-scheduled conflicts");
   includes(app, "function showAvailabilityShiftConflictReview", "availability activation must provide a manager conflict review");
   includes(app, "Move Selected to Shift Bay", "availability conflict review must offer an explicit unassign action");

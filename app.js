@@ -10617,7 +10617,11 @@ function isFutureAvailabilityPattern(pattern) {
 }
 
 function isEndedAvailabilityPattern(pattern, referenceDate = formatDateKey(new Date())) {
-  const endsOn = normalizeAvailabilityEffectiveDate(pattern?.endsOn || "");
+  // A blank end date means the pattern continues indefinitely. Do not pass it
+  // through the effective-date fallback, which would turn it into this week.
+  const rawEndsOn = String(pattern?.endsOn || "").trim();
+  if (!rawEndsOn) return false;
+  const endsOn = normalizeAvailabilityEffectiveDate(rawEndsOn);
   return Boolean(endsOn && endsOn <= referenceDate);
 }
 
