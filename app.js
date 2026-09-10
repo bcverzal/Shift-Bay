@@ -14110,7 +14110,8 @@ function floorPlanEmployeeName(employee, firstNameCounts = {}) {
 }
 
 function floorPlanEmployeeLine(employee, shift, firstNameCounts = {}, context = {}) {
-  const notes = [floorPlanTrainingNote(shift), cleanCell(shift.notes), ...floorPlanOperationalNotes(employee, shift, context)].filter(Boolean);
+  const trainingNote = floorPlanTrainingNote(shift);
+  const notes = [cleanCell(shift.notes), ...floorPlanOperationalNotes(employee, shift, context)].filter(Boolean);
   const noteText = [...new Set(notes)].join(" | ").replace(/\s+\|\s+-\s+\?/g, " - ?");
   const noteParts = splitFloorPlanNote(noteText);
   if (noteParts.truncated && Array.isArray(context.noteWarnings)) {
@@ -14125,7 +14126,7 @@ function floorPlanEmployeeLine(employee, shift, firstNameCounts = {}, context = 
   const noteSeparator = primaryNote?.startsWith("/") || primaryNote?.startsWith("-") ? " " : " | ";
   const timeText = `${floorPlanShiftTime(shift, employee)}${primaryNote ? `${noteSeparator}${primaryNote}` : ""}`;
   const nameClass = extraNote ? "floor-name floor-name-with-extra" : "floor-name";
-  return `<span class="${nameClass}">${floorPlanEmployeeName(employee, firstNameCounts)}</span><span class="floor-time">${timeText}</span>${extraNote ? `<span class="floor-note-extra">${extraNote}</span>` : ""}`;
+  return `<span class="${nameClass}">${floorPlanEmployeeName(employee, firstNameCounts)}</span><span class="floor-time">${timeText}</span>${trainingNote ? `<span class="floor-training-note">${trainingNote}</span>` : ""}${extraNote ? `<span class="floor-note-extra">${extraNote}</span>` : ""}`;
 }
 
 function floorPlanPeriodLabel(period) {
