@@ -9607,6 +9607,7 @@ fieldset .checkbox {
 
 .floor-servers .floor-training-note {
   margin-top: -0.08em;
+  transform: translateX(-6.5%);
 }
 
 /* Training notes are often the longest text on a floor-plan line. Keep them
