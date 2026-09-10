@@ -9571,17 +9571,39 @@ fieldset .checkbox {
 
 .floor-training-note {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.48em;
   min-width: 0;
   color: #1d4ed8;
   font-size: 0.86em;
   font-weight: 900;
   line-height: 1.05;
+  text-align: center;
   overflow-wrap: anywhere;
+}
+
+.floor-training-note::before,
+.floor-training-note::after {
+  content: "";
+  display: block;
+  width: 0.55em;
+  height: 0.42em;
+  flex: 0 0 auto;
+  border-bottom: 1.5px solid currentColor;
+}
+
+.floor-training-note::before {
+  border-left: 1.5px solid currentColor;
+}
+
+.floor-training-note::after {
+  border-right: 1.5px solid currentColor;
 }
 
 .floor-servers .floor-training-note {
   margin-top: -0.08em;
-  padding-left: 0.2em;
 }
 
 /* Training notes are often the longest text on a floor-plan line. Keep them
