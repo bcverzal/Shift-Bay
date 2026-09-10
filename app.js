@@ -14711,6 +14711,12 @@ function trainingProposalTimingMessage(proposal) {
   const start = minutesFromTime(proposal.start);
   const end = minutesFromTime(proposal.end);
   if (!bounds || start == null || end == null || start >= end) return "Choose a valid start and end time.";
+  const sharedMinutes = bounds.end - bounds.start;
+  if (sharedMinutes < trainingMinimumShiftMinutes()) {
+    const trainer = employeeById(bounds.trainerShift.employeeId);
+    const trainerName = trainer ? displayName(trainer) : "The selected trainer";
+    return `${trainerName} only overlaps the trainee's availability${proposal.planMeal ? ` and ${proposal.planMeal}` : ""} from ${timeFromMinutes(bounds.start)} to ${timeFromMinutes(bounds.end)} (${formatHours(sharedMinutes / 60)} hours). Training requires at least ${trainingMinimumDurationLabel()}; choose a trainer scheduled through the requested end time, then build a new proposal.`;
+  }
   if (end - start < trainingMinimumShiftMinutes()) return `Training shifts must be at least ${trainingMinimumDurationLabel()}.`;
   if (start < bounds.start || end > bounds.end) {
     return `Keep this trainee shift between ${timeFromMinutes(bounds.start)} and ${timeFromMinutes(bounds.end)} so it overlaps the trainer, trainee availability, and selected meal.`;

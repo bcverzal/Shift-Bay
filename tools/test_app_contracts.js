@@ -80,6 +80,7 @@ function run() {
   includes(app, "data-training-minimum-hours", "training settings must expose the minimum training-shift duration");
   includes(app, "overlapEnd - overlapStart < trainingMinimumShiftMinutes()", "training proposals must reject trainer overlap shorter than the configured minimum");
   includes(app, "Training shifts must be at least", "manual training-shift edits must enforce the configured minimum");
+  includes(app, "only overlaps the trainee's availability", "an impossible training proposal must name the actual shared-time limitation");
   includes(app, "training-plan-unmatched-slots", "unmatched training dates must not be rendered under proposal decision controls");
   includes(app, "trainerStartFitsTraineeAvailability", "meal-specific training must match a trainer's actual shift start when possible");
   includes(app, "preferredStartDistance", "meal-specific training should favor the configured start time without rejecting a workable trainer shift");
