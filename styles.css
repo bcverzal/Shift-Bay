@@ -10302,6 +10302,7 @@ dialog {
 .training-plan-proposals {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: center;
   gap: 10px;
   margin-top: 0;
@@ -10347,6 +10348,7 @@ dialog {
 
 .training-plan-proposal-card {
   display: grid;
+  align-content: start;
   gap: 4px;
   flex: 0 1 250px;
   width: min(250px, 100%);
@@ -10578,6 +10580,8 @@ dialog {
 }
 
 .training-plan-timing-hint {
+  min-height: 1.25em;
+  overflow-wrap: anywhere;
   color: #60708a;
   font-size: 10px;
   line-height: 1.25;
@@ -10599,11 +10603,25 @@ dialog {
 }
 
 .training-plan-decision {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 12px;
   margin-top: 4px;
   padding-top: 7px;
   border-top: 1px solid #dbeafe;
+  background: #fff;
+}
+
+.training-plan-unmatched-slots {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .training-plan-decision label {

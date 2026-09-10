@@ -14939,6 +14939,7 @@ function renderTrainingPlanResults() {
       <span>Accept the shifts that work. Declined shifts will be excluded when you resume this plan later.</span>
     </div>
     ${acceptedTrainingPlanBay(trainingPlanSuggestions.meta)}
+    ${trainingPlanSuggestions.meta?.noTrainerSlots?.length ? `<p class="training-plan-unmatched-slots">No eligible trainer was scheduled for: ${trainingPlanSuggestions.meta.noTrainerSlots.map((slot) => `${displayDate(parseDateKey(slot.date))} ${normalizeTime(slot.start)}${slot.meal ? ` (${slot.meal})` : ""}`).join(", ")}.</p>` : ""}
     <section class="training-plan-bay training-plan-proposed-bay">
       <div class="training-plan-bay-heading"><strong>Proposed training shifts</strong><span>Review each card before accepting it.</span></div>
       <div class="training-plan-proposals">
@@ -14959,7 +14960,7 @@ function renderTrainingPlanResults() {
         </article>`;
       }).join("")}
       </div>
-    </section>${trainingPlanSuggestions.meta?.noTrainerSlots?.length ? `<p class="hint">No eligible trainer was scheduled for: ${trainingPlanSuggestions.meta.noTrainerSlots.map((slot) => `${displayDate(parseDateKey(slot.date))} ${normalizeTime(slot.start)}${slot.meal ? ` (${slot.meal})` : ""}`).join(", ")}.</p>` : ""}${trainingPlanSuggestions.length < (trainingPlanSuggestions.meta?.needed || 0) ? `<p class="warnings">${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length} more training shift${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length === 1 ? "" : "s"} still needed. Add more trainee availability, then build another proposal.</p>` : ""}
+    </section>${trainingPlanSuggestions.length < (trainingPlanSuggestions.meta?.needed || 0) ? `<p class="warnings">${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length} more training shift${(trainingPlanSuggestions.meta?.needed || 0) - trainingPlanSuggestions.length === 1 ? "" : "s"} still needed. Add more trainee availability, then build another proposal.</p>` : ""}
   `;
   bindTrainingProposalEditors();
 }
