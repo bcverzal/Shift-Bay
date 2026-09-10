@@ -8698,24 +8698,27 @@ function trainingBadgesForShift(shift) {
   const badges = [];
   const trainerLinks = state.shifts.filter((item) => trainingShiftMatchesTrainerShift(item, shift));
   const segmentText = shift.training?.segmentEnd ? ` until ${shift.training.segmentEnd}` : "";
+  const mealText = shift.training?.planMeal || shift.planMeal || "";
+  const mealPrefix = mealText ? `${mealText} training ` : "Training ";
   if (shift.training?.isTraining) {
     const trainee = employeeById(shift.training.traineeId);
     const trainer = employeeById(shift.training.trainerId);
     const dayText = trainingDayNumber(shift) ? ` | Day ${trainingDayNumber(shift)}` : "";
     if (shift.employeeId === shift.training.trainerId) {
-      if (trainee || !trainerLinks.length) badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${dayText}${segmentText}`);
+      if (trainee || !trainerLinks.length) badges.push(`${mealPrefix}${trainee ? displayName(trainee) : "trainee"}${dayText}${segmentText}`);
     } else if (shift.employeeId === shift.training.traineeId) {
-      if (trainer) badges.push(`Training with ${displayName(trainer)}${dayText}${segmentText}`);
-      else if (!trainerLinks.length) badges.push(`Training day${dayText}`);
+      if (trainer) badges.push(`${mealPrefix}with ${displayName(trainer)}${dayText}${segmentText}`);
+      else if (!trainerLinks.length) badges.push(`${mealPrefix}day${dayText}`);
     } else {
-      badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${trainer ? ` with ${displayName(trainer)}` : ""}${dayText}${segmentText}`);
+      badges.push(`${mealPrefix}${trainee ? displayName(trainee) : "trainee"}${trainer ? ` with ${displayName(trainer)}` : ""}${dayText}${segmentText}`);
     }
   }
   trainerLinks.forEach((item) => {
     const trainee = employeeById(item.training.traineeId || item.employeeId);
     const linkedSegmentText = item.training?.segmentEnd ? ` until ${item.training.segmentEnd}` : "";
     const dayText = trainingDayNumber(item) ? ` | Day ${trainingDayNumber(item)}` : "";
-    badges.push(`Training ${trainee ? displayName(trainee) : "trainee"}${dayText}${linkedSegmentText}`);
+    const linkedMeal = item.training?.planMeal || item.planMeal || "";
+    badges.push(`${linkedMeal ? `${linkedMeal} training ` : "Training "}${trainee ? displayName(trainee) : "trainee"}${dayText}${linkedSegmentText}`);
   });
   return [...new Set(badges)];
 }
@@ -14927,8 +14930,9 @@ function acceptedTrainingPlanShifts(meta = {}) {
 function trainingPlanShiftPreview(shift, { accepted = false, editable = false } = {}) {
   const role = roleById(shift.roleId);
   const trainer = employeeById(shift.training?.trainerId);
+  const meal = shift.training?.planMeal || shift.planMeal || "";
   return `<article class="training-plan-grid-card${accepted ? " is-accepted" : ""}${editable ? " is-editable" : ""}" style="--shift-color:${escapeHtml(role?.color || "#2563eb")}"${editable ? ` data-edit-training-proposal="${escapeHtml(shift.sourceShiftId)}" role="button" tabindex="0" title="Double-click to edit this proposed shift"` : ""}>
-    <div class="training-plan-grid-card-head"><strong>${escapeHtml(role?.name || "Training")}</strong><span>${escapeHtml(shift.department || role?.department || "FOH")}</span></div>
+    <div class="training-plan-grid-card-head"><strong>${escapeHtml(role?.name || "Training")}</strong><span class="${meal ? "training-plan-grid-card-meal" : ""}">${escapeHtml(meal || shift.department || role?.department || "FOH")}</span></div>
     <span class="training-plan-grid-card-date">${escapeHtml(displayDate(parseDateKey(shift.date)))}</span>
     <span class="training-plan-grid-card-time">${escapeHtml(`${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}`)}</span>
     <span class="training-plan-grid-card-badge">Training with ${escapeHtml(trainer ? displayName(trainer) : "trainer")}</span>

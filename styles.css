@@ -10466,6 +10466,16 @@ dialog {
   font-weight: 900;
 }
 
+.training-plan-grid-card-head .training-plan-grid-card-meal {
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, .74);
+  border-radius: 4px;
+  background: rgba(15, 23, 42, .2);
+  color: #fff;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
 .training-plan-grid-card-date,
 .training-plan-grid-card-time {
   font-size: 12px;

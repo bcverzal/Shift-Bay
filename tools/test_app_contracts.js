@@ -70,6 +70,8 @@ function run() {
   includes(app, "Contact details saved. Add the employee's availability", "new-hire contact details must continue directly to availability setup");
   includes(app, "Availability is live. Choose the employee's role", "new hires must choose roles after their availability is live");
   includes(app, "Save Roles & Build Training", "new-hire role setup must continue into training planning");
+  includes(app, "const mealPrefix = mealText ? `${mealText} training `", "live training cards must identify the meal being trained");
+  includes(app, "training-plan-grid-card-meal", "training plan cards must display their meal section prominently");
   includes(index, 'id="planAvailabilityStartDate" type="date"', "training plans must be able to source dates from live employee availability");
   includes(index, 'id="useSavedAvailabilityForTrainingBtn"', "training plans must provide a direct saved-availability action");
   includes(app, "function selectedTrainingPlanMeals", "selected training meals must drive planning independently from availability windows");
