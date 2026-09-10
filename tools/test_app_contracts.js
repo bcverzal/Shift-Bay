@@ -107,6 +107,8 @@ function run() {
   includes(app, "Training Shift Cannot Move", "a move without a qualified scheduled trainer must be denied");
   includes(app, "Choose a Trainer", "a training move with viable candidates must let the manager select the trainer");
   includes(app, "trainerSourceCoversTrainingShift", "a move must require the trainer to cover the full training shift, not merely overlap it");
+  includes(app, "function shiftDialogIsTraining", "a selected trainer must make the shift a training shift when it is saved");
+  includes(app, "function awardCompletedMealTraining", "completed meal training must grant the earned meal qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");
   includes(app, "item.training?.outcome !== \"noShow\"", "missed training shifts must not retain a chronological training-day number");

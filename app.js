@@ -9877,7 +9877,7 @@ function openShiftDialog(shift = null, options = {}) {
   $("shiftFlexDouble").checked = Boolean(base.isFlexDouble);
   $("shiftIsLocked").checked = Boolean(base.isLocked);
   $("shiftLockNote").value = base.lockNote || "";
-  $("shiftIsTraining").checked = Boolean(base.training?.isTraining);
+  $("shiftIsTraining").checked = Boolean(base.training?.isTraining || base.training?.trainerId);
   $("shiftTrainee").value = base.training?.traineeId || base.employeeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
   $("shiftTrainingSegmentEnd").value = base.training?.segmentEnd || "";
@@ -9947,7 +9947,7 @@ function openStagedShiftDialog(stagedShift = null) {
   $("shiftIsLocked").checked = Boolean(base.isLocked);
   $("shiftLockNote").value = base.lockNote || "";
   base.training = normalizeShiftTraining(base.training);
-  $("shiftIsTraining").checked = Boolean(base.training?.isTraining);
+  $("shiftIsTraining").checked = Boolean(base.training?.isTraining || base.training?.trainerId);
   $("shiftTrainee").value = base.training?.traineeId || "";
   $("shiftTrainer").value = base.training?.trainerId || "";
   $("shiftTrainingSegmentEnd").value = base.training?.segmentEnd || "";
@@ -10109,11 +10109,17 @@ function refreshTrainingOptions(preferredTraineeId = "", preferredTrainerId = ""
   updateTrainingDayControl();
 }
 
+function shiftDialogIsTraining() {
+  // A selected trainer is an explicit training assignment, even if an older
+  // draft was saved before the training checkbox was selected.
+  return Boolean($("shiftIsTraining")?.checked || $("shiftTrainer")?.value);
+}
+
 function collectStagedShiftFromDialog() {
   const existing = (state.unassignedShifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
   const untilVolume = state.settings.showUntilVolumeInShiftEditor && $("shiftUntilVolume").checked;
-  const isTraining = $("shiftIsTraining").checked;
+  const isTraining = shiftDialogIsTraining();
   return {
     id: $("shiftId").value || uid("unassigned"),
     date: $("stagedShiftDate").value || $("shiftDate").value || formatDateKey(currentDate),
@@ -10141,7 +10147,7 @@ function collectStagedShiftFromDialog() {
 function collectShiftFromDialog() {
   const existing = (state.shifts || []).find((item) => item.id === $("shiftId").value);
   const role = roleById($("shiftRole").value);
-  const isTraining = $("shiftIsTraining").checked;
+  const isTraining = shiftDialogIsTraining();
   const traineeId = $("shiftTrainee").value || $("shiftEmployee").value;
   const existingTraining = normalizeShiftTraining(existing?.training);
   const trainerId = isTraining ? $("shiftTrainer").value : "";
@@ -15040,6 +15046,25 @@ function refreshTrainingPlanProgress(traineeId, roleId) {
   };
 }
 
+function awardCompletedMealTraining(traineeId, roleId) {
+  const trainee = employeeById(traineeId);
+  if (!trainee || roleTrainingConfig(roleId).mode !== "meal") return [];
+  const plan = trainee.trainingPlans?.[roleId] || {};
+  const earnedMeals = trainingProgressSections(trainee, roleId, plan)
+    .filter((section) => section.required > 0 && section.completed >= section.required)
+    .map((section) => section.name);
+  if (!earnedMeals.length) return [];
+
+  const currentMeals = employeeMealsForRole(trainee, roleId);
+  const newlyQualifiedMeals = earnedMeals.filter((meal) => !currentMeals.includes(meal));
+  if (!newlyQualifiedMeals.length) return [];
+  trainee.roleMealTraining = {
+    ...(trainee.roleMealTraining || {}),
+    [roleId]: [...new Set([...currentMeals, ...newlyQualifiedMeals])]
+  };
+  return newlyQualifiedMeals;
+}
+
 function saveTrainingOutcome() {
   const shift = state.shifts.find((item) => item.id === $("trainingOutcomeShiftId").value);
   if (!shift?.training?.isTraining) return;
@@ -15073,6 +15098,7 @@ function saveTrainingOutcome() {
   } else {
     if (outcome === "noShow") restoreTrainerSourceForTraineeShift(shift);
     refreshTrainingPlanProgress(traineeId, shift.roleId);
+    if (outcome === "completed") awardCompletedMealTraining(traineeId, shift.roleId);
   }
   $("trainingOutcomeDialog").close();
   renderAll();
@@ -17783,6 +17809,10 @@ function wireEvents() {
     input.addEventListener("input", refreshTrainingSelect);
   });
   $("shiftIsTraining").addEventListener("change", refreshTrainingSelect);
+  $("shiftTrainer").addEventListener("change", () => {
+    if ($("shiftTrainer").value) $("shiftIsTraining").checked = true;
+    refreshTrainingSelect();
+  });
   $("shiftIsCloser").addEventListener("change", applyCloserEndTimeDefault);
   $("shiftFlexDouble").addEventListener("change", applyFlexDoubleEndTimeDefault);
   $("shiftIsLunchCloser").addEventListener("change", applyLunchCloserEndTimeDefault);
