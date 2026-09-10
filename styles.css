@@ -6017,9 +6017,34 @@ body.problem-focus .shift-card.has-issue {
   font-weight: 800;
 }
 
+.training-minimum-duration {
+  display: grid;
+  grid-template-columns: max-content 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-minimum-duration small {
+  color: #52637a;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 @media (max-width: 700px) {
   .training-meal-start-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .training-minimum-duration {
+    grid-template-columns: 1fr 96px;
+  }
+
+  .training-minimum-duration small {
+    grid-column: 1 / -1;
   }
 }
 

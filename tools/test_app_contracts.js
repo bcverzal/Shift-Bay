@@ -76,6 +76,10 @@ function run() {
   includes(app, "function trainingCandidatesForSlot", "training proposals must match a specific possible time window");
   includes(app, "visit(0, [], new Map(), new Map(), 0)", "training assignment optimization must initialize trainer and meal counts as maps");
   includes(app, "function trainingShiftTimingForSlot", "training proposals must calculate a trainee shift inside the shared availability and trainer range");
+  includes(app, "function trainingMinimumShiftHours", "training settings must define a configurable minimum shift duration");
+  includes(app, "data-training-minimum-hours", "training settings must expose the minimum training-shift duration");
+  includes(app, "overlapEnd - overlapStart < trainingMinimumShiftMinutes()", "training proposals must reject trainer overlap shorter than the configured minimum");
+  includes(app, "Training shifts must be at least", "manual training-shift edits must enforce the configured minimum");
   includes(app, "trainerStartFitsTraineeAvailability", "meal-specific training must match a trainer's actual shift start when possible");
   includes(app, "preferredStartDistance", "meal-specific training should favor the configured start time without rejecting a workable trainer shift");
   includes(app, "const trainerPriorityWeight = (slots.length * (24 * 60)) + 1", "trainer priority must outweigh meal-start timing when choosing a training plan");

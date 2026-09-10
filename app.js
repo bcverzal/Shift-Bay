@@ -489,6 +489,7 @@ function defaultState() {
       floorPlanPrintRules: defaultFloorPlanPrintRules(),
       floorPlanCrossRoleNotes: defaultFloorPlanNoteSettings(roles),
       trainingMealStartTimes: defaultTrainingMealStartTimes(),
+      minimumTrainingShiftHours: 3,
       trainingRequirements: {}
     },
     roles,
@@ -599,6 +600,7 @@ function normalizeLoadedState(parsed = {}) {
       floorPlanPrintRules: parsed.settings?.floorPlanPrintRules || base.settings.floorPlanPrintRules,
       floorPlanCrossRoleNotes: { ...base.settings.floorPlanCrossRoleNotes, ...(parsed.settings?.floorPlanCrossRoleNotes || {}) },
       trainingMealStartTimes: { ...base.settings.trainingMealStartTimes, ...(parsed.settings?.trainingMealStartTimes || {}) },
+      minimumTrainingShiftHours: trainingMinimumShiftHours(parsed.settings),
       trainingRequirements: parsed.settings?.trainingRequirements || base.settings.trainingRequirements
     },
     templates: normalizeTemplates(parsed.templates || base.templates),
@@ -814,6 +816,20 @@ function trainingMealStartTimes(settings = state.settings) {
     meal,
     normalizeTime(settings?.trainingMealStartTimes?.[meal] || defaults[meal]) || defaults[meal]
   ]));
+}
+
+function trainingMinimumShiftHours(settings = state.settings) {
+  const value = Number(settings?.minimumTrainingShiftHours);
+  return Number.isFinite(value) ? Math.min(12, Math.max(0.5, value)) : 3;
+}
+
+function trainingMinimumShiftMinutes(settings = state.settings) {
+  return Math.round(trainingMinimumShiftHours(settings) * 60);
+}
+
+function trainingMinimumDurationLabel(settings = state.settings) {
+  const hours = trainingMinimumShiftHours(settings);
+  return `${formatHours(hours)} hour${hours === 1 ? "" : "s"}`;
 }
 
 function applyOneTimeStaffReset(loadedState) {
@@ -3489,6 +3505,10 @@ function validateShift(shift, options = {}) {
   }
   if (employee) warnings.push(...timeOffWarnings(employee, shift));
   if (shift.training?.isTraining) {
+    const duration = shiftDurationHours(shift);
+    if (!shift.untilVolume && duration > 0 && duration < trainingMinimumShiftHours()) {
+      errors.push(`Training shifts must be at least ${trainingMinimumDurationLabel()}.`);
+    }
     const trainee = employeeById(shift.training.traineeId);
     const trainer = employeeById(shift.training.trainerId);
     if (!trainee && !trainer) warnings.push("Training shift needs both a trainee and a trainer.");
@@ -12061,6 +12081,7 @@ function shouldShowFloorPlanCrossRoleNote(shift) {
 }
 function renderTrainingSettingsEditor() {
   const startTimes = trainingMealStartTimes();
+  const minimumHours = trainingMinimumShiftHours();
   $("trainingSettingsEditor").innerHTML = `
     <section class="training-meal-start-settings">
       <div>
@@ -12070,6 +12091,7 @@ function renderTrainingSettingsEditor() {
       <div class="training-meal-start-grid">
         ${MEALS.map((meal) => `<label>${meal}<input data-training-ideal-start="${meal}" value="${escapeHtml(startTimes[meal])}" placeholder="Start time"></label>`).join("")}
       </div>
+      <label class="training-minimum-duration"><span>Minimum training shift</span><input type="number" min="0.5" max="12" step="0.5" data-training-minimum-hours value="${minimumHours}"><small>hours of shared trainee and trainer time</small></label>
     </section>
   ` + state.roles.map((role) => {
     const config = roleTrainingConfig(role.id);
@@ -13562,6 +13584,11 @@ function collectTrainingMealStartTimes() {
   ]));
 }
 
+function collectTrainingMinimumShiftHours() {
+  const value = document.querySelector("[data-training-minimum-hours]")?.value;
+  return trainingMinimumShiftHours({ minimumTrainingShiftHours: value });
+}
+
 function renderOpenShiftPrintBoxes(departments = null) {
   const shifts = currentWeekOpenShifts().filter((shift) => printDepartmentMatches(shift, departments));
   if (!shifts.length) {
@@ -14579,7 +14606,7 @@ function trainingShiftTimingForSlot(slot, trainerShift) {
   if (availabilityStart == null || availabilityEnd == null || trainerRange.start == null || trainerRange.end == null) return null;
   const overlapStart = Math.max(availabilityStart, trainerRange.start);
   const overlapEnd = Math.min(availabilityEnd, trainerRange.end);
-  if (overlapEnd <= overlapStart) return null;
+  if (overlapEnd - overlapStart < trainingMinimumShiftMinutes()) return null;
 
   if (!slot.meal) {
     return { start: timeFromMinutes(overlapStart), end: timeFromMinutes(overlapEnd) };
@@ -14593,7 +14620,7 @@ function trainingShiftTimingForSlot(slot, trainerShift) {
   const start = trainerStartFitsTraineeAvailability
     ? trainerRange.start
     : overlapStart;
-  if (end <= start) return null;
+  if (end - start < trainingMinimumShiftMinutes()) return null;
   return {
     start: timeFromMinutes(start),
     end: timeFromMinutes(end),
@@ -14684,6 +14711,7 @@ function trainingProposalTimingMessage(proposal) {
   const start = minutesFromTime(proposal.start);
   const end = minutesFromTime(proposal.end);
   if (!bounds || start == null || end == null || start >= end) return "Choose a valid start and end time.";
+  if (end - start < trainingMinimumShiftMinutes()) return `Training shifts must be at least ${trainingMinimumDurationLabel()}.`;
   if (start < bounds.start || end > bounds.end) {
     return `Keep this trainee shift between ${timeFromMinutes(bounds.start)} and ${timeFromMinutes(bounds.end)} so it overlaps the trainer, trainee availability, and selected meal.`;
   }
@@ -15179,6 +15207,7 @@ function trainingSetupExportPayload() {
     })),
     settings: {
       trainingMealStartTimes: trainingMealStartTimes(),
+      minimumTrainingShiftHours: trainingMinimumShiftHours(),
       trainingRequirements: Object.fromEntries((state.roles || []).map((role) => [
         role.id,
         trainingSetupRequirement(state.settings?.trainingRequirements?.[role.id], validEmployeeIds)
@@ -15204,6 +15233,7 @@ function trainingSetupProtectedFingerprint(snapshot) {
   });
   safeSnapshot.settings = { ...(safeSnapshot.settings || {}) };
   delete safeSnapshot.settings.trainingMealStartTimes;
+  delete safeSnapshot.settings.minimumTrainingShiftHours;
   delete safeSnapshot.settings.trainingRequirements;
   return JSON.stringify(safeSnapshot);
 }
@@ -15243,6 +15273,9 @@ function prepareTrainingSetupImport(payload) {
       meal,
       normalizeTime(payload.settings.trainingMealStartTimes?.[meal]) || trainingMealStartTimes()[meal]
     ])),
+    minimumTrainingShiftHours: Object.prototype.hasOwnProperty.call(payload.settings, "minimumTrainingShiftHours")
+      ? trainingMinimumShiftHours({ minimumTrainingShiftHours: payload.settings.minimumTrainingShiftHours })
+      : trainingMinimumShiftHours(),
     trainingRequirements: updatedRequirements
   };
   const changedEmployeeNames = updatedEmployees
@@ -15253,6 +15286,7 @@ function prepareTrainingSetupImport(payload) {
     state.settings?.trainingRequirements?.[role.id]
   )).map((role) => role.name);
   const mealStartTimesChanged = !sameSchedulerValue(updatedSettings.trainingMealStartTimes, trainingMealStartTimes());
+  const minimumTrainingDurationChanged = updatedSettings.minimumTrainingShiftHours !== trainingMinimumShiftHours();
   return {
     employees: updatedEmployees,
     settings: updatedSettings,
@@ -15261,6 +15295,7 @@ function prepareTrainingSetupImport(payload) {
     changedRequirements: changedRoleNames.length,
     changedRoleNames,
     mealStartTimesChanged,
+    minimumTrainingDurationChanged,
     skippedEmployees
   };
 }
@@ -15282,7 +15317,7 @@ async function importTrainingSetup(event) {
     showAppAlert({ title: "Training Setup Not Imported", message: error.message || "Choose a valid training setup export.", type: "warning" });
     return;
   }
-  const changeCount = proposal.changedEmployees + proposal.changedRequirements + (proposal.mealStartTimesChanged ? 1 : 0);
+  const changeCount = proposal.changedEmployees + proposal.changedRequirements + (proposal.mealStartTimesChanged ? 1 : 0) + (proposal.minimumTrainingDurationChanged ? 1 : 0);
   if (!changeCount) {
     input.value = "";
     showAppAlert({ title: "Training Setup Already Matches", message: "This schedule already has the training setup contained in that file.", type: "info" });
@@ -15292,6 +15327,7 @@ async function importTrainingSetup(event) {
     `${proposal.changedEmployees} employee training profile${proposal.changedEmployees === 1 ? "" : "s"} will update.`,
     `${proposal.changedRequirements} role training requirement${proposal.changedRequirements === 1 ? "" : "s"} will update.`,
     proposal.mealStartTimesChanged ? "Preferred meal start times will update." : "Preferred meal start times already match.",
+    proposal.minimumTrainingDurationChanged ? "Minimum training-shift duration will update." : "Minimum training-shift duration already matches.",
     proposal.skippedEmployees.length ? `${proposal.skippedEmployees.length} unmatched local profile${proposal.skippedEmployees.length === 1 ? " was" : "s were"} skipped; no employee will be created or matched by name.` : "Every exported employee ID matches this schedule."
   ];
   if (proposal.changedEmployeeNames.length) {
@@ -18560,6 +18596,7 @@ function wireEvents() {
     state.settings.floorPlanPrintRules = collectFloorPlanPrintRules();
     state.settings.floorPlanCrossRoleNotes = collectFloorPlanNoteSettings();
     state.settings.trainingMealStartTimes = collectTrainingMealStartTimes();
+    state.settings.minimumTrainingShiftHours = collectTrainingMinimumShiftHours();
     state.settings.trainingRequirements = collectTrainingRequirements();
     setCurrentWeek(currentDate);
     renderAll();
