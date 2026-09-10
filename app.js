@@ -14212,7 +14212,7 @@ function setFloorText(key, values) {
   const target = document.querySelector(`[data-floor-output="${key}"]`);
   if (!target) return;
   const list = Array.isArray(values) ? values : [values];
-  target.innerHTML = list.filter(Boolean).map((value) => `<div>${value}</div>`).join("");
+  target.innerHTML = list.filter(Boolean).map((value) => key === "servers" ? value : `<div>${value}</div>`).join("");
 }
 
 async function printFloorPlan() {
