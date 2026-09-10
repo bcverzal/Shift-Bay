@@ -9505,12 +9505,22 @@ fieldset .checkbox {
 }
 
 .floor-servers {
+  display: block;
   overflow: hidden;
+}
+
+/* Each server needs an independent grid so its training annotation can span
+   the name and time columns instead of being positioned by neighboring rows. */
+.floor-servers > div {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.95em;
+  row-gap: 0.24em;
+  width: 100%;
 }
 
 .floor-host > div,
 .floor-expo > div,
-.floor-servers > div,
 .floor-busser > div,
 .floor-bartender > div {
   display: contents;
