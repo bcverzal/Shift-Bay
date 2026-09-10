@@ -9505,22 +9505,8 @@ fieldset .checkbox {
 }
 
 .floor-servers {
-  display: block;
-  overflow: hidden;
-}
-
-/* Each server gets an explicit grid so its training annotation spans the
-   name and time columns instead of being positioned by neighboring rows. */
-.floor-servers > div {
-  display: block;
-}
-
-.floor-servers .floor-plan-employee {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: 0.95em;
-  row-gap: 0.24em;
-  width: 100%;
+  overflow: hidden;
 }
 
 .floor-host > div,

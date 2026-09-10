@@ -14126,7 +14126,7 @@ function floorPlanEmployeeLine(employee, shift, firstNameCounts = {}, context = 
   const noteSeparator = primaryNote?.startsWith("/") || primaryNote?.startsWith("-") ? " " : " | ";
   const timeText = `${floorPlanShiftTime(shift, employee)}${primaryNote ? `${noteSeparator}${primaryNote}` : ""}`;
   const nameClass = extraNote ? "floor-name floor-name-with-extra" : "floor-name";
-  return `<div class="floor-plan-employee"><span class="${nameClass}">${floorPlanEmployeeName(employee, firstNameCounts)}</span><span class="floor-time">${timeText}</span>${trainingNote ? `<span class="floor-training-note">${trainingNote}</span>` : ""}${extraNote ? `<span class="floor-note-extra">${extraNote}</span>` : ""}</div>`;
+  return `<span class="${nameClass}">${floorPlanEmployeeName(employee, firstNameCounts)}</span><span class="floor-time">${timeText}</span>${trainingNote ? `<span class="floor-training-note">${trainingNote}</span>` : ""}${extraNote ? `<span class="floor-note-extra">${extraNote}</span>` : ""}`;
 }
 
 function floorPlanPeriodLabel(period) {
@@ -14230,7 +14230,8 @@ function renderFloorPlanSheetMarkup(dateKey, period, options = {}) {
     : "";
   const overlay = (className, values) => {
     const list = Array.isArray(values) ? values : [values];
-    return `<div class="floor-overlay ${className}">${list.filter(Boolean).map((value) => `<div>${value}</div>`).join("")}</div>`;
+    const entries = list.filter(Boolean).map((value) => className === "floor-servers" ? value : `<div>${value}</div>`).join("");
+    return `<div class="floor-overlay ${className}">${entries}</div>`;
   };
   return `
     <div class="floor-plan-sheet floor-plan-print-page">
