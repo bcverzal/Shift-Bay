@@ -14397,13 +14397,33 @@ function trainingPlanMealOptions(roleId = $("planRole")?.value || "") {
   return (configuredMeals.length ? configuredMeals : MEALS).map((meal) => ({ value: meal, label: meal }));
 }
 
+function selectedTrainingPlanMeals() {
+  return Array.from(document.querySelectorAll("[data-plan-training-meal]:checked"))
+    .map((input) => input.value)
+    .filter((meal) => trainingPlanMealOptions().some((option) => option.value === meal));
+}
+
+function renderTrainingPlanMealSelection(preferredMeals = []) {
+  const field = $("planTrainingMealsField");
+  const target = $("planTrainingMeals");
+  const config = roleTrainingConfig($("planRole").value);
+  if (config.mode !== "meal") {
+    field.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+  const options = trainingPlanMealOptions().filter((option) => option.value);
+  const selected = new Set((preferredMeals.length ? preferredMeals : selectedTrainingPlanMeals()).filter((meal) => options.some((option) => option.value === meal)));
+  field.hidden = false;
+  target.innerHTML = options.map((option) => `<label class="checkbox"><input type="checkbox" data-plan-training-meal value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""}> ${escapeHtml(option.label)}</label>`).join("");
+}
+
 function normalizeTrainingPlanSlot(slot = {}) {
   return {
     id: String(slot.id || uid("trainingWindow")),
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(slot.date || "")) ? String(slot.date) : "",
     start: String(slot.start || ""),
-    end: String(slot.end || ""),
-    meal: normalizeMealName(slot.meal || "")
+    end: String(slot.end || "")
   };
 }
 
@@ -14412,38 +14432,15 @@ function loadTrainingPlanDraft() {
   const roleId = $("planRole").value;
   const plan = trainee?.trainingPlans?.[roleId] || {};
   const storedSlots = Array.isArray(plan.possibleTrainingSlots) ? plan.possibleTrainingSlots : [];
+  const storedMeals = (plan.meals || []).filter((meal) => trainingPlanMealOptions(roleId).some((option) => option.value === meal));
+  const legacyMeals = [...new Set(storedSlots.map((slot) => normalizeMealName(slot.meal || "")).filter((meal) => trainingPlanMealOptions(roleId).some((option) => option.value === meal)))];
   trainingPlanSlots = (storedSlots.length ? storedSlots : (plan.possibleDates || []).map((date) => ({
-    date,
-    meal: (plan.meals || [])[0] || ""
-  }))).map(normalizeTrainingPlanSlot);
+    date
+  }))).map(normalizeTrainingPlanSlot)
+    .filter((slot, index, slots) => slots.findIndex((item) => item.date === slot.date && item.start === slot.start && item.end === slot.end) === index);
   $("planAvailabilityStartDate").value = plan.availabilityStartDate || formatDateKey(currentDate);
-  renderTrainingPlanSlotInputs();
-  renderSavedAvailabilityMealOptions(plan.availabilityMeal || ((plan.meals || []).length === 1 ? (plan.meals || [])[0] : ""));
+  renderTrainingPlanMealSelection(storedMeals.length ? storedMeals : legacyMeals);
   renderTrainingPlanSlots();
-}
-
-function renderTrainingPlanSlotInputs() {
-  const options = trainingPlanMealOptions();
-  const select = $("planSlotMeal");
-  select.innerHTML = options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
-  select.disabled = options.length === 1 && !options[0].value;
-}
-
-function renderSavedAvailabilityMealOptions(preferredMeal = "") {
-  const select = $("planAvailabilityMeal");
-  const field = $("planAvailabilityMealField");
-  const config = roleTrainingConfig($("planRole").value);
-  if (config.mode !== "meal") {
-    field.hidden = true;
-    select.innerHTML = `<option value="">Not meal-specific</option>`;
-    select.value = "";
-    return;
-  }
-  field.hidden = false;
-  const options = trainingPlanMealOptions().filter((option) => option.value);
-  const current = preferredMeal || select.value;
-  select.innerHTML = `<option value="">Choose a meal</option>${options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}`;
-  select.value = options.some((option) => option.value === current) ? current : "";
 }
 
 function renderTrainingPlanSlots() {
@@ -14458,7 +14455,7 @@ function renderTrainingPlanSlots() {
     .sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`))
     .map((slot) => `<div class="training-plan-slot" data-training-plan-slot="${escapeHtml(slot.id)}">
       <strong>${escapeHtml(slot.date ? displayDate(parseDateKey(slot.date)) : "Date needed")}</strong>
-      <span>${escapeHtml(slot.start ? `${normalizeTime(slot.start)} - ${normalizeTime(slot.end)}` : "Time needed")}${slot.meal ? ` | ${escapeHtml(slot.meal)}` : ""}</span>
+      <span>${escapeHtml(slot.start ? `${normalizeTime(slot.start)} - ${normalizeTime(slot.end)}` : "Time needed")}</span>
       <button type="button" class="icon-button" data-remove-training-plan-slot="${escapeHtml(slot.id)}" title="Remove this training availability" aria-label="Remove this training availability">x</button>
     </div>`).join("");
 }
@@ -14467,18 +14464,16 @@ function addTrainingPlanSlot() {
   const date = $("planSlotDate").value;
   const start = $("planSlotStart").value;
   const end = $("planSlotEnd").value;
-  const meal = $("planSlotMeal").value;
-  const mealRequired = roleTrainingConfig($("planRole").value).mode === "meal";
-  if (!date || !start || !end || minutesFromTime(start) == null || minutesFromTime(end) == null || minutesFromTime(end) <= minutesFromTime(start) || (mealRequired && !meal)) {
-    showConflict("Choose a date, a valid start and end time, and a meal when this role uses meal-specific training.");
+  if (!date || !start || !end || minutesFromTime(start) == null || minutesFromTime(end) == null || minutesFromTime(end) <= minutesFromTime(start)) {
+    showConflict("Choose a date and a valid start and end time.");
     return;
   }
-  const duplicate = trainingPlanSlots.some((slot) => slot.date === date && slot.start === start && slot.end === end && slot.meal === meal);
+  const duplicate = trainingPlanSlots.some((slot) => slot.date === date && slot.start === start && slot.end === end);
   if (duplicate) {
     showConflict("That training availability is already on the list.");
     return;
   }
-  trainingPlanSlots.push(normalizeTrainingPlanSlot({ date, start, end, meal }));
+  trainingPlanSlots.push(normalizeTrainingPlanSlot({ date, start, end }));
   $("planSlotDate").value = "";
   renderTrainingPlanSlots();
   saveTrainingPlanDraft();
@@ -14494,10 +14489,10 @@ async function useSavedAvailabilityForTraining() {
     return;
   }
   const config = roleTrainingConfig(roleId);
-  const selectedMeal = $("planAvailabilityMeal").value;
-  if (config.mode === "meal" && !selectedMeal) {
-    showConflict("Choose the meal this employee is training for before using saved availability.");
-    $("planAvailabilityMeal").focus();
+  const selectedMeals = selectedTrainingPlanMeals();
+  if (config.mode === "meal" && !selectedMeals.length) {
+    showConflict("Choose at least one training meal before using saved availability.");
+    $("planTrainingMeals")?.querySelector("input")?.focus();
     return;
   }
   const dates = [...new Set(state.shifts
@@ -14511,12 +14506,14 @@ async function useSavedAvailabilityForTraining() {
       const start = normalizeTime(range.start);
       const end = normalizeTime(range.end);
       if (minutesFromTime(start) == null || minutesFromTime(end) == null || minutesFromTime(end) <= minutesFromTime(start)) return;
-      const meals = config.mode === "meal" ? [selectedMeal] : [""];
-      meals.forEach((meal) => {
-        const period = meal ? getMealPeriodsForDate(date).find((item) => item.name === meal) : null;
-        if (period && !rangesOverlap(minutesFromTime(start), minutesFromTime(end), period.startMinutes, period.endMinutes)) return;
-        slots.push(normalizeTrainingPlanSlot({ date, start, end, meal }));
-      });
+      if (config.mode === "meal") {
+        const overlapsSelectedMeal = selectedMeals.some((meal) => {
+          const period = getMealPeriodsForDate(date).find((item) => item.name === meal);
+          return Boolean(period && rangesOverlap(minutesFromTime(start), minutesFromTime(end), period.startMinutes, period.endMinutes));
+        });
+        if (!overlapsSelectedMeal) return;
+      }
+      slots.push(normalizeTrainingPlanSlot({ date, start, end }));
     });
   });
   let mergedSlots = slots;
@@ -14529,7 +14526,7 @@ async function useSavedAvailabilityForTraining() {
     });
     if (!replaceExisting) mergedSlots = [...trainingPlanSlots, ...slots];
   }
-  trainingPlanSlots = mergedSlots.filter((slot, index, values) => values.findIndex((item) => item.date === slot.date && item.start === slot.start && item.end === slot.end && item.meal === slot.meal) === index);
+  trainingPlanSlots = mergedSlots.filter((slot, index, values) => values.findIndex((item) => item.date === slot.date && item.start === slot.start && item.end === slot.end) === index);
   renderTrainingPlanSlots();
   saveTrainingPlanDraft();
   showConflict(trainingPlanSlots.length
@@ -14563,10 +14560,6 @@ function saveTrainingSlotsAsLiveAvailability() {
   showConflict(`Created live availability "${name}" starting ${displayDate(parseDateKey(startDate))}.`);
 }
 
-function trainingPlanMealsFromSlots() {
-  return [...new Set(trainingPlanSlots.map((slot) => slot.meal).filter(Boolean))];
-}
-
 function saveTrainingPlanDraft({ status } = {}) {
   const trainee = employeeById($("planTrainee").value);
   const roleId = $("planRole").value;
@@ -14577,9 +14570,8 @@ function saveTrainingPlanDraft({ status } = {}) {
     [roleId]: {
       ...previous,
       ...(status ? { status } : {}),
-      meals: trainingPlanMealsFromSlots(),
+      meals: selectedTrainingPlanMeals(),
       availabilityStartDate: $("planAvailabilityStartDate").value || "",
-      availabilityMeal: $("planAvailabilityMeal").value || "",
       possibleDates: [...new Set(trainingPlanSlots.map((slot) => slot.date).filter(Boolean))].sort(),
       possibleTrainingSlots: trainingPlanSlots.map((slot) => ({ ...slot }))
     }
@@ -14826,9 +14818,12 @@ function optimizeTrainingAssignments(candidatesBySlot, requirements, maxPerTrain
 function generateTrainingPlan() {
   const traineeId = $("planTrainee").value;
   const roleId = $("planRole").value;
-  const meals = trainingPlanMealsFromSlots();
-  const slots = trainingPlanSlots.filter((slot) => slot.date && slot.start && slot.end);
+  const meals = selectedTrainingPlanMeals();
+  const availabilitySlots = trainingPlanSlots.filter((slot) => slot.date && slot.start && slot.end);
   const config = roleTrainingConfig(roleId);
+  const slots = config.mode === "meal"
+    ? availabilitySlots.flatMap((slot) => meals.map((meal) => ({ ...slot, id: `${slot.id}:${meal}`, meal })))
+    : availabilitySlots.map((slot) => ({ ...slot, meal: "" }));
   const required = trainingRequiredShiftCount(roleId, meals);
   const scheduledByMeal = state.shifts.filter((shift) => isTraineeTrainingShift(shift, traineeId) && shift.roleId === roleId && shift.training.outcome !== "noShow")
     .reduce((counts, shift) => {
@@ -14840,8 +14835,8 @@ function generateTrainingPlan() {
     ? Object.fromEntries(meals.map((meal) => [meal, Math.max(0, (Number(config.mealRequirements?.[meal]) || 0) - (scheduledByMeal[meal] || 0))]))
     : { General: Math.max(0, required - (scheduledByMeal.General || 0)) };
   const needed = Object.values(requirements).reduce((total, value) => total + value, 0);
-  if (!traineeId || !roleId || !slots.length || !required || (config.mode === "meal" && !meals.length)) {
-    showConflict("Choose a trainee and role, then add complete training availability. This role also needs a required training-shift count in Settings.");
+  if (!traineeId || !roleId || !availabilitySlots.length || !required || (config.mode === "meal" && !meals.length)) {
+    showConflict("Choose a trainee and role, select the training meals, then add complete training availability. This role also needs a required training-shift count in Settings.");
     return;
   }
   if (!needed) {
@@ -14875,7 +14870,7 @@ function generateTrainingPlan() {
     planMeals: meals,
     planMeal: shift.planMeal
   }));
-  trainingPlanSuggestions.meta = { traineeId, roleId, meals, slots, needed, required, requirements, noTrainerSlots, candidateDiagnostics };
+  trainingPlanSuggestions.meta = { traineeId, roleId, meals, slots, availabilitySlots, needed, required, requirements, noTrainerSlots, candidateDiagnostics };
   renderTrainingPlanResults();
   setTrainingPlanStage("review");
 }
@@ -15021,8 +15016,8 @@ function addTrainingPlan({ finishLater = false } = {}) {
         ...(trainee.trainingPlans?.[meta.roleId] || {}),
         status: accepted.length ? "scheduled" : (trainee.trainingPlans?.[meta.roleId]?.status || "notStarted"),
         meals: meta.meals || [],
-        possibleDates: [...new Set((meta.slots || []).map((slot) => slot.date))].sort(),
-        possibleTrainingSlots: (meta.slots || []).map((slot) => ({ ...slot })),
+        possibleDates: [...new Set((meta.availabilitySlots || meta.slots || []).map((slot) => slot.date))].sort(),
+        possibleTrainingSlots: (meta.availabilitySlots || meta.slots || []).map((slot) => ({ ...slot })),
         excludedSourceShiftIds: [...new Set([...(trainee.trainingPlans?.[meta.roleId]?.excludedSourceShiftIds || []), ...declinedSourceIds])],
         projectedCompletionDate: plannedDates.at(-1) || trainee.trainingPlans?.[meta.roleId]?.projectedCompletionDate || "",
         plannedShiftIds: [...new Set([...(trainee.trainingPlans?.[meta.roleId]?.plannedShiftIds || []), ...createdShiftIds])]
@@ -17792,6 +17787,10 @@ function wireEvents() {
     loadTrainingPlanDraft();
     setTrainingPlanStage("collect");
     $("trainingPlanResults").innerHTML = "";
+  };
+  $("planTrainingMeals").onchange = () => {
+    trainingPlanSuggestions = [];
+    saveTrainingPlanDraft();
   };
   $("trainingPlanSlotList").onclick = (event) => {
     const button = event.target.closest("[data-remove-training-plan-slot]");

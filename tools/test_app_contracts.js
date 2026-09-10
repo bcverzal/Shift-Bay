@@ -65,15 +65,16 @@ function run() {
   includes(index, 'id="planSlotEnd" data-time-picker', "training-plan availability must use the shared end-time picker");
   includes(app, '"planSlotStart", "planSlotEnd"', "training-plan time inputs must initialize the shared picker");
   includes(app, '$("planSlotDate").focus()', "adding training availability must retain the selected time and return to date entry");
-  includes(index, 'id="planSlotMeal"', "training-plan availability must use a controlled meal selector");
+  includes(index, 'id="planTrainingMeals"', "training plans must choose their meal sections separately from availability");
   includes(index, 'id="planAvailabilityStartDate" type="date"', "training plans must be able to source dates from live employee availability");
   includes(index, 'id="useSavedAvailabilityForTrainingBtn"', "training plans must provide a direct saved-availability action");
-  includes(index, 'id="planAvailabilityMeal"', "saved availability planning must require an explicit meal choice when training is meal-specific");
+  includes(app, "function selectedTrainingPlanMeals", "selected training meals must drive planning independently from availability windows");
   includes(index, 'id="saveTrainingDatesAsAvailabilityBtn"', "managers must be able to turn entered training dates into a live availability");
   includes(index, 'id="planTraineeDisplay"', "training planning launched from a profile must show a fixed trainee context instead of a selector");
   includes(index, 'class="training-plan-role-context"', "training-plan role selection must use the compact context layout");
   includes(index, 'id="trainingPlanSlotList"', "training-plan availability windows must remain visible after entry");
   includes(app, "function trainingCandidatesForSlot", "training proposals must match a specific possible time window");
+  includes(app, "availabilitySlots.flatMap", "one availability window must be considered for every selected training meal");
   includes(app, "visit(0, [], new Map(), new Map(), 0)", "training assignment optimization must initialize trainer and meal counts as maps");
   includes(app, "function trainingShiftTimingForSlot", "training proposals must calculate a trainee shift inside the shared availability and trainer range");
   includes(app, "function trainingMinimumShiftHours", "training settings must define a configurable minimum shift duration");
@@ -138,7 +139,8 @@ function run() {
   includes(app, "possibleTrainingSlots", "training plans must preserve possible time windows for later continuation");
   includes(app, "function useSavedAvailabilityForTraining", "training planning must derive eligible dates from an employee's saved availability");
   includes(app, "Replace Training Availability?", "saved availability imports must protect an existing training-date list");
-  includes(app, "Choose the meal this employee is training for", "saved availability imports must not expand into every meal automatically");
+  includes(app, "Choose at least one training meal", "saved availability imports must require a plan-level meal selection");
+  includes(app, "slots.push(normalizeTrainingPlanSlot({ date, start, end }))", "saved availability imports must retain one availability entry instead of duplicating it per meal");
   includes(app, "function saveTrainingSlotsAsLiveAvailability", "training planning must be able to create a dated live availability from entered times");
   includes(app, "function trainingProgressSections", "training progress must report completion by training section");
   includes(app, "excludedSourceShiftIds", "declined training proposals must not be proposed again");

@@ -1010,12 +1010,18 @@
         </div>
         <label class="training-plan-role-context">Role <select id="planRole"></select></label>
       </div>
+      <section id="planTrainingMealsField" class="training-plan-meals" aria-labelledby="planTrainingMealsHeading">
+        <div>
+          <strong id="planTrainingMealsHeading">Training meals</strong>
+          <span>Select every meal period included in this training plan.</span>
+        </div>
+        <div id="planTrainingMeals" class="training-plan-meal-checks"></div>
+      </section>
       <section class="training-plan-availability-source" aria-labelledby="trainingPlanAvailabilitySourceHeading">
         <div>
           <strong id="trainingPlanAvailabilitySourceHeading">Use saved availability</strong>
           <span>Build possible training dates from the trainee's live availability and the shifts already on the schedule.</span>
         </div>
-        <label id="planAvailabilityMealField">Training meal <select id="planAvailabilityMeal"></select></label>
         <label>Start date <input id="planAvailabilityStartDate" type="date"></label>
         <button id="useSavedAvailabilityForTrainingBtn" type="button">Use Saved Availability</button>
       </section>
@@ -1028,13 +1034,12 @@
           <label>Date <input id="planSlotDate" type="date"></label>
           <label>Start <input id="planSlotStart" data-time-picker placeholder="7a" inputmode="numeric"></label>
           <label>End <input id="planSlotEnd" data-time-picker placeholder="3p" inputmode="numeric"></label>
-          <label>Meal <select id="planSlotMeal"></select></label>
           <button id="addTrainingPlanSlotBtn" type="button">Add Availability</button>
         </div>
         <div id="trainingPlanSlotList" class="training-plan-slot-list"></div>
         <button id="saveTrainingDatesAsAvailabilityBtn" class="small-button" type="button">Save Listed Times as Live Availability</button>
       </section>
-      <p id="trainingPlanGuidance" class="hint">Add every time the trainee is available to train. The planner only proposes trainers already scheduled in the matching role, time, and meal.</p>
+      <p id="trainingPlanGuidance" class="hint">Add every time the trainee is available to train. The planner assigns the selected training meals to the best matching trainer and time.</p>
       <section id="trainingPlanResults" class="training-plan-review" aria-live="polite"></section>
       <div class="form-actions">
         <button id="generateTrainingPlanBtn" type="button">Build Proposed Schedule</button>
