@@ -66,6 +66,10 @@ function run() {
   includes(app, '"planSlotStart", "planSlotEnd"', "training-plan time inputs must initialize the shared picker");
   includes(app, '$("planSlotDate").focus()', "adding training availability must retain the selected time and return to date entry");
   includes(index, 'id="planTrainingMeals"', "training plans must choose their meal sections separately from availability");
+  includes(app, "function setNewHireOnboarding", "new hires must move through contact details, availability, and roles in sequence");
+  includes(app, "Contact details saved. Add the employee's availability", "new-hire contact details must continue directly to availability setup");
+  includes(app, "Availability is live. Choose the employee's role", "new hires must choose roles after their availability is live");
+  includes(app, "Save Roles & Build Training", "new-hire role setup must continue into training planning");
   includes(index, 'id="planAvailabilityStartDate" type="date"', "training plans must be able to source dates from live employee availability");
   includes(index, 'id="useSavedAvailabilityForTrainingBtn"', "training plans must provide a direct saved-availability action");
   includes(app, "function selectedTrainingPlanMeals", "selected training meals must drive planning independently from availability windows");

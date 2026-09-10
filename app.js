@@ -189,6 +189,7 @@ let employeeFormCleanSnapshot = "";
 let employeeFormDirty = false;
 let employeeFormHydrating = false;
 let employeeNewProfileDraft = false;
+let newHireOnboarding = null;
 const collapsedScheduleRoleGroups = loadCollapsedScheduleRoleGroups();
 const expandedTemplateSets = loadExpandedTemplateSets();
 const collapsedTemplateDays = loadCollapsedTemplateDays();
@@ -6476,12 +6477,21 @@ function beginDayFocusTimelineDrag(event, bar) {
 function updateStickyEmployeeSaveAction() {
   const button = $("stickySaveEmployeeBtn");
   const savingAvailability = availabilityEditorTouched && !$("employeeCallWeekly")?.checked;
+  const onboardingStage = newHireOnboardingForCurrentEmployee()?.stage || "";
   if (button) {
-    button.textContent = savingAvailability ? "Save Availability" : "Save Employee";
-    button.title = savingAvailability
+    button.textContent = onboardingStage === "identity"
+      ? "Continue to Availability"
+      : onboardingStage === "roles" && !savingAvailability
+        ? "Save Roles & Build Training"
+        : savingAvailability ? "Save Availability" : "Save Employee";
+    button.title = onboardingStage === "identity"
+      ? "Save contact details and continue to availability."
+      : onboardingStage === "roles" && !savingAvailability
+        ? "Save the selected roles and continue to training."
+        : savingAvailability
       ? "Save the availability currently being edited before saving other profile changes."
       : "Save this employee profile.";
-    button.dataset.saveAction = savingAvailability ? "availability" : "employee";
+    button.dataset.saveAction = onboardingStage || (savingAvailability ? "availability" : "employee");
   }
   const availabilityButton = $("saveAvailabilityPatternBtn");
   if (availabilityButton && !availabilityButton.disabled) {
@@ -11383,6 +11393,7 @@ function parseWeeklyAvailability() {
 function loadEmployee(id) {
   const employee = employeeById(id);
   if (!employee) return;
+  if (newHireOnboarding?.employeeId && newHireOnboarding.employeeId !== id) newHireOnboarding = null;
   employeeFormHydrating = true;
   employeeFormDirty = false;
   availabilityEditorTouched = false;
@@ -11424,6 +11435,7 @@ function loadEmployee(id) {
   syncEmployeeRosterSelection(employee.id);
   employeeFormHydrating = false;
   markEmployeeFormClean();
+  updateNewHireOnboarding();
 }
 
 function updateStickyEmployeeName() {
@@ -11436,10 +11448,35 @@ function updateStickyEmployeeName() {
   if (title) title.textContent = name;
 }
 
+function newHireOnboardingForCurrentEmployee() {
+  const employeeId = $("employeeId")?.value || "";
+  if (!newHireOnboarding) return null;
+  if (employeeNewProfileDraft && !employeeId && !newHireOnboarding.employeeId) return newHireOnboarding;
+  return newHireOnboarding.employeeId === employeeId ? newHireOnboarding : null;
+}
+
+function updateNewHireOnboarding() {
+  const onboarding = newHireOnboardingForCurrentEmployee();
+  const stage = onboarding?.stage || "";
+  const tabAvailability = document.querySelector('[data-employee-profile-tab="availability"]');
+  const tabRoles = document.querySelector('[data-employee-profile-tab="roles"]');
+  const tabTraining = document.querySelector('[data-employee-profile-tab="training"]');
+  if (tabAvailability) tabAvailability.disabled = Boolean(stage && stage === "identity");
+  if (tabRoles) tabRoles.disabled = Boolean(stage && !["roles", "training"].includes(stage));
+  if (tabTraining) tabTraining.disabled = Boolean(stage && stage !== "training");
+  updateStickyEmployeeSaveAction();
+}
+
+function setNewHireOnboarding(employeeId, stage = "") {
+  newHireOnboarding = stage ? { employeeId, stage } : null;
+  updateNewHireOnboarding();
+}
+
 function activateEmployeeProfileTab(tabName = "profile") {
   const tabs = Array.from(document.querySelectorAll("[data-employee-profile-tab]"));
   const panels = Array.from(document.querySelectorAll("[data-employee-profile-panel]"));
-  const target = panels.some((panel) => panel.dataset.employeeProfilePanel === tabName) ? tabName : "profile";
+  const requestedTab = tabs.find((tab) => tab.dataset.employeeProfileTab === tabName);
+  const target = panels.some((panel) => panel.dataset.employeeProfilePanel === tabName) && !requestedTab?.disabled ? tabName : "profile";
   tabs.forEach((tab) => {
     const active = tab.dataset.employeeProfileTab === target;
     tab.classList.toggle("active", active);
@@ -11476,6 +11513,7 @@ function resetEmployeeForm() {
   setCheckedValues("emergencyRoleIds", []);
   setRoleMealTrainingValues({});
   renderEmployeeTrainingProgress(null);
+  setNewHireOnboarding("", "identity");
   activateEmployeeProfileTab("profile");
   employeeFormHydrating = false;
   markEmployeeFormClean();
@@ -17947,15 +17985,19 @@ function wireEvents() {
     const lastName = $("lastName").value.trim();
     const phone = formatPhoneNumber($("employeePhone").value.trim());
     const intendedRoles = checkedValues("roleTraining");
-    if (!firstName || !lastName || !phone || !intendedRoles.length) {
+    const onboardingStage = newHireOnboardingForCurrentEmployee()?.stage || "";
+    const rolesMayBeAddedLater = Boolean(onboardingStage && ["identity", "availability"].includes(onboardingStage));
+    if (!firstName || !lastName || !phone || (!intendedRoles.length && !rolesMayBeAddedLater)) {
       undoStack.pop();
       setEmployeeSaveDebugStatus("Save stopped: onboarding fields incomplete", "failed");
       showAppAlert({
         title: "Finish Employee Setup",
-        message: "Enter the employee's first name, last name, phone number, and at least one intended role before saving the profile.",
+        message: rolesMayBeAddedLater
+          ? "Enter the employee's first name, last name, and phone number before continuing to availability."
+          : "Enter the employee's first name, last name, phone number, and at least one intended role before saving the profile.",
         type: "warning"
       });
-      activateEmployeeProfileTab(!phone ? "profile" : "roles");
+      activateEmployeeProfileTab(!phone || rolesMayBeAddedLater ? "profile" : "roles");
       return false;
     }
     const importMatch = !existingEmployee ? findEmployeeImportMatch({
@@ -18208,20 +18250,38 @@ function wireEvents() {
         const action = statusShiftReview.action === "delete" ? "deleted" : "returned to the Shift Bay";
         showConflict(`${statusChangedShifts.length} future ${statusChangedShifts.length === 1 ? "shift was" : "shifts were"} ${action}.`);
       }
-      if (!isExisting) {
+      if (onboardingStage === "identity" && !isExisting) {
+        setNewHireOnboarding(id, "availability");
+        activateEmployeeProfileTab("availability");
+        showConflict("Contact details saved. Add the employee's availability and make it live before choosing their role.");
+        return true;
+      }
+      if (onboardingStage === "availability" && activateSubmittedAvailability && patternActive) {
+        setNewHireOnboarding(id, "roles");
+        activateEmployeeProfileTab("roles");
+        showConflict("Availability is live. Choose the employee's role to continue with training setup.");
+        return true;
+      }
+      if (!isExisting || onboardingStage === "roles") {
         const trainingRoleId = intendedRoles.find((roleId) => {
           const config = roleTrainingConfig(roleId);
           return config.mode === "meal"
             ? Object.values(config.mealRequirements || {}).some((value) => Number(value) > 0)
             : Number(config.days) > 0;
         });
-        if (trainingRoleId && await showAppConfirm({
-          title: "Plan Training Shifts?",
-          message: `${displayName(employee)} has a role with training requirements. Would you like to build their training plan now?`,
-          confirmText: "Build Training Plan",
-          cancelText: "Finish Later"
-        })) {
+        const shouldBuildTraining = onboardingStage === "roles"
+          ? Boolean(trainingRoleId)
+          : trainingRoleId && await showAppConfirm({
+            title: "Plan Training Shifts?",
+            message: `${displayName(employee)} has a role with training requirements. Would you like to build their training plan now?`,
+            confirmText: "Build Training Plan",
+            cancelText: "Finish Later"
+          });
+        if (shouldBuildTraining) {
+          setNewHireOnboarding(id, "training");
           openTrainingPlanDialog({ traineeId: employee.id, roleId: trainingRoleId });
+        } else if (onboardingStage === "roles") {
+          setNewHireOnboarding(id, "");
         }
       }
       return true;
