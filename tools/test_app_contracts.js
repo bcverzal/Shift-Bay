@@ -36,6 +36,7 @@ function run() {
   includes(app, "floorPlanDailyNoteMarkup(dateKey)", "weekly floor-plan printing must include the day note");
   includes(app, 'class="floor-training-note"', "floor plans must place training relationships on their own readable line");
   includes(styles, ".floor-training-note::before", "floor-plan training relationships must use paired visual brackets");
+  includes(styles, "grid-column: 1 / 3", "floor-plan training relationships must center across both name and time columns");
   includes(index, 'data-floor-output="day-notes"', "the live floor plan must include a day-notes output area");
   includes(index, 'id="dayNotesDialog"', "day notes must use the Shift Bay dialog styling instead of a browser prompt");
   includes(index, 'class="day-notes-content"', "day-notes content must be isolated from the dialog footer");
