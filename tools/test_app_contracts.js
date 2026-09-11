@@ -86,6 +86,9 @@ function run() {
   includes(app, "availabilitySlots.flatMap", "one availability window must be considered for every selected training meal");
   includes(app, "visit(0, [], new Map(), new Map(), 0)", "training assignment optimization must initialize trainer and meal counts as maps");
   includes(app, "function trainingShiftTimingForSlot", "training proposals must calculate a trainee shift inside the shared availability and trainer range");
+  includes(app, "Never merge its text fallback into structured rows", "RO imports must not treat submitted dates as requested dates");
+  includes(app, "Duplicate row found on another page in the same PDF", "RO import counts must deduplicate repeated report rows within each PDF");
+  includes(app, "repeated request${parserDuplicates", "RO import feedback must describe only repeated PDF rows");
   includes(app, "function trainingMinimumShiftHours", "training settings must define a configurable minimum shift duration");
   includes(app, "data-training-minimum-hours", "training settings must expose the minimum training-shift duration");
   includes(app, "overlapEnd - overlapStart < trainingMinimumShiftMinutes()", "training proposals must reject trainer overlap shorter than the configured minimum");

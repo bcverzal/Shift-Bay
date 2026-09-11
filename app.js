@@ -16730,6 +16730,7 @@ async function parseRequestOffPdfFilesInBrowser(files) {
       const document = await pdfjs.getDocument({ data }).promise;
       const requests = [];
       const pageText = [];
+      const fileSeen = new Set();
       for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
@@ -16752,25 +16753,23 @@ async function parseRequestOffPdfFilesInBrowser(files) {
             return;
           }
           pageSeen.add(key);
+          if (fileSeen.has(key)) {
+            duplicateRows.push({ ...request, reason: "Duplicate row found on another page in the same PDF" });
+            return;
+          }
+          fileSeen.add(key);
           requests.push(request);
         });
         pageText.push(items.map((item) => cleanCell(item.str)).filter(Boolean).join("\n"));
       }
-      const fallbackRequests = parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName);
-      const combinedRequests = [];
-      const seen = new Set();
-      [...requests, ...fallbackRequests].forEach((request) => {
-        const key = [request.firstName, request.lastName, request.date, request.daypart]
-          .map((value) => cleanCell(value).toLowerCase())
-          .join("|");
-        if (seen.has(key) || !roPdfPlausibleRequest(request)) {
-          if (seen.has(key)) duplicateRows.push({ ...request, reason: "Duplicate row found during PDF extraction" });
-          return;
-        }
-        seen.add(key);
-        combinedRequests.push(request);
-      });
-      results.push({ fileName, pages: document.numPages, requests: combinedRequests });
+      // The compact CTUIT report contains both a Date Submitted and a requested
+      // date. Never merge its text fallback into structured rows: that fallback
+      // cannot reliably distinguish those two dates. It is only a recovery path
+      // when the structured reader found no rows at all.
+      const parsedRequests = requests.length
+        ? requests
+        : parseCtuitAvailabilityTimeOffText(pageText.join("\n"), fileName).filter(roPdfPlausibleRequest);
+      results.push({ fileName, pages: document.numPages, requests: parsedRequests });
     } catch (error) {
       errors.push({ fileName, error: error.message || "Could not parse PDF." });
     }
@@ -16813,8 +16812,9 @@ function parseCtuitAvailabilityTimeOffText(text, fileName = "Ctuit RO PDF") {
     const inlineFirstName = line.match(/^[A-Z][A-Za-z' -]+,\s*([A-Z][A-Za-z' -]+?)(?=\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
     const firstName = cleanCell(inlineFirstName || firstNameMatch?.[1] || next.replace(/\b(All Day|Manager Note:|Disallow|Approve)\b/gi, ""));
     if (!firstName || dayNames.has(firstName.toLowerCase())) continue;
-    const dateMatches = [...combined.matchAll(datePattern)].map((match) => normalizeImportDate(match[0])).filter(Boolean);
-    const requestDate = dateMatches.find((dateKey) => {
+    const lastNameIndex = combined.toLowerCase().indexOf(lastName.toLowerCase());
+    const dateMatches = [...combined.matchAll(datePattern)].filter((match) => match.index > lastNameIndex);
+    const requestDate = dateMatches.map((match) => normalizeImportDate(match[0])).find((dateKey) => {
       const year = Number(dateKey.slice(0, 4));
       return year >= 2020;
     });
@@ -16992,7 +16992,7 @@ function applyParsedRequestOffs(parsed) {
   const auditDetails = renderRequestOffImportAudit(auditRows);
   showAppAlert({
     title: "RO Import Complete",
-    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} already-imported entr${duplicates === 1 ? "y" : "ies"}.` : ""}${parserDuplicates ? ` Ignored ${parserDuplicates} duplicate row${parserDuplicates === 1 ? "" : "s"} found within the selected files.` : ""}${suffix}${diagnostic}`,
+    message: `Imported ${imported} request-off entr${imported === 1 ? "y" : "ies"} as RO blocks.${duplicates ? ` Skipped ${duplicates} already-imported entr${duplicates === 1 ? "y" : "ies"}.` : ""}${parserDuplicates ? ` Ignored ${parserDuplicates} repeated request${parserDuplicates === 1 ? "" : "s"} printed in the selected PDF${parserDuplicates === 1 ? "" : "s"}.` : ""}${suffix}${diagnostic}`,
     type: skipped || diagnostic || errorItems.length ? "warning" : "info",
     items: [...fileItems, ...errorItems],
     details: auditDetails
@@ -17013,7 +17013,7 @@ function renderRequestOffImportAudit(rows = []) {
   const summary = [
     ["created", "Created"],
     ["already-imported", "Already imported"],
-    ["duplicate", "Duplicate parser rows"],
+    ["duplicate", "Repeated PDF rows"],
     ["skipped", "Skipped"]
   ].filter(([key]) => counts[key]).map(([key, label]) => `${label}: ${counts[key]}`).join(" | ");
   const rowsHtml = rows.map((row) => `
