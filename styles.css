@@ -3906,6 +3906,13 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   box-shadow: 0 2px 5px rgba(5, 150, 105, 0.14);
 }
 
+.day-focus-open-eligible .day-focus-candidate-list button.day-focus-candidate-fallback {
+  border-color: #fbbf24;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+  color: #a16207;
+  box-shadow: 0 2px 5px rgba(180, 83, 9, 0.14);
+}
+
 .day-focus-candidate-list {
   display: flex;
   flex-wrap: wrap;
@@ -3965,6 +3972,7 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
 
 .day-focus-chip-tooltip-available { border-left-color: #2563eb; }
 .day-focus-chip-tooltip-emergency { border-left-color: #c2410c; }
+.day-focus-chip-tooltip-fallback { border-left-color: #d97706; }
 
 .day-focus-chip-tooltip strong,
 .day-focus-chip-tooltip span,

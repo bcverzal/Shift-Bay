@@ -6005,8 +6005,9 @@ function dayFocusOpenShiftsForRole(dateKey, roleId) {
     .sort((a, b) => (minutesFromTime(a.start) ?? 0) - (minutesFromTime(b.start) ?? 0) || (minutesFromTime(a.end) ?? 0) - (minutesFromTime(b.end) ?? 0));
 }
 
-function dayFocusEligibleEmployeesForOpenShift(openShift) {
-  return schedulableEmployees()
+function dayFocusCandidateGroupsForOpenShift(openShift) {
+  const groups = { clean: [], fallback: [] };
+  schedulableEmployees()
     .filter(visibleEmployee)
     .map((employee) => {
       const proposed = stagedShiftToShift(openShift, employee.id);
@@ -6021,9 +6022,27 @@ function dayFocusEligibleEmployeesForOpenShift(openShift) {
       };
     })
     .filter((item) => item.qualification.qualified && !item.result.errors.length && item.availabilityFits)
-    .sort((a, b) => (Number(a.emergencyOnly) - Number(b.emergencyOnly))
-      || (a.result.warnings.length - b.result.warnings.length)
-      || displayName(a.employee).localeCompare(displayName(b.employee)));
+    .forEach((item) => {
+      if (!item.emergencyOnly && !item.result.warnings.length) groups.clean.push(item);
+      else groups.fallback.push(item);
+    });
+  Object.values(groups).forEach((items) => items.sort((a, b) =>
+    displayName(a.employee).localeCompare(displayName(b.employee))
+  ));
+  return groups;
+}
+
+function dayFocusEligibleEmployeesForOpenShift(openShift) {
+  const groups = dayFocusCandidateGroupsForOpenShift(openShift);
+  return groups.clean.length ? groups.clean : groups.fallback;
+}
+
+function dayFocusCandidateNote(item) {
+  const reasons = [
+    item.emergencyOnly ? `${displayName(item.employee)} is marked emergency only for this role.` : "",
+    ...(item.result.warnings || [])
+  ].filter(Boolean);
+  return reasons.join(" ") || "No additional scheduling note.";
 }
 
 function dayFocusEmployeeWeekSummary(employee, dateKey) {
@@ -6057,7 +6076,13 @@ function showDayFocusChipTooltip(chip) {
     document.body.append(tooltip);
   }
   const tier = chip.dataset.candidateTier || "recommended";
-  const tierLabel = tier === "emergency" ? "Emergency only" : tier === "available" ? "Available with note" : "Recommended";
+  const tierLabel = tier === "fallback"
+    ? "Fallback only"
+    : tier === "emergency"
+      ? "Emergency only"
+      : tier === "available"
+        ? "Available to work"
+        : "Recommended";
   const note = chip.dataset.candidateNote || "No additional scheduling note.";
   const summary = chip.dataset.candidateSummary || text;
   tooltip.className = `day-focus-chip-tooltip day-focus-chip-tooltip-${tier}`;
@@ -6150,22 +6175,24 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const left = ((visibleStart - window.start) / range) * 100;
   const width = Math.max(5, ((Math.max(visibleEnd, visibleStart + 30) - visibleStart) / range) * 100);
   const patternRecommendation = historicalRecommendationForOpenShift(openShift);
-  const eligible = dayFocusEligibleEmployeesForOpenShift(openShift)
+  const candidateGroups = dayFocusCandidateGroupsForOpenShift(openShift);
+  const fallbackMode = !candidateGroups.clean.length && candidateGroups.fallback.length > 0;
+  const eligible = (fallbackMode ? candidateGroups.fallback : candidateGroups.clean)
     .sort((a, b) => Number(b.employee.id === patternRecommendation?.employee.id) - Number(a.employee.id === patternRecommendation?.employee.id)
       || displayName(a.employee).localeCompare(displayName(b.employee)));
   const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
-    ? eligible.map((item) => {
+      ? eligible.map((item) => {
         const historical = patternRecommendation?.employee.id === item.employee.id;
-        const tier = historical ? "historical" : "available";
+        const tier = historical ? "historical" : fallbackMode ? "fallback" : "available";
         const tierLabel = historical
           ? "Historical recommendation"
-          : item.emergencyOnly
-            ? "Emergency-only available"
+          : fallbackMode
+            ? "Fallback only"
             : "Available to work";
-        const note = item.result.warnings.join(" ") || "No additional scheduling note.";
+        const note = dayFocusCandidateNote(item);
         const summary = dayFocusEmployeeWeekSummary(item.employee, openShift.date);
         return `<button type="button" class="day-focus-eligible-chip day-focus-candidate-${tier}${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-candidate-tier="${tier}" data-candidate-note="${escapeHtml(note)}" data-candidate-summary="${escapeHtml(summary)}" aria-label="${escapeHtml(`${tierLabel}: ${displayName(item.employee)}`)}" data-chip-tip="${escapeHtml(`${tierLabel}. ${note} ${summary}`)}">${escapeHtml(displayName(item.employee))}</button>`;
       }).join("")
@@ -6182,7 +6209,7 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
           </div>
         </div>
       </div>
-      ${expanded ? `<div class="day-focus-open-eligible"><span>Eligible</span><div class="day-focus-candidate-list">${chips}</div></div>` : ""}
+      ${expanded ? `<div class="day-focus-open-eligible"><span>${fallbackMode ? "Fallback" : "Eligible"}</span><div class="day-focus-candidate-list">${chips}</div></div>` : ""}
     </div>
   `;
 }
