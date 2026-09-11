@@ -3808,6 +3808,11 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   font-weight: 950;
 }
 
+.day-focus-open-label.has-pattern-recommendation {
+  border-color: #86efac;
+  border-left-color: #16a34a;
+}
+
 .day-focus-open-label span {
   margin-top: 2px;
   color: #475569;
@@ -3817,6 +3822,8 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
 
 .day-focus-open-toggle {
   justify-self: end;
+  display: grid;
+  place-items: center;
   width: 19px;
   height: 19px;
   min-width: 19px;
@@ -3825,10 +3832,16 @@ body:has(#schedule.panel.active):not(.compact-preview) .unavailable-employees-li
   border-radius: 999px;
   background: #ffffff;
   color: #1d4ed8;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 950;
   line-height: 1;
   box-shadow: 0 2px 5px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.day-focus-open-label.has-pattern-recommendation .day-focus-open-toggle {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
 }
 
 .day-focus-open-cell {

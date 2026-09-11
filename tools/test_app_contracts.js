@@ -58,6 +58,8 @@ function run() {
   includes(app, "!item.emergencyOnly && !item.result.warnings.length", "Day View must keep conflicts out of the immediate assignment list");
   includes(app, "fallbackMode ? \"Fallback\" : \"Eligible\"", "Day View must clearly label amber fallback candidates");
   includes(styles, "day-focus-candidate-fallback", "warning-only Day View candidates must use amber styling");
+  includes(app, "has-pattern-recommendation", "Day View open shifts with a historical match must carry a compact recommendation marker");
+  includes(styles, "place-items: center", "Day View open-shift expand controls must center their glyphs");
   includes(app, "Schedule pattern", "recommendations should use plain schedule-pattern language");
   assert.ok(!app.includes("${renderRecentStagedSection(recent)}"), "selected shift info should not show the misleading recent section");
   includes(app, "staged-info-history-recommendation", "historical recommendations must be visible in the bay info panel");

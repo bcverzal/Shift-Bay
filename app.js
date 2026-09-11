@@ -6122,13 +6122,15 @@ function renderDayFocusOpenShiftRows(grid, role, openShifts, dateKey) {
     const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
     const eligibleCount = expanded ? dayFocusEligibleEmployeesForOpenShift(openShift).length : 0;
     const eligibleRows = expanded ? Math.min(4, Math.max(1, Math.ceil(Math.max(eligibleCount, 1) / 7))) : 1;
+    const patternRecommendation = historicalRecommendationForOpenShift(openShift);
+    const hasPatternRecommendation = Boolean(patternRecommendation);
     const labelCell = cell(`day-focus-open-name ${expanded ? "expanded" : ""}`, `
-      <div class="day-focus-open-label" style="--role-color:${roleColor}">
+      <div class="day-focus-open-label ${hasPatternRecommendation ? "has-pattern-recommendation" : ""}" style="--role-color:${roleColor}">
         <div>
           <strong>Open</strong>
           <span>${escapeHtml(openShift.start)} - ${escapeHtml(openShift.untilVolume ? "Vol" : openShift.end)}</span>
         </div>
-        <button type="button" class="day-focus-open-toggle" data-day-open-toggle-eligible aria-label="${expanded ? "Hide" : "Show"} eligible staff for this open shift">${expanded ? "-" : "+"}</button>
+        <button type="button" class="day-focus-open-toggle" data-day-open-toggle-eligible aria-label="${expanded ? "Hide" : "Show"} eligible staff for this open shift" title="${hasPatternRecommendation ? "Schedule-pattern recommendation available" : "Show eligible staff"}">${expanded ? "-" : "+"}</button>
       </div>
     `);
     const timelineCell = cell(`day-cell day-focus-open-cell ${expanded ? "expanded" : ""}`, renderDayFocusOpenShiftTimeline(openShift, role));
