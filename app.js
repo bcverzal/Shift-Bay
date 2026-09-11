@@ -5409,6 +5409,9 @@ function renderSelectedStagedShiftInfo() {
   const role = roleById(shift.roleId);
   const candidates = stagedShiftCandidates(shift);
   const historicalRecommendation = historicalRecommendationForOpenShift(shift, candidates);
+  const availableCandidates = historicalRecommendation
+    ? candidates.best.filter((item) => item.employee.id !== historicalRecommendation.employee.id)
+    : candidates.best;
   panel.hidden = false;
   panel.classList.remove("empty");
   panel.innerHTML = `
@@ -5419,8 +5422,8 @@ function renderSelectedStagedShiftInfo() {
       </div>
       <button class="skip-open-shift-button" type="button" data-skip-open-shift title="Move this shift to the end of the Shift Bay without deleting it. Hotkey: S">Skip</button>
     </div>
-    ${renderStagedCandidateSection("Best Fits", candidates.best, "best")}
     ${historicalRecommendation ? renderHistoricalRecommendationSection(historicalRecommendation) : ""}
+    ${availableCandidates.length ? renderStagedCandidateSection("Available", availableCandidates, "best") : ""}
   `;
   panel.querySelectorAll("[data-stage-assign]").forEach((button) => {
     button.onclick = () => assignUnassignedShift(shift.id, button.dataset.stageAssign);
@@ -6010,12 +6013,14 @@ function dayFocusEligibleEmployeesForOpenShift(openShift) {
       const result = validateShift(proposed);
       return {
         employee,
+        proposed,
         result,
         qualification: employeeQualificationForShift(employee, proposed),
-        emergencyOnly: employeeIsEmergencyOnlyForRole(employee, openShift.roleId)
+        emergencyOnly: employeeIsEmergencyOnlyForRole(employee, openShift.roleId),
+        availabilityFits: rangeInsideAvailability(employee, openShift.date, proposed)
       };
     })
-    .filter((item) => item.qualification.qualified)
+    .filter((item) => item.qualification.qualified && !item.result.errors.length && item.availabilityFits)
     .sort((a, b) => (Number(a.emergencyOnly) - Number(b.emergencyOnly))
       || (a.result.warnings.length - b.result.warnings.length)
       || displayName(a.employee).localeCompare(displayName(b.employee)));
@@ -6144,15 +6149,22 @@ function renderDayFocusOpenShiftTimeline(openShift, role) {
   const visibleEnd = Math.min(window.end, end);
   const left = ((visibleStart - window.start) / range) * 100;
   const width = Math.max(5, ((Math.max(visibleEnd, visibleStart + 30) - visibleStart) / range) * 100);
-  const eligible = dayFocusEligibleEmployeesForOpenShift(openShift);
   const patternRecommendation = historicalRecommendationForOpenShift(openShift);
+  const eligible = dayFocusEligibleEmployeesForOpenShift(openShift)
+    .sort((a, b) => Number(b.employee.id === patternRecommendation?.employee.id) - Number(a.employee.id === patternRecommendation?.employee.id)
+      || displayName(a.employee).localeCompare(displayName(b.employee)));
   const expanded = dayFocusExpandedEligibleShiftIds.has(openShift.id);
   const endLabel = openShift.untilVolume ? "Vol" : (openShift.end || timeFromMinutes(end));
   const timeLabel = `${openShift.start.replace(":00 ", "")} - ${endLabel.replace(":00 ", "")}`;
   const chips = eligible.length
     ? eligible.map((item) => {
-        const tier = item.emergencyOnly ? "emergency" : item.result.warnings.length ? "available" : "recommended";
-        const tierLabel = tier === "emergency" ? "Emergency only" : tier === "available" ? "Available with note" : "Recommended";
+        const historical = patternRecommendation?.employee.id === item.employee.id;
+        const tier = historical ? "historical" : "available";
+        const tierLabel = historical
+          ? "Historical recommendation"
+          : item.emergencyOnly
+            ? "Emergency-only available"
+            : "Available to work";
         const note = item.result.warnings.join(" ") || "No additional scheduling note.";
         const summary = dayFocusEmployeeWeekSummary(item.employee, openShift.date);
         return `<button type="button" class="day-focus-eligible-chip day-focus-candidate-${tier}${patternRecommendation?.employee.id === item.employee.id ? " day-focus-pattern-chip" : ""}" data-day-open-assign="${item.employee.id}" data-candidate-tier="${tier}" data-candidate-note="${escapeHtml(note)}" data-candidate-summary="${escapeHtml(summary)}" aria-label="${escapeHtml(`${tierLabel}: ${displayName(item.employee)}`)}" data-chip-tip="${escapeHtml(`${tierLabel}. ${note} ${summary}`)}">${escapeHtml(displayName(item.employee))}</button>`;
