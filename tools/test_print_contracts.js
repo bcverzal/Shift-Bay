@@ -29,13 +29,14 @@ function run() {
   includes(app, "Active staff are listed alphabetically", "full roster must describe its single alphabetical list");
   includes(app, "<th>Department</th>", "full roster must retain department context in the combined list");
   includes(app, "<th>Email</th>", "full roster must reserve an email column for portal onboarding");
-  includes(app, "layout !== \"fullRoster\" && !(await checkPrintCoverage())", "roster printing must bypass schedule coverage warnings");
+  includes(app, "layout !== \"fullRoster\" && layout !== \"trainingWeek\" && !(await checkPrintCoverage())", "roster and training reports must bypass schedule coverage warnings");
   includes(app, "function runPreparedPrint", "all print flows must share one render-and-cleanup lifecycle");
   includes(app, 'window.addEventListener("afterprint", finish', "print cleanup must wait until the browser finishes printing");
   includes(app, 'document.body.classList.add("printing-staffing")', "staffing reports must own their print target");
   includes(app, 'document.body.classList.add("printing-floor-plan")', "single floor plans must own their print target");
   includes(app, 'document.body.classList.add("printing-call-weekly")', "Call Weekly sheets must own their print target");
   includes(app, 'document.body.classList.add("printing-training-schedule")', "training handouts must own their print target");
+  includes(app, 'document.body.classList.add("printing-simple", "printing-training-week")', "weekly training reports must own their print target");
   includes(app, "function isPrintableScheduledEmployee", "compact printing must have an active employee print guard");
   includes(app, "isPrintableScheduledEmployee(shift.employeeId)", "compact printing must exclude inactive and archived employee shifts");
   includes(app, "dateKeys.has(shift.date)", "compact role printing must only include the printed week");

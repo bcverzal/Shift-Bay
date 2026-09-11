@@ -9943,6 +9943,147 @@ body.compact-preview .print-view {
   border-top: 1px solid #334155;
 }
 
+.weekly-training-print {
+  color: #17243b;
+}
+
+.weekly-training-print-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  padding-bottom: 14px;
+  border-bottom: 3px solid #1d4ed8;
+}
+
+.weekly-training-print-header span,
+.weekly-training-print-header dt {
+  color: #52637a;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.weekly-training-print-header h2 {
+  margin: 2px 0 0;
+  color: #173b84;
+  font-size: 26px;
+}
+
+.weekly-training-print-header p {
+  margin: 4px 0 0;
+  color: #52637a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.weekly-training-print-header dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(88px, max-content));
+  gap: 14px;
+  margin: 0;
+}
+
+.weekly-training-print-header dl div {
+  display: grid;
+  gap: 2px;
+}
+
+.weekly-training-print-header dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.weekly-training-labor-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 18px;
+}
+
+.weekly-training-labor-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #f8fbff;
+}
+
+.weekly-training-labor-summary span {
+  color: #52637a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.weekly-training-labor-summary strong {
+  color: #173b84;
+  font-size: 15px;
+}
+
+.weekly-training-day {
+  margin-top: 16px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.weekly-training-day h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px 6px 0 0;
+  background: #173b84;
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.weekly-training-day h3 span {
+  font-size: 11px;
+}
+
+.weekly-training-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #b7c6dd;
+  border-top: 0;
+  font-size: 12px;
+}
+
+.weekly-training-table th,
+.weekly-training-table td {
+  padding: 8px 9px;
+  border-top: 1px solid #dbe4f0;
+  text-align: left;
+}
+
+.weekly-training-table thead th {
+  background: #edf4ff;
+  color: #314b77;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.weekly-training-table tbody td:first-child,
+.weekly-training-table tbody td:last-child,
+.weekly-training-table tfoot {
+  font-weight: 850;
+}
+
+.weekly-training-table tfoot {
+  background: #f5f9ff;
+  color: #173b84;
+}
+
+.weekly-training-print-footer {
+  margin-top: 18px;
+  color: #52637a;
+  font-size: 11px;
+}
+
 .simple-print-section {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -12062,6 +12203,46 @@ dialog .time-picker {
     width: calc(100% - 0.35in) !important;
     margin-left: 0.35in !important;
     margin-right: 0 !important;
+  }
+
+  body.printing-training-week .print-view {
+    width: 100% !important;
+    margin: 0 !important;
+  }
+
+  body.printing-training-week .weekly-training-print-header {
+    padding-bottom: 8px;
+  }
+
+  body.printing-training-week .weekly-training-print-header h2 {
+    font-size: 20px;
+  }
+
+  body.printing-training-week .weekly-training-labor-summary {
+    margin: 10px 0 12px;
+  }
+
+  body.printing-training-week .weekly-training-labor-summary > div {
+    padding: 7px 8px;
+  }
+
+  body.printing-training-week .weekly-training-day {
+    margin-top: 10px;
+  }
+
+  body.printing-training-week .weekly-training-table thead {
+    display: table-header-group;
+  }
+
+  body.printing-training-week .weekly-training-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.printing-training-week .weekly-training-table th,
+  body.printing-training-week .weekly-training-table td {
+    padding: 5px 6px;
+    font-size: 10px;
   }
 
   body.printing-simple .print-view h2 {

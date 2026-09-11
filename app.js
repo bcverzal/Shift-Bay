@@ -13318,16 +13318,17 @@ function renderPrintWarningChecklist() {
 
 async function printSchedule() {
   const layout = $("printLayout").value;
-  if (layout !== "currentPage" && layout !== "fullRoster" && !(await checkPrintCoverage())) return;
+  if (layout !== "currentPage" && layout !== "fullRoster" && layout !== "trainingWeek" && !(await checkPrintCoverage())) return;
   const dayViewToRestore = layout === "grid" ? focusedDateKey : "";
   if (layout === "grid" && focusedDateKey) {
     focusedDateKey = "";
     renderSchedule();
   }
-  preparePrintView(layout, $("printSort").value, {
+  const prepared = preparePrintView(layout, $("printSort").value, {
     shiftOrder: compactPrintShiftOrder(),
     departments: selectedPrintDepartments()
   });
+  if (prepared === false) return;
   await runPreparedPrint(() => {
     clearPrintView();
     if (dayViewToRestore) {
@@ -13347,6 +13348,11 @@ function preparePrintView(layout, sortMode, options = {}) {
   if (layout === "ctuitEntry") {
     renderCtuitEntryPrintView();
     document.body.classList.add("printing-simple", "printing-ctuit-entry");
+    return;
+  }
+  if (layout === "trainingWeek") {
+    if (!renderWeeklyTrainingPrintView()) return false;
+    document.body.classList.add("printing-simple", "printing-training-week");
     return;
   }
   if (layout === "simpleRole" || layout === "simpleRoleWithBay") {
@@ -13372,7 +13378,97 @@ function preparePrintView(layout, sortMode, options = {}) {
   document.body.classList.add("printing-grid");
 }
 
+function weeklyTrainingReportEntries() {
+  const dates = new Set(weekDates().map(formatDateKey));
+  return state.shifts
+    .filter((shift) => dates.has(shift.date) && isTraineeTrainingShift(shift) && shift.training?.outcome !== "noShow")
+    .sort((left, right) => `${left.date} ${String(minutesFromTime(left.start) ?? 0).padStart(4, "0")}`.localeCompare(`${right.date} ${String(minutesFromTime(right.start) ?? 0).padStart(4, "0")}`))
+    .map((shift) => {
+      const trainee = employeeById(shift.employeeId);
+      const trainer = employeeById(shift.training?.trainerId);
+      const role = roleById(shift.roleId) || {};
+      const traineeHours = shiftHours(shift);
+      const traineeRate = employeeRateForShift(trainee, shift);
+      const trainerNormalRate = employeeRateForRole(trainer, shift.roleId);
+      const trainerTrainingRate = role.trainerPayMode === "fixed"
+        ? (Number(role.trainerPayValue) || trainerNormalRate)
+        : trainerNormalRate + (Number(role.trainerPayValue) || 0);
+      const trainerPremium = Math.max(0, trainerTrainingRate - trainerNormalRate) * traineeHours;
+      return {
+        shift,
+        traineeName: trainee ? (fullEmployeeName(trainee) || displayName(trainee)) : "Unassigned trainee",
+        trainerName: trainer ? (fullEmployeeName(trainer) || displayName(trainer)) : "Manager will assign",
+        meal: shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0] || "General",
+        hours: traineeHours,
+        traineeCost: traineeHours * traineeRate,
+        trainerPremium,
+        incrementalCost: (traineeHours * traineeRate) + trainerPremium
+      };
+    });
+}
+
+function renderWeeklyTrainingPrintView() {
+  const entries = weeklyTrainingReportEntries();
+  if (!entries.length) {
+    showConflict("No scheduled trainee shifts are available for the active week.");
+    return false;
+  }
+  const byDate = new Map();
+  entries.forEach((entry) => {
+    const rows = byDate.get(entry.shift.date) || [];
+    rows.push(entry);
+    byDate.set(entry.shift.date, rows);
+  });
+  const totals = entries.reduce((summary, entry) => ({
+    hours: summary.hours + entry.hours,
+    traineeCost: summary.traineeCost + entry.traineeCost,
+    trainerPremium: summary.trainerPremium + entry.trainerPremium,
+    incrementalCost: summary.incrementalCost + entry.incrementalCost
+  }), { hours: 0, traineeCost: 0, trainerPremium: 0, incrementalCost: 0 });
+  const target = $("printView");
+  target.hidden = false;
+  target.innerHTML = `
+    <section class="weekly-training-print">
+      <header class="weekly-training-print-header">
+        <div>
+          <span>${escapeHtml(currentLocationName())}</span>
+          <h2>Weekly Training Report</h2>
+          <p>${escapeHtml(`${displayDate(currentDate)} - ${displayDate(addDays(currentDate, 6))}`)}</p>
+        </div>
+        <dl>
+          <div><dt>Trainee shifts</dt><dd>${entries.length}</dd></div>
+          <div><dt>Training hours</dt><dd>${formatHours(totals.hours)}</dd></div>
+          <div><dt>Added labor</dt><dd>${formatRate(totals.incrementalCost)}</dd></div>
+        </dl>
+      </header>
+      <section class="weekly-training-labor-summary" aria-label="Incremental labor summary">
+        <div><span>Trainee wages</span><strong>${formatRate(totals.traineeCost)}</strong></div>
+        <div><span>Trainer wage premium</span><strong>${formatRate(totals.trainerPremium)}</strong></div>
+        <div><span>Total added labor</span><strong>${formatRate(totals.incrementalCost)}</strong></div>
+      </section>
+      ${Array.from(byDate.entries()).map(([dateKey, rows]) => `
+        <section class="weekly-training-day">
+          <h3>${escapeHtml(parseDateKey(dateKey).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}<span>${rows.length} trainee shift${rows.length === 1 ? "" : "s"}</span></h3>
+          <table class="weekly-training-table">
+            <thead><tr><th>Trainee</th><th>Time</th><th>Meal</th><th>Trainer</th><th>Added labor</th></tr></thead>
+            <tbody>${rows.map((entry) => `<tr>
+              <td>${escapeHtml(entry.traineeName)}</td>
+              <td>${escapeHtml(`${entry.shift.start} - ${entry.shift.untilVolume ? "Until Volume" : entry.shift.end}`)}</td>
+              <td>${escapeHtml(entry.meal)}</td>
+              <td>${escapeHtml(entry.trainerName)}</td>
+              <td>${formatRate(entry.incrementalCost)}</td>
+            </tr>`).join("")}</tbody>
+            <tfoot><tr><th colspan="4">${escapeHtml(parseDateKey(dateKey).toLocaleDateString(undefined, { weekday: "long" }))} added labor</th><td>${formatRate(rows.reduce((sum, entry) => sum + entry.incrementalCost, 0))}</td></tr></tfoot>
+          </table>
+        </section>
+      `).join("")}
+      <footer class="weekly-training-print-footer">Added labor includes each trainee's training wage and only the trainer's pay increase over that trainer's normal scheduled rate.</footer>
+    </section>`;
+  return true;
+}
+
 function printLayoutDescription(layout) {
+  if (layout === "trainingWeek") return "Weekly training report selected. It lists planned trainee shifts and their incremental labor cost.";
   if (layout === "ctuitEntry") return "Ctuit entry checklist selected.";
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
   if (layout === "fullRoster") return "Full staff roster selected. Active staff are listed alphabetically.";
@@ -13404,7 +13500,8 @@ function clearPrintModeClasses() {
     "printing-floor-week",
     "printing-completed-week",
     "printing-call-weekly",
-    "printing-training-schedule"
+    "printing-training-schedule",
+    "printing-training-week"
   );
 }
 

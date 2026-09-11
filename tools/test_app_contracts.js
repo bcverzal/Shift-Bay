@@ -157,9 +157,13 @@ function run() {
   includes(app, 'data-print-training-plan', "employee training progress must provide a printable trainee schedule");
   includes(app, 'data-print-training-plan-complete', "completed training plans must offer the trainee handout immediately");
   includes(app, "function printTrainingSchedule", "training schedules must render through a dedicated print workflow");
+  includes(app, "function renderWeeklyTrainingPrintView", "managers must be able to render an active-week training report");
+  includes(app, "trainerPremium", "weekly training reports must isolate the trainer's added wage from normal labor");
   excludes(app, "<th>Training section</th>", "trainee handouts must not include the manager-facing meal section");
   includes(index, 'id="trainingSchedulePrint"', "the employee workspace must include an isolated training handout print view");
+  includes(index, 'value="trainingWeek"', "print options must include the weekly manager training report");
   includes(styles, "body.printing-training-schedule", "the training handout must print without manager controls or dialogs");
+  includes(styles, "body.printing-training-week", "the weekly training report must have a dedicated print mode");
   includes(styles, "body.printing-training-schedule #employees #employeeRosterPanel", "the training handout must not include the employee roster");
   includes(app, "function runPreparedPrint", "all explicit print commands must share reliable render and cleanup timing");
   includes(app, 'document.body.classList.add("printing-staffing")', "staffing printing must target the staffing report regardless of the active tab");
