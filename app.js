@@ -771,24 +771,72 @@ function employeeMealQualificationSummary(employee) {
   return [...new Set(Object.values(employee?.roleMealTraining || {}).flat().filter((meal) => MEALS.includes(meal)))];
 }
 
+function scheduledTrainingCompletion(employee, roleId) {
+  const plan = employee?.trainingPlans?.[roleId] || {};
+  const config = roleTrainingConfig(roleId);
+  if (!employee || !roleId || plan.status === "ended" || plan.status === "complete") {
+    return { requiresTraining: false, complete: false, completionShifts: {}, meals: [] };
+  }
+  const requiredBySection = config.mode === "meal"
+    ? Object.fromEntries((plan.meals || [])
+      .filter((meal) => Number(config.mealRequirements?.[meal]) > 0)
+      .map((meal) => [meal, Number(config.mealRequirements?.[meal]) || 0]))
+    : { General: Number(config.days) || 0 };
+  const sections = Object.entries(requiredBySection).filter(([, required]) => required > 0);
+  if (!sections.length) return { requiresTraining: false, complete: false, completionShifts: {}, meals: [] };
+  const scheduled = state.shifts
+    .filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === roleId && shift.training?.outcome !== "noShow")
+    .sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`));
+  const counts = Object.fromEntries(sections.map(([section]) => [section, 0]));
+  const completionShifts = {};
+  scheduled.forEach((shift) => {
+    const section = config.mode === "meal"
+      ? shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0]
+      : "General";
+    if (!Object.hasOwn(counts, section) || counts[section] >= requiredBySection[section]) return;
+    counts[section]++;
+    if (counts[section] >= requiredBySection[section]) completionShifts[section] = shift;
+  });
+  return {
+    requiresTraining: true,
+    complete: sections.every(([section]) => Boolean(completionShifts[section])),
+    completionShifts,
+    meals: sections.map(([meal]) => meal).filter((meal) => meal !== "General")
+  };
+}
+
+function scheduledTrainingCompletionAppliesToShift(completionShift, shift) {
+  if (!completionShift?.date || !shift?.date) return false;
+  if (shift.date > completionShift.date) return true;
+  if (shift.date < completionShift.date || completionShift.untilVolume) return false;
+  const completedAt = minutesFromTime(completionShift.end);
+  const startsAt = minutesFromTime(shift.start);
+  return completedAt != null && startsAt != null && startsAt >= completedAt;
+}
+
 function employeeQualificationForShift(employee, shift) {
   const role = roleById(shift?.roleId);
   const department = shift?.department || role?.department || "FOH";
   const meals = getMealsForShift(shift);
   const trainedMeals = employeeMealsForRole(employee, shift?.roleId);
   const mealDependent = roleTrainingConfig(shift?.roleId).mode === "meal";
-  const plan = employee?.trainingPlans?.[shift?.roleId] || {};
-  const projectedMeals = Array.isArray(plan.meals) ? plan.meals : [];
-  const projectedDate = String(plan.projectedCompletionDate || "");
-  const projectedQualified = mealDependent && plan.status && plan.status !== "complete" && projectedDate && shift?.date >= projectedDate && meals.every((meal) => projectedMeals.includes(meal));
+  const scheduledCompletion = scheduledTrainingCompletion(employee, shift?.roleId);
+  const actualMealQualified = !mealDependent || (meals.length > 0 && meals.every((meal) => trainedMeals.includes(meal)));
+  const projectedQualified = mealDependent
+    ? meals.length > 0 && meals.every((meal) => scheduledTrainingCompletionAppliesToShift(scheduledCompletion.completionShifts?.[meal], shift))
+    : scheduledTrainingCompletionAppliesToShift(scheduledCompletion.completionShifts?.General, shift);
+  const roleReady = mealDependent ? actualMealQualified || projectedQualified : projectedQualified;
+  const roleQualified = Boolean(employee && role && employee.roleTraining?.includes(role.id))
+    && (!scheduledCompletion.requiresTraining || roleReady);
   return {
     departmentQualified: Boolean(employee && normalizeEmployeeDepartments(employee).includes(department)),
-    roleQualified: Boolean(employee && role && employee.roleTraining?.includes(role.id)),
+    roleQualified,
     mealDependent,
-    mealQualified: !mealDependent || meals.every((meal) => trainedMeals.includes(meal)) || projectedQualified,
+    mealQualified: !mealDependent || actualMealQualified || projectedQualified,
     missingMeals: mealDependent ? meals.filter((meal) => !trainedMeals.includes(meal)) : [],
-    qualified: Boolean(employee && role && normalizeEmployeeDepartments(employee).includes(department) && employee.roleTraining?.includes(role.id) && (!mealDependent || meals.every((meal) => trainedMeals.includes(meal)) || projectedQualified)),
-    projectedQualified
+    qualified: Boolean(employee && role && normalizeEmployeeDepartments(employee).includes(department) && roleQualified && (!mealDependent || actualMealQualified || projectedQualified)),
+    projectedQualified,
+    scheduledCompletion
   };
 }
 
