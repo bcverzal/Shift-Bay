@@ -796,6 +796,7 @@ function scheduledTrainingCompletion(employee, roleId) {
     requiresTraining: true,
     complete: sections.every(([section]) => Boolean(completionShifts[section])),
     completionShifts,
+    roleCompletionShift: completionShifts.Dinner || null,
     meals: sections.map(([meal]) => meal).filter((meal) => meal !== "General")
   };
 }
@@ -818,7 +819,11 @@ function employeeQualificationForShift(employee, shift) {
   const scheduledCompletion = scheduledTrainingCompletion(employee, shift?.roleId);
   const actualMealQualified = !mealDependent || (meals.length > 0 && meals.every((meal) => trainedMeals.includes(meal)));
   const projectedQualified = mealDependent
-    ? meals.length > 0 && meals.every((meal) => scheduledTrainingCompletionAppliesToShift(scheduledCompletion.completionShifts?.[meal], shift))
+    // Dinner completion is the restaurant's practical server-training gate.
+    // Once its required Dinner training shifts are complete, the trainee may
+    // be scheduled for the role regardless of the meal period of the new shift.
+    ? scheduledTrainingCompletionAppliesToShift(scheduledCompletion.roleCompletionShift, shift)
+      || (meals.length > 0 && meals.every((meal) => scheduledTrainingCompletionAppliesToShift(scheduledCompletion.completionShifts?.[meal], shift)))
     : scheduledTrainingCompletionAppliesToShift(scheduledCompletion.completionShifts?.General, shift);
   const roleReady = mealDependent ? actualMealQualified || projectedQualified : projectedQualified;
   const roleQualified = Boolean(employee && role && employee.roleTraining?.includes(role.id))

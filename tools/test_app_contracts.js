@@ -135,6 +135,7 @@ function run() {
   includes(app, "function shiftDialogIsTraining", "a selected trainer must make the shift a training shift when it is saved");
   includes(app, "function awardCompletedMealTraining", "completed meal training must grant the earned meal qualification");
   includes(app, "completionShifts[section]", "meal-specific training must unlock each section independently");
+  includes(app, "roleCompletionShift: completionShifts.Dinner", "completed Dinner training must unlock the role for later scheduling");
   includes(app, "meals.length > 0 && meals.every", "meal-specific projected qualification must require a named meal");
   includes(app, "function scheduledTrainingCompletionAppliesToShift", "planned qualification must begin after the final required training shift");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
