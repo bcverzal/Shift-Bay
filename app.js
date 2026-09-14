@@ -29,30 +29,25 @@ const NORMALIZED_SCHEDULE_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedSchedule
 const NORMALIZED_AVAILABILITY_SHADOW_MODE = NORMALIZED_QUERY.get("normalizedAvailability") === "shadow";
 const NORMALIZED_SCHEDULE_MODE = NORMALIZED_QUERY.get("normalizedSchedule");
 const LEGACY_SNAPSHOT_OVERRIDE = NORMALIZED_QUERY.get("legacySnapshot") === "1";
-const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_AVAILABILITY_SHADOW_MODE && NORMALIZED_QUERY.get("normalizedAvailability") !== "legacy";
-// The hosted root now uses the verified normalized atomic path. Local test mode
-// stays on the compatibility path, and legacySnapshot=1 remains the rollback.
-const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = !IS_LOCAL_TEST_HOST &&
-  !LEGACY_SNAPSHOT_OVERRIDE &&
-  !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  !NORMALIZED_SCHEDULE_MODE;
+// Normal restaurant scheduling stays on the proven snapshot bridge. Normalized
+// reads are explicit canaries until the smaller, record-level writer replaces
+// the whole-schedule atomic procedure.
+const NORMALIZED_AVAILABILITY_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE &&
+  !NORMALIZED_AVAILABILITY_SHADOW_MODE &&
+  NORMALIZED_QUERY.get("normalizedAvailability") === "read";
+const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = false;
 const NORMALIZED_SCHEDULE_REVISION_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "direct-sandbox-revision";
 const NORMALIZED_SCHEDULE_ATOMIC_CANARY_MODE = !IS_LOCAL_TEST_HOST &&
   NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-sandbox-revision";
-// This explicit route remains useful when verifying the production atomic path
-// independently of the hosted-root default.
-const NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE = !IS_LOCAL_TEST_HOST &&
-  (NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-production-revision" ||
-   NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE);
+// Production atomic writes are intentionally disabled. The current procedure
+// mirrors an entire schedule, which is too write-intensive for live use.
+const NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE = false;
 const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE &&
-  (NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE ||
-   ["read", "direct-sandbox-revision", "atomic-sandbox-revision", "atomic-production-revision"].includes(NORMALIZED_SCHEDULE_MODE));
-// Hosted writes use the verified production atomic writer. The explicit
-// Sandbox canary modes remain available for controlled migration testing.
+  ["read", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_SCHEDULE_MODE);
+// Only disposable Sandbox locations may use a direct normalized writer.
 const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST &&
-  (NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE ||
-   ["direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision", "atomic-production-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule")));
+  ["direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"].includes(NORMALIZED_QUERY.get("normalizedSchedule"));
 const NORMALIZED_LIVE_CANARY_MODE = NORMALIZED_AVAILABILITY_READ_MODE || NORMALIZED_SCHEDULE_READ_MODE;
 let normalizedScheduleReadState = "off";
 let normalizedAvailabilityReadState = "off";
@@ -2567,7 +2562,7 @@ async function validateAuthSession(session = authSession) {
 }
 
 async function signInWithPassword(email, password) {
-  if (!authConfig?.enabled) throw new Error("Cloud login is missing the Supabase anon key setup.");
+  if (!authConfig?.enabled) throw new Error("Cloud connection is not ready. Refresh after the service recovers.");
   const normalizedEmail = String(email || "").trim();
   const normalizedPassword = String(password || "");
   if (!normalizedEmail || !normalizedPassword) throw new Error("Email and password are required.");
@@ -19090,5 +19085,5 @@ window.addEventListener("online", () => { checkForNewerSharedSchedule(); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") checkForNewerSharedSchedule();
 });
-window.setInterval(checkForNewerSharedSchedule, 30000);
+window.setInterval(checkForNewerSharedSchedule, 300000);
 

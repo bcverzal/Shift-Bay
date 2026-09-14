@@ -273,23 +273,18 @@ function run() {
   includes(app, "function runNormalizedScheduleShadowCheck", "Sandbox must be able to compare normalized schedule records without changing scheduler reads");
   includes(app, 'authFetch("/api/normalized/schedule"', "normalized schedule comparison must use the protected API route");
   includes(app, "normalizedScheduleShadowDifferences", "normalized schedule comparison must report record differences");
-  includes(app, "NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE", "the hosted scheduler root must default to the verified atomic normalized path");
-  assert.match(
-    app,
-    /const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = !IS_LOCAL_TEST_HOST[\s\S]*?!NORMALIZED_SCHEDULE_MODE;/,
-    "the hosted root must opt into atomic normalized mode while local mode remains on the compatibility path"
-  );
+  includes(app, "const NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE = false", "the hosted scheduler root must keep whole-schedule atomic writes disabled");
   includes(app, "NORMALIZED_SCHEDULE_READ_MODE", "normalized schedule reads must remain independently controllable");
   assert.match(
     app,
-    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE[\s\S]*?NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE[\s\S]*?\["read", "direct-sandbox-revision", "atomic-sandbox-revision", "atomic-production-revision"\]\.includes\(NORMALIZED_SCHEDULE_MODE\)\);/,
-    "normalized schedule reads must default on the hosted root while preserving explicit rollback and canary routes"
+    /const NORMALIZED_SCHEDULE_READ_MODE = !LEGACY_SNAPSHOT_OVERRIDE && !NORMALIZED_SCHEDULE_SHADOW_MODE[\s\S]*?\["read", "direct-sandbox-revision", "atomic-sandbox-revision"\]\.includes\(NORMALIZED_SCHEDULE_MODE\);/,
+    "normalized schedule reads must remain explicit canaries while preserving the snapshot bridge"
   );
-  includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "hosted schedule saves must use the verified production atomic writer by default");
+  includes(app, "NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE", "Sandbox canary writes must remain explicit");
   assert.match(
     app,
-    /const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST[\s\S]*?NORMALIZED_SCHEDULE_DEFAULT_ATOMIC_MODE/,
-    "hosted schedule saves must use atomic writes while local mode remains on the compatibility path"
+    /const NORMALIZED_SCHEDULE_DIRECT_WRITE_MODE = !IS_LOCAL_TEST_HOST[\s\S]*?\["direct-sandbox", "direct-sandbox-revision", "atomic-sandbox-revision"\]\.includes\(NORMALIZED_QUERY\.get\("normalizedSchedule"\)\);/,
+    "hosted production saves must remain on the snapshot bridge"
   );
   includes(app, "NORMALIZED_SCHEDULE_REVISION_CANARY_MODE", "the revision-locked Sandbox canary must require an explicit app mode");
   includes(app, '"normalized-sandbox-direct"', "the app must identify direct Sandbox schedule saves explicitly");
@@ -337,9 +332,7 @@ function run() {
   includes(edgeFunction, "SHIFT_BAY_PRODUCTION_ATOMIC_WRITES", "production atomic writes must require an explicit server-side enablement");
   includes(edgeFunction, "writeProductionScheduleAtomicallyWithSnapshot", "production atomic writes must use the snapshot transaction wrapper");
   includes(edgeFunction, 'saveMode === "normalized-production-atomic-revision"', "production atomic writes must use an explicit cutover-only mode");
-  includes(app, "NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE", "production atomic writes must require an explicit client cutover mode");
-  includes(app, 'NORMALIZED_QUERY.get("normalizedSchedule") === "atomic-production-revision"', "the production atomic mode must require its exact cutover URL");
-  includes(app, '"normalized-production-atomic-revision"', "the explicit production atomic mode must be sent only during controlled cutover");
+  includes(app, "const NORMALIZED_SCHEDULE_PRODUCTION_ATOMIC_MODE = false", "production atomic writes must remain disabled in the browser until the writer is made lighter");
   includes(edgeFunction, 'if (!normalizedScheduleMirrorAllowed(locationId)) return { synced: false, skipped: "snapshot bridge remains authoritative" }', "ordinary schedule mirroring must remain limited to the Sandbox during cutover");
   includes(edgeFunction, "const normalizedScheduleSync = await syncNormalizedSchedule(locationId, state, (existingRow?.state || null) as JsonRecord | null);", "the normal schedule save path must refresh the normalized mirror");
   includes(edgeFunction, "changedSnapshotItems", "live schedule mirroring must limit normal saves to changed records");
