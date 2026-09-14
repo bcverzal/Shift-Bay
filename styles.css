@@ -10066,6 +10066,20 @@ body.compact-preview .print-view {
   font-size: 11px;
 }
 
+.training-roster-plan h3 div {
+  display: grid;
+  gap: 2px;
+}
+
+.training-roster-plan h3 strong {
+  font-size: 14px;
+}
+
+.training-roster-plan h3 small {
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .weekly-training-table {
   width: 100%;
   border-collapse: collapse;
@@ -12226,16 +12240,19 @@ dialog .time-picker {
     margin-right: 0 !important;
   }
 
-  body.printing-training-week .print-view {
+  body.printing-training-week .print-view,
+  body.printing-training-roster .print-view {
     width: 100% !important;
     margin: 0 !important;
   }
 
-  body.printing-training-week .weekly-training-print-header {
+  body.printing-training-week .weekly-training-print-header,
+  body.printing-training-roster .weekly-training-print-header {
     padding-bottom: 8px;
   }
 
-  body.printing-training-week .weekly-training-print-header h2 {
+  body.printing-training-week .weekly-training-print-header h2,
+  body.printing-training-roster .weekly-training-print-header h2 {
     font-size: 20px;
   }
 
@@ -12247,21 +12264,26 @@ dialog .time-picker {
     padding: 7px 8px;
   }
 
-  body.printing-training-week .weekly-training-day {
+  body.printing-training-week .weekly-training-day,
+  body.printing-training-roster .weekly-training-day {
     margin-top: 10px;
   }
 
-  body.printing-training-week .weekly-training-table thead {
+  body.printing-training-week .weekly-training-table thead,
+  body.printing-training-roster .weekly-training-table thead {
     display: table-header-group;
   }
 
-  body.printing-training-week .weekly-training-table tr {
+  body.printing-training-week .weekly-training-table tr,
+  body.printing-training-roster .weekly-training-table tr {
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
   body.printing-training-week .weekly-training-table th,
-  body.printing-training-week .weekly-training-table td {
+  body.printing-training-week .weekly-training-table td,
+  body.printing-training-roster .weekly-training-table th,
+  body.printing-training-roster .weekly-training-table td {
     padding: 5px 6px;
     font-size: 10px;
   }

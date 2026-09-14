@@ -13390,7 +13390,7 @@ function renderPrintWarningChecklist() {
 
 async function printSchedule() {
   const layout = $("printLayout").value;
-  if (layout !== "currentPage" && layout !== "fullRoster" && layout !== "trainingWeek" && !(await checkPrintCoverage())) return;
+  if (layout !== "currentPage" && layout !== "fullRoster" && layout !== "trainingWeek" && layout !== "trainingRoster" && !(await checkPrintCoverage())) return;
   const dayViewToRestore = layout === "grid" ? focusedDateKey : "";
   if (layout === "grid" && focusedDateKey) {
     focusedDateKey = "";
@@ -13425,6 +13425,11 @@ function preparePrintView(layout, sortMode, options = {}) {
   if (layout === "trainingWeek") {
     if (!renderWeeklyTrainingPrintView()) return false;
     document.body.classList.add("printing-simple", "printing-training-week");
+    return;
+  }
+  if (layout === "trainingRoster") {
+    if (!renderActiveTrainingRosterPrintView()) return false;
+    document.body.classList.add("printing-simple", "printing-training-roster");
     return;
   }
   if (layout === "simpleRole" || layout === "simpleRoleWithBay") {
@@ -13539,8 +13544,86 @@ function renderWeeklyTrainingPrintView() {
   return true;
 }
 
+function activeTrainingRosterPlans() {
+  const plans = [];
+  (state.employees || []).forEach((trainee) => {
+    const roleIds = new Set([
+      ...Object.keys(trainee.trainingPlans || {}),
+      ...state.shifts
+        .filter((shift) => isTraineeTrainingShift(shift, trainee.id))
+        .map((shift) => shift.roleId)
+    ]);
+    roleIds.forEach((roleId) => {
+      const role = roleById(roleId);
+      if (!role) return;
+      const plan = trainee.trainingPlans?.[roleId] || {};
+      const shifts = printableTrainingShifts(trainee.id, roleId);
+      const sections = trainingProgressSections(trainee, roleId, plan);
+      const required = sections.reduce((sum, section) => sum + section.required, 0);
+      const scheduled = sections.reduce((sum, section) => sum + section.scheduled, 0);
+      const completed = sections.reduce((sum, section) => sum + section.completed, 0);
+      const activeStatus = ["scheduled", "inProgress", "awaitingTest"].includes(plan.status);
+      const remaining = Math.max(0, required - scheduled);
+      if (!activeStatus && !shifts.some((shift) => shift.training?.outcome !== "completed") && !remaining) return;
+      plans.push({ trainee, role, shifts, required, scheduled, completed, remaining });
+    });
+  });
+  return plans.sort((left, right) => `${fullEmployeeName(left.trainee)} ${left.role.name}`.localeCompare(`${fullEmployeeName(right.trainee)} ${right.role.name}`));
+}
+
+function renderActiveTrainingRosterPrintView() {
+  const plans = activeTrainingRosterPlans();
+  if (!plans.length) {
+    showConflict("No active training plans are available to print.");
+    return false;
+  }
+  const scheduledShiftCount = plans.reduce((sum, plan) => sum + plan.shifts.length, 0);
+  const remainingShiftCount = plans.reduce((sum, plan) => sum + plan.remaining, 0);
+  const target = $("printView");
+  target.hidden = false;
+  target.innerHTML = `
+    <section class="weekly-training-print active-training-roster-print">
+      <header class="weekly-training-print-header">
+        <div>
+          <span>${escapeHtml(currentLocationName())}</span>
+          <h2>Active Training Roster</h2>
+          <p>All trainees with an active training plan</p>
+        </div>
+        <dl>
+          <div><dt>Training plans</dt><dd>${plans.length}</dd></div>
+          <div><dt>Scheduled shifts</dt><dd>${scheduledShiftCount}</dd></div>
+          <div><dt>Still needed</dt><dd>${remainingShiftCount}</dd></div>
+        </dl>
+      </header>
+      ${plans.map((plan) => {
+        const traineeName = fullEmployeeName(plan.trainee) || displayName(plan.trainee);
+        const phone = formatPhoneNumber(plan.trainee.phone || "") || "No phone listed";
+        const progress = `${plan.scheduled} of ${plan.required} scheduled${plan.completed ? ` | ${plan.completed} completed` : ""}${plan.remaining ? ` | ${plan.remaining} shift${plan.remaining === 1 ? "" : "s"} still needs scheduling` : ""}`;
+        return `<section class="weekly-training-day training-roster-plan">
+          <h3><div><strong>${escapeHtml(traineeName)}</strong><small>${escapeHtml(`${plan.role.name} | ${phone}`)}</small></div><span>${escapeHtml(progress)}</span></h3>
+          <table class="weekly-training-table">
+            <thead><tr><th>Date</th><th>Time</th><th>Meal</th><th>Trainer</th></tr></thead>
+            <tbody>${plan.shifts.length ? plan.shifts.map((shift) => {
+              const trainer = employeeById(shift.training?.trainerId);
+              const trainerName = trainer ? (fullEmployeeName(trainer) || displayName(trainer)) : "Manager will assign";
+              const meal = shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0] || "General";
+              return `<tr>
+                <td>${escapeHtml(parseDateKey(shift.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }))}</td>
+                <td>${escapeHtml(`${shift.start} - ${shift.untilVolume ? "Until Volume" : shift.end}`)}</td>
+                <td>${escapeHtml(meal)}</td>
+                <td>${escapeHtml(trainerName)}</td>
+              </tr>`;
+            }).join("") : `<tr><td colspan="4">No training shifts are scheduled yet.</td></tr>`}</tbody>
+          </table>
+        </section>`;
+      }).join("")}
+    </section>`;
+  return true;
+}
+
 function printLayoutDescription(layout) {
   if (layout === "trainingWeek") return "Weekly training report selected. It lists planned trainee shifts and their incremental labor cost.";
+  if (layout === "trainingRoster") return "Active training roster selected. It lists every active training plan, scheduled shifts, trainers, and remaining training needs.";
   if (layout === "ctuitEntry") return "Ctuit entry checklist selected.";
   if (layout === "simpleEmployee") return "Compact employee grid selected. Multiple roles are combined in the same employee line.";
   if (layout === "fullRoster") return "Full staff roster selected. Active staff are listed alphabetically.";
@@ -13573,7 +13656,8 @@ function clearPrintModeClasses() {
     "printing-completed-week",
     "printing-call-weekly",
     "printing-training-schedule",
-    "printing-training-week"
+    "printing-training-week",
+    "printing-training-roster"
   );
 }
 
@@ -14535,6 +14619,7 @@ async function printTrainingSchedule(traineeId, roleId) {
     return;
   }
   const traineeName = fullEmployeeName(trainee) || displayName(trainee);
+  const traineePhone = formatPhoneNumber(trainee.phone || "") || "No phone listed";
   const target = $("trainingSchedulePrint");
   target.innerHTML = `
     <header class="training-schedule-print-header">
@@ -14544,6 +14629,7 @@ async function printTrainingSchedule(traineeId, roleId) {
       </div>
       <dl>
         <div><dt>Trainee</dt><dd>${escapeHtml(traineeName)}</dd></div>
+        <div><dt>Phone</dt><dd>${escapeHtml(traineePhone)}</dd></div>
         <div><dt>Role</dt><dd>${escapeHtml(role.name)}</dd></div>
       </dl>
     </header>

@@ -171,12 +171,17 @@ function run() {
   includes(app, 'data-print-training-plan-complete', "completed training plans must offer the trainee handout immediately");
   includes(app, "function printTrainingSchedule", "training schedules must render through a dedicated print workflow");
   includes(app, "function renderWeeklyTrainingPrintView", "managers must be able to render an active-week training report");
+  includes(app, "function renderActiveTrainingRosterPrintView", "managers must be able to print every active training plan");
+  includes(app, "No training shifts are scheduled yet.", "active training rosters must show plans that still need scheduling");
+  includes(app, "<dt>Phone</dt>", "trainee handouts must include a phone number");
   includes(app, "trainerPremium", "weekly training reports must isolate the trainer's added wage from normal labor");
   excludes(app, "<th>Training section</th>", "trainee handouts must not include the manager-facing meal section");
   includes(index, 'id="trainingSchedulePrint"', "the employee workspace must include an isolated training handout print view");
   includes(index, 'value="trainingWeek"', "print options must include the weekly manager training report");
+  includes(index, 'value="trainingRoster"', "print options must include the active manager training roster");
   includes(styles, "body.printing-training-schedule", "the training handout must print without manager controls or dialogs");
   includes(styles, "body.printing-training-week", "the weekly training report must have a dedicated print mode");
+  includes(styles, "body.printing-training-roster", "the active training roster must have a dedicated print mode");
   includes(styles, "body.printing-training-schedule #employees #employeeRosterPanel", "the training handout must not include the employee roster");
   includes(app, "function runPreparedPrint", "all explicit print commands must share reliable render and cleanup timing");
   includes(app, 'document.body.classList.add("printing-staffing")', "staffing printing must target the staffing report regardless of the active tab");
