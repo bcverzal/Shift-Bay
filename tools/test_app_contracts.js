@@ -168,6 +168,8 @@ function run() {
   includes(app, "slots.push(normalizeTrainingPlanSlot({ date, start, end }))", "saved availability imports must retain one availability entry instead of duplicating it per meal");
   includes(app, "function saveTrainingSlotsAsLiveAvailability", "training planning must be able to create a dated live availability from entered times");
   includes(app, "function trainingProgressSections", "training progress must report completion by training section");
+  includes(app, "function mealForShiftWithSettings", "legacy training plans must recover their selected meal from existing training shifts");
+  includes(app, "Early training plans did not persist the meals chosen in the planner.", "legacy meal-plan repair must avoid expanding a single-meal plan to every configured meal");
   includes(app, "excludedSourceShiftIds", "declined training proposals must not be proposed again");
   includes(app, 'data-open-training-plan', "employee training progress must provide a persistent entry point to the training planner");
   includes(app, 'data-print-training-plan', "employee training progress must provide a printable trainee schedule");

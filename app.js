@@ -701,6 +701,34 @@ function migrateState(loadedState, parsed = {}) {
       planMeal: training.planMeal || traineeShift.planMeal || ""
     };
   });
+  // Early training plans did not persist the meals chosen in the planner.
+  // Recover that narrow missing detail from each trainee-side shift instead of
+  // treating a Dinner-only plan as training for every configured meal.
+  loadedState.employees = loadedState.employees.map((employee) => {
+    const trainingPlans = { ...(employee.trainingPlans || {}) };
+    Object.entries(trainingPlans).forEach(([roleId, plan]) => {
+      const role = loadedState.roles.find((item) => item.id === roleId);
+      const configured = loadedState.settings.trainingRequirements?.[roleId] || {};
+      const mealDependent = configured.mode
+        ? configured.mode === "meal"
+        : configured.mealDependent || /server|bartender|line\s*cook/i.test(role?.name || "");
+      const savedMeals = Array.isArray(plan?.meals) ? plan.meals.filter((meal) => MEALS.includes(meal)) : [];
+      if (!mealDependent || savedMeals.length) return;
+      const inferredMeals = [...new Set(loadedState.shifts
+        .filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === roleId)
+        .map((shift) => mealForShiftWithSettings(shift, loadedState.settings))
+        .filter((meal) => MEALS.includes(meal)))];
+      if (!inferredMeals.length) return;
+      trainingPlans[roleId] = { ...plan, meals: inferredMeals };
+      loadedState.shifts.forEach((shift) => {
+        if (!isTraineeTrainingShift(shift, employee.id) || shift.roleId !== roleId) return;
+        if (MEALS.includes(shift.training?.planMeal || shift.planMeal)) return;
+        const meal = mealForShiftWithSettings(shift, loadedState.settings);
+        if (meal) shift.training = { ...shift.training, planMeal: meal };
+      });
+    });
+    return { ...employee, trainingPlans };
+  });
   loadedState.unassignedShifts = (loadedState.unassignedShifts || []).map((shift) => ({
     ...shift,
     training: normalizeShiftTraining(shift.training),
@@ -3149,6 +3177,25 @@ function getMealPeriodsForDate(dateKey) {
       endMinutes: minutesFromTime(period.end)
     }))
     .filter((period) => period.name && period.startMinutes != null && period.endMinutes != null);
+}
+
+function mealForShiftWithSettings(shift, settings = {}) {
+  const explicitMeal = shift?.training?.planMeal || shift?.planMeal || "";
+  if (MEALS.includes(explicitMeal)) return explicitMeal;
+  if (!shift?.date) return "";
+  const start = minutesFromTime(shift.start);
+  let end = minutesFromTime(shift.end);
+  if (start == null || end == null) return "";
+  if (end <= start) end += 1440;
+  const dayIndex = parseDateKey(shift.date).getDay();
+  const periods = (settings?.mealPeriods?.[dayIndex] || [])
+    .map((period) => ({
+      name: period.name,
+      start: minutesFromTime(period.start),
+      end: minutesFromTime(period.end)
+    }))
+    .filter((period) => MEALS.includes(period.name) && period.start != null && period.end != null);
+  return periods.find((period) => rangesOverlap(start, end, period.start, period.end))?.name || "";
 }
 
 function defaultCloserEndTimeForDate(dateKey) {
