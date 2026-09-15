@@ -3589,7 +3589,12 @@ function validateShift(shift, options = {}) {
       trainingMessages.push(`${displayName(employee)} is not marked for ${shift.department || role.department || "this department"}.`);
     }
     if (!qualification.roleQualified) trainingMessages.push(`${displayName(employee)} is not trained as ${role.name}.`);
-    if (qualification.mealDependent && qualification.missingMeals.length) trainingMessages.push(`${displayName(employee)} is not trained for ${qualification.missingMeals.join(", ")}.`);
+    // A planned completion qualifies later shifts without marking the visible
+    // meal checkbox early. Only reject a meal when it is neither completed
+    // nor scheduled to be completed before this shift.
+    if (qualification.mealDependent && !qualification.mealQualified && qualification.missingMeals.length) {
+      trainingMessages.push(`${displayName(employee)} is not trained for ${qualification.missingMeals.join(", ")}.`);
+    }
     if (shift.training?.isTraining) {
       // A trainee is expected to be missing this training; warn only on trainer setup below.
     } else if (shift.department === "FOH") errors.push(...trainingMessages);
