@@ -139,6 +139,7 @@ function run() {
   includes(app, "function scheduledTrainingCompletionAppliesToShift", "planned qualification must begin after the final required training shift");
   includes(app, "function trainingPlanMealsForRole", "planned meal qualification must recover from trainee shifts when legacy plans lack saved meals");
   includes(app, "keeping the visible qualification unchecked until an outcome is completed", "projected eligibility must not visually pre-qualify a trainee");
+  includes(index, "shiftbay-20260915-projected-meal-qualification", "new training eligibility code must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");
