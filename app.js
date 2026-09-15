@@ -15030,9 +15030,16 @@ function trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds = 
       department: shift.department,
       shiftLabel: shift.shiftLabel,
       priority: trainerPriorityWeight(roleId, shift.employeeId),
-      preferredStartDistance: timing.preferredStartDistance || 0
+      preferredStartDistance: timing.preferredStartDistance || 0,
+      isFlexDouble: Boolean(shift.isFlexDouble)
     };
   });
+}
+
+function trainingCandidateMeetsMinimumDuration(candidate) {
+  const start = minutesFromTime(candidate?.start);
+  const end = minutesFromTime(candidate?.end);
+  return start != null && end != null && end - start >= trainingMinimumShiftMinutes();
 }
 
 function trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds = new Set()) {
@@ -15157,6 +15164,9 @@ function optimizeTrainingAssignments(candidatesBySlot, requirements, maxPerTrain
   // A one-point trainer-priority improvement must outweigh every possible
   // start-time difference in this plan. Meal timing only resolves a tie.
   const trainerPriorityWeight = (slots.length * (24 * 60)) + 1;
+  // A flex shift can be used when it is the workable coverage, but regular
+  // dinner shifts teach the full close and are much less likely to be cut.
+  const flexSourcePenalty = (Math.max(...[...candidatesBySlot.values()].flat().map((candidate) => candidate.priority), 1) + 1) * trainerPriorityWeight;
   let best = [];
   let bestScore = Infinity;
   const totalNeeded = Object.values(requirements).reduce((total, value) => total + value, 0);
@@ -15188,7 +15198,7 @@ function optimizeTrainingAssignments(candidatesBySlot, requirements, maxPerTrain
         selected,
         trainerCounts,
         mealCounts,
-        score + (candidate.priority * trainerPriorityWeight) + candidate.preferredStartDistance
+        score + (candidate.isFlexDouble ? flexSourcePenalty : 0) + (candidate.priority * trainerPriorityWeight) + candidate.preferredStartDistance
       );
       selected.pop();
       if (used) trainerCounts.set(candidate.trainerId, used);
@@ -15235,7 +15245,8 @@ function generateTrainingPlan() {
   const excludedSourceIds = new Set(plan.excludedSourceShiftIds || []);
   const candidatesBySlot = new Map(slots.map((slot) => [slot.id, trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds)]));
   const candidateDiagnostics = trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds);
-  const selected = optimizeTrainingAssignments(candidatesBySlot, requirements, config.maxTrainerAssignments || 2);
+  const selected = optimizeTrainingAssignments(candidatesBySlot, requirements, config.maxTrainerAssignments || 2)
+    .filter(trainingCandidateMeetsMinimumDuration);
   const noTrainerSlots = slots.filter((slot) => !candidatesBySlot.get(slot.id).length);
   trainingPlanSuggestions = selected.map((shift, index) => ({
     ...shift,
