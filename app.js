@@ -15036,10 +15036,11 @@ function trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds = 
   });
 }
 
-function trainingCandidateMeetsMinimumDuration(candidate) {
-  const start = minutesFromTime(candidate?.start);
-  const end = minutesFromTime(candidate?.end);
-  return start != null && end != null && end - start >= trainingMinimumShiftMinutes();
+function trainingCandidateMeetsMinimumDuration(candidate, slots = []) {
+  const slot = slots.find((item) => item.id === candidate?.slotId);
+  const trainerShift = state.shifts.find((item) => item.id === candidate?.sourceShiftId);
+  const timing = slot && trainerShift ? trainingShiftTimingForSlot(slot, trainerShift) : null;
+  return Boolean(timing && minutesFromTime(timing.end) - minutesFromTime(timing.start) >= trainingMinimumShiftMinutes());
 }
 
 function trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds = new Set()) {
@@ -15246,7 +15247,7 @@ function generateTrainingPlan() {
   const candidatesBySlot = new Map(slots.map((slot) => [slot.id, trainingCandidatesForSlot(roleId, slot, traineeId, excludedSourceIds)]));
   const candidateDiagnostics = trainingCandidateDiagnostics(roleId, slots, traineeId, excludedSourceIds);
   const selected = optimizeTrainingAssignments(candidatesBySlot, requirements, config.maxTrainerAssignments || 2)
-    .filter(trainingCandidateMeetsMinimumDuration);
+    .filter((candidate) => trainingCandidateMeetsMinimumDuration(candidate, slots));
   const noTrainerSlots = slots.filter((slot) => !candidatesBySlot.get(slot.id).length);
   trainingPlanSuggestions = selected.map((shift, index) => ({
     ...shift,
