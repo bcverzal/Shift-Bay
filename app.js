@@ -794,6 +794,19 @@ function employeeMealQualificationSummary(employee) {
   return [...new Set(Object.values(employee?.roleMealTraining || {}).flat().filter((meal) => MEALS.includes(meal)))];
 }
 
+function trainingPlanMealsForRole(employee, roleId, plan = {}, config = roleTrainingConfig(roleId)) {
+  const configuredMeals = MEALS.filter((meal) => Number(config.mealRequirements?.[meal]) > 0);
+  const savedMeals = (plan.meals || []).filter((meal) => configuredMeals.includes(meal));
+  if (savedMeals.length || config.mode !== "meal") return savedMeals;
+  // A few plans created before meal selections were persisted still have
+  // reliable trainee shifts. Use those only for projected scheduling, while
+  // keeping the visible qualification unchecked until an outcome is completed.
+  return [...new Set(state.shifts
+    .filter((shift) => isTraineeTrainingShift(shift, employee?.id) && shift.roleId === roleId)
+    .map((shift) => shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0])
+    .filter((meal) => configuredMeals.includes(meal)))];
+}
+
 function scheduledTrainingCompletion(employee, roleId) {
   const plan = employee?.trainingPlans?.[roleId] || {};
   const config = roleTrainingConfig(roleId);
@@ -801,7 +814,7 @@ function scheduledTrainingCompletion(employee, roleId) {
     return { requiresTraining: false, complete: false, completionShifts: {}, meals: [] };
   }
   const requiredBySection = config.mode === "meal"
-    ? Object.fromEntries((plan.meals || [])
+    ? Object.fromEntries(trainingPlanMealsForRole(employee, roleId, plan, config)
       .filter((meal) => Number(config.mealRequirements?.[meal]) > 0)
       .map((meal) => [meal, Number(config.mealRequirements?.[meal]) || 0]))
     : { General: Number(config.days) || 0 };
@@ -10468,9 +10481,7 @@ function trainingProgressSections(employee, roleId, plan = {}) {
       scheduled: shifts.filter((shift) => shift.training?.outcome !== "noShow").length
     }];
   }
-  const configuredMeals = MEALS.filter((meal) => Number(config.mealRequirements?.[meal]) > 0);
-  const selectedMeals = (plan.meals || []).filter((meal) => configuredMeals.includes(meal));
-  const meals = selectedMeals.length ? selectedMeals : configuredMeals;
+  const meals = trainingPlanMealsForRole(employee, roleId, plan, config);
   return meals.map((meal) => {
     const sectionShifts = shifts.filter((shift) => (shift.training?.planMeal || shift.planMeal || getMealsForShift(shift)[0]) === meal);
     return {
@@ -14789,7 +14800,8 @@ function loadTrainingPlanDraft() {
   const roleId = $("planRole").value;
   const plan = trainee?.trainingPlans?.[roleId] || {};
   const storedSlots = Array.isArray(plan.possibleTrainingSlots) ? plan.possibleTrainingSlots : [];
-  const storedMeals = (plan.meals || []).filter((meal) => trainingPlanMealOptions(roleId).some((option) => option.value === meal));
+  const storedMeals = trainingPlanMealsForRole(trainee, roleId, plan)
+    .filter((meal) => trainingPlanMealOptions(roleId).some((option) => option.value === meal));
   const legacyMeals = [...new Set(storedSlots.map((slot) => normalizeMealName(slot.meal || "")).filter((meal) => trainingPlanMealOptions(roleId).some((option) => option.value === meal)))];
   trainingPlanSlots = (storedSlots.length ? storedSlots : (plan.possibleDates || []).map((date) => ({
     date
@@ -15423,7 +15435,7 @@ function refreshTrainingPlanProgress(traineeId, roleId) {
   if (!trainee) return;
   const plan = trainee.trainingPlans?.[roleId] || {};
   const completed = state.shifts.filter((shift) => isTraineeTrainingShift(shift, traineeId) && shift.roleId === roleId && shift.training.outcome === "completed").length;
-  const required = trainingRequiredShiftCount(roleId, plan.meals || []);
+  const required = trainingRequiredShiftCount(roleId, trainingPlanMealsForRole(trainee, roleId, plan));
   trainee.trainingPlans = {
     ...(trainee.trainingPlans || {}),
     [roleId]: {
