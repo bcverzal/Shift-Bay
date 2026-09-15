@@ -9968,10 +9968,22 @@ async function prepareMovedTrainingShift(source, nextShift, { isCopy = false } =
 
 function trainingTestForShift(shift) {
   if (!shift || shift.training?.isTraining) return false;
-  const plan = employeeById(shift.employeeId)?.trainingPlans?.[shift.roleId];
+  const employee = employeeById(shift.employeeId);
+  const plan = employee?.trainingPlans?.[shift.roleId];
   if (!plan || plan.status === "complete" || !plan.projectedCompletionDate || shift.date <= plan.projectedCompletionDate) return false;
   const meals = getMealsForShift(shift);
-  return Array.isArray(plan.meals) && meals.some((meal) => plan.meals.includes(meal)) && plan.menuTestPassed !== true;
+  const planMeals = trainingPlanMealsForRole(employee, shift.roleId, plan);
+  if (!meals.some((meal) => planMeals.includes(meal)) || plan.menuTestPassed === true) return false;
+  const firstEligibleShift = state.shifts
+    .filter((candidate) => (
+      candidate.employeeId === shift.employeeId &&
+      candidate.roleId === shift.roleId &&
+      !candidate.training?.isTraining &&
+      candidate.date > plan.projectedCompletionDate &&
+      getMealsForShift(candidate).some((meal) => planMeals.includes(meal))
+    ))
+    .sort((left, right) => `${left.date} ${left.start} ${left.id}`.localeCompare(`${right.date} ${right.start} ${right.id}`))[0];
+  return firstEligibleShift?.id === shift.id;
 }
 
 function shiftIsLocked(shift) {

@@ -140,7 +140,8 @@ function run() {
   includes(app, "function trainingPlanMealsForRole", "planned meal qualification must recover from trainee shifts when legacy plans lack saved meals");
   includes(app, "keeping the visible qualification unchecked until an outcome is completed", "projected eligibility must not visually pre-qualify a trainee");
   includes(app, "!qualification.mealQualified && qualification.missingMeals.length", "projected meal qualification must not be rejected merely because its visible checkbox remains unchecked");
-  includes(index, "shiftbay-20260915-projected-meal-validation", "new training eligibility code must receive a fresh browser asset version");
+  includes(app, "const firstEligibleShift = state.shifts", "a trainee must receive only one menu-test marker on the first eligible post-training shift");
+  includes(index, "shiftbay-20260915-single-menu-test", "the menu-test correction must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");
