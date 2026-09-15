@@ -101,7 +101,7 @@ function run() {
   includes(app, "Training shifts must be at least", "manual training-shift edits must enforce the configured minimum");
   includes(app, "only overlaps the trainee's availability", "an impossible training proposal must name the actual shared-time limitation");
   includes(app, "training-plan-unmatched-slots", "unmatched training dates must not be rendered under proposal decision controls");
-  includes(app, "trainerStartFitsTraineeAvailability", "meal-specific training must match a trainer's actual shift start when possible");
+  includes(app, "Math.max(overlapStart, period.startMinutes)", "meal-specific training must begin inside the selected meal period");
   includes(app, "preferredStartDistance", "meal-specific training should favor the configured start time without rejecting a workable trainer shift");
   includes(app, "const trainerPriorityWeight = (slots.length * (24 * 60)) + 1", "trainer priority must outweigh meal-start timing when choosing a training plan");
   includes(app, "maximumPossibleSelections", "training-plan optimization must not discard real candidates after evaluating an empty plan");
@@ -144,7 +144,8 @@ function run() {
   includes(app, "function trainingCandidateMeetsMinimumDuration", "training proposals must discard options that do not meet the configured minimum duration");
   includes(app, "const flexSourcePenalty", "training proposals must prefer regular trainer shifts over flex sources");
   includes(app, "trainingShiftTimingForSlot(slot, trainerShift)", "final training proposal filtering must use the actual shared trainer and trainee overlap");
-  includes(index, "shiftbay-20260915-training-overlap-gate", "the training-overlap correction must receive a fresh browser asset version");
+  includes(app, "Math.max(overlapStart, period.startMinutes)", "meal-specific training candidates must count only the overlap inside the selected meal period");
+  includes(index, "shiftbay-20260915-training-meal-overlap", "the meal-overlap correction must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");

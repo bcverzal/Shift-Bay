@@ -14993,11 +14993,9 @@ function trainingShiftTimingForSlot(slot, trainerShift) {
   const preferredStart = minutesFromTime(trainingMealStartTimes()[slot.meal]);
   if (preferredStart == null) return null;
   const period = getMealPeriodsForDate(slot.date).find((item) => item.name === slot.meal);
+  if (!period) return null;
   const end = Math.min(overlapEnd, period?.endMinutes ?? overlapEnd);
-  const trainerStartFitsTraineeAvailability = trainerRange.start >= availabilityStart && trainerRange.start < availabilityEnd;
-  const start = trainerStartFitsTraineeAvailability
-    ? trainerRange.start
-    : overlapStart;
+  const start = Math.max(overlapStart, period.startMinutes);
   if (end - start < trainingMinimumShiftMinutes()) return null;
   return {
     start: timeFromMinutes(start),
