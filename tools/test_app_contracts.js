@@ -145,6 +145,9 @@ function run() {
   includes(app, "previewDay: index + 1", "unaccepted proposal cards may show a preview day without persisting it as a fixed override");
   includes(index, 'id="acceptAllTrainingPlanBtn"', "training proposals must provide a direct accept-all action");
   excludes(index, "Partially completed / needs follow-up", "training outcomes should remain limited to completed, no-show, or ended training");
+  includes(app, 'setNewHireOnboarding(trainee.id, "")', "ending training must exit new-hire onboarding before archiving the trainee");
+  includes(app, 'item.date >= shift.date', "ending training must remove the selected uncompleted training shift as well as later ones");
+  includes(app, 'await saveState({ immediate: true })', "training outcomes must wait for a confirmed shared save");
   includes(app, "function acceptAllTrainingPlanShifts", "accept-all must confirm every visible training proposal");
   includes(app, "Save Accepted & Finish Later", "pausing a partial training plan must clearly explain what will be saved");
   includes(styles, ".training-plan-bay", "training proposals must render in a centered staging bay");

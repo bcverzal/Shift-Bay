@@ -15406,7 +15406,7 @@ function awardCompletedMealTraining(traineeId, roleId) {
   return newlyQualifiedMeals;
 }
 
-function saveTrainingOutcome() {
+async function saveTrainingOutcome() {
   const shift = state.shifts.find((item) => item.id === $("trainingOutcomeShiftId").value);
   if (!shift?.training?.isTraining) return;
   const outcome = $("trainingOutcomeValue").value;
@@ -15426,23 +15426,35 @@ function saveTrainingOutcome() {
     refreshTrainingPlanProgress(traineeId, shift.roleId);
   } else if (action === "endTraining" && trainee) {
     restoreTrainerSourceForTraineeShift(shift);
-    const affected = state.shifts.filter((item) => isTraineeTrainingShift(item, traineeId) && item.date > shift.date && item.id !== shift.id);
+    const affected = state.shifts.filter((item) => (
+      isTraineeTrainingShift(item, traineeId)
+      && item.date >= shift.date
+      && item.training?.outcome !== "completed"
+    ));
     affected.forEach(restoreTrainerSourceForTraineeShift);
     state.shifts = state.shifts.filter((item) => !affected.includes(item));
     trainee.active = false;
     trainee.archived = true;
+    // A declined trainee is leaving the new-hire path, even if they had not
+    // completed every onboarding field before training began.
+    setNewHireOnboarding(trainee.id, "");
     trainee.trainingPlans = {
       ...(trainee.trainingPlans || {}),
       [shift.roleId]: { ...(trainee.trainingPlans?.[shift.roleId] || {}), status: "ended", endedAt: nowIso(), endedReason: $("trainingOutcomeNote").value.trim() || "Training ended" }
     };
-    showConflict(`${displayName(trainee)} was archived and ${affected.length} future training shift${affected.length === 1 ? "" : "s"} were removed. Use Undo to restore this action.`);
+    showConflict(`${displayName(trainee)} was archived and ${affected.length} uncompleted training shift${affected.length === 1 ? " was" : "s were"} removed. Use Undo to restore this action.`);
   } else {
     if (outcome === "noShow") restoreTrainerSourceForTraineeShift(shift);
     refreshTrainingPlanProgress(traineeId, shift.roleId);
     if (outcome === "completed") awardCompletedMealTraining(traineeId, shift.roleId);
   }
   $("trainingOutcomeDialog").close();
-  renderAll();
+  renderAll({ skipSave: true });
+  const saved = await saveState({ immediate: true });
+  if (!saved) {
+    showConflict("The training outcome is kept in this browser, but the shared schedule did not confirm the archive. Refresh before trying again.");
+    return;
+  }
   if (outcome === "noShow" && action === "reschedule") openTrainingPlanDialog({ traineeId, roleId: shift.roleId });
 }
 
@@ -18112,7 +18124,7 @@ function wireEvents() {
   };
   $("cancelTrainingPlanBtn").onclick = () => $("trainingPlanDialog").close();
   $("trainingOutcomeValue").onchange = syncTrainingOutcomeControls;
-  $("trainingOutcomeForm").onsubmit = (event) => { event.preventDefault(); saveTrainingOutcome(); };
+  $("trainingOutcomeForm").onsubmit = async (event) => { event.preventDefault(); await saveTrainingOutcome(); };
   $("cancelTrainingOutcomeBtn").onclick = () => $("trainingOutcomeDialog").close();
   $("dayBlockShiftBtn").onclick = () => {
     const employeeId = $("shiftEmployee").value || $("shiftEmployeeId").value;
