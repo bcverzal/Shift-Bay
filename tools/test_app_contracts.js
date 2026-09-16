@@ -141,6 +141,8 @@ function run() {
   includes(app, "keeping the visible qualification unchecked until an outcome is completed", "projected eligibility must not visually pre-qualify a trainee");
   includes(app, "!qualification.mealQualified && qualification.missingMeals.length", "projected meal qualification must not be rejected merely because its visible checkbox remains unchecked");
   includes(app, "const firstEligibleShift = state.shifts", "a trainee must receive only one menu-test marker on the first eligible post-training shift");
+  includes(app, "function trainingCompletionForMenuTest", "menu-test scheduling must use the actual final planned training shift");
+  includes(app, "function shiftStartsAfterTrainingCompletion", "a same-day shift after training ends must be eligible for the menu test");
   includes(app, "function trainingCandidateMeetsMinimumDuration", "training proposals must discard options that do not meet the configured minimum duration");
   includes(app, "const flexSourcePenalty", "training proposals must prefer regular trainer shifts over flex sources");
   includes(app, "trainingShiftTimingForSlot(slot, trainerShift)", "final training proposal filtering must use the actual shared trainer and trainee overlap");
@@ -148,7 +150,7 @@ function run() {
   includes(app, "FIRST_TRAINING_PAPERWORK_LEAD_MINUTES", "the first training shift must reserve time for paperwork before training begins");
   includes(app, "onboardingLeadMinutes", "first-day paperwork must be explicitly permitted before the trainer begins");
   includes(app, "function scrollScheduleGridToRole", "role jumps must scroll the schedule grid itself to the chosen section");
-  includes(index, "shiftbay-20260915-training-paperwork-and-jumps", "the paperwork and role-jump correction must receive a fresh browser asset version");
+  includes(index, "shiftbay-20260915-menu-test-completion", "the menu-test completion correction must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");

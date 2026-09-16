@@ -811,7 +811,7 @@ function trainingPlanMealsForRole(employee, roleId, plan = {}, config = roleTrai
 function scheduledTrainingCompletion(employee, roleId) {
   const plan = employee?.trainingPlans?.[roleId] || {};
   const config = roleTrainingConfig(roleId);
-  if (!employee || !roleId || plan.status === "ended" || plan.status === "complete") {
+  if (!employee || !roleId || plan.status === "ended") {
     return { requiresTraining: false, complete: false, completionShifts: {}, meals: [] };
   }
   const requiredBySection = config.mode === "meal"
@@ -9979,20 +9979,40 @@ async function prepareMovedTrainingShift(source, nextShift, { isCopy = false } =
   };
 }
 
+function trainingCompletionForMenuTest(employee, roleId, plan) {
+  const scheduledCompletion = scheduledTrainingCompletion(employee, roleId);
+  const finalScheduledShift = Object.values(scheduledCompletion.completionShifts || {})
+    .filter((shift) => shift?.date)
+    .sort((left, right) => `${left.date} ${left.end} ${left.id}`.localeCompare(`${right.date} ${right.end} ${right.id}`))
+    .at(-1);
+  if (finalScheduledShift) return { date: finalScheduledShift.date, end: finalScheduledShift.end };
+  return plan?.projectedCompletionDate ? { date: plan.projectedCompletionDate, end: "11:59 PM" } : null;
+}
+
+function shiftStartsAfterTrainingCompletion(shift, completion) {
+  if (!shift?.date || !completion?.date) return false;
+  if (shift.date > completion.date) return true;
+  if (shift.date < completion.date) return false;
+  const shiftStart = minutesFromTime(shift.start);
+  const completionEnd = minutesFromTime(completion.end);
+  return shiftStart != null && completionEnd != null && shiftStart >= completionEnd;
+}
+
 function trainingTestForShift(shift) {
   if (!shift || shift.training?.isTraining) return false;
   const employee = employeeById(shift.employeeId);
   const plan = employee?.trainingPlans?.[shift.roleId];
-  if (!plan || plan.status === "complete" || !plan.projectedCompletionDate || shift.date <= plan.projectedCompletionDate) return false;
+  if (!plan || plan.status === "ended") return false;
   const meals = getMealsForShift(shift);
   const planMeals = trainingPlanMealsForRole(employee, shift.roleId, plan);
-  if (!meals.some((meal) => planMeals.includes(meal)) || plan.menuTestPassed === true) return false;
+  const completion = trainingCompletionForMenuTest(employee, shift.roleId, plan);
+  if (!completion || !shiftStartsAfterTrainingCompletion(shift, completion) || !meals.some((meal) => planMeals.includes(meal)) || plan.menuTestPassed === true) return false;
   const firstEligibleShift = state.shifts
     .filter((candidate) => (
       candidate.employeeId === shift.employeeId &&
       candidate.roleId === shift.roleId &&
       !candidate.training?.isTraining &&
-      candidate.date > plan.projectedCompletionDate &&
+      shiftStartsAfterTrainingCompletion(candidate, completion) &&
       getMealsForShift(candidate).some((meal) => planMeals.includes(meal))
     ))
     .sort((left, right) => `${left.date} ${left.start} ${left.id}`.localeCompare(`${right.date} ${right.start} ${right.id}`))[0];
