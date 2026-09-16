@@ -35,7 +35,9 @@ function run() {
   includes(app, "state.dailyNotes", "day notes must be saved with the schedule state");
   includes(app, "floorPlanDailyNoteMarkup(dateKey)", "weekly floor-plan printing must include the day note");
   includes(app, 'class="floor-training-note"', "floor plans must place training relationships on their own readable line");
+  includes(app, 'class="floor-menu-test-note">Menu Test</span>', "floor plans must visibly identify a menu-test shift");
   includes(styles, ".floor-training-note::before", "floor-plan training relationships must use paired visual brackets");
+  includes(styles, ".floor-menu-test-note", "floor plans must style menu-test labels separately from training relationships");
   includes(styles, "grid-column: 1 / 3", "floor-plan training relationships must center across both name and time columns");
   includes(index, 'data-floor-output="day-notes"', "the live floor plan must include a day-notes output area");
   includes(index, 'id="dayNotesDialog"', "day notes must use the Shift Bay dialog styling instead of a browser prompt");
@@ -151,7 +153,7 @@ function run() {
   includes(app, "FIRST_TRAINING_PAPERWORK_LEAD_MINUTES", "the first training shift must reserve time for paperwork before training begins");
   includes(app, "onboardingLeadMinutes", "first-day paperwork must be explicitly permitted before the trainer begins");
   includes(app, "function scrollScheduleGridToRole", "role jumps must scroll the schedule grid itself to the chosen section");
-  includes(index, "shiftbay-20260915-recover-training-plans", "training-plan recovery must receive a fresh browser asset version");
+  includes(index, "shiftbay-20260915-floor-menu-test-note", "floor-plan menu-test notes must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");

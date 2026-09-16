@@ -9626,6 +9626,15 @@ fieldset .checkbox {
   transform: translateX(-6.5%);
 }
 
+.floor-menu-test-note {
+  grid-column: 1 / 3;
+  color: #b45309;
+  font-size: 0.82em;
+  font-weight: 900;
+  line-height: 1.05;
+  text-align: center;
+}
+
 /* Training notes are often the longest text on a floor-plan line. Keep them
    inside their assigned role area so one employee cannot run into the next. */
 .floor-host,
