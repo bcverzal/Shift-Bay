@@ -9991,11 +9991,7 @@ function trainingCompletionForMenuTest(employee, roleId, plan) {
 
 function shiftStartsAfterTrainingCompletion(shift, completion) {
   if (!shift?.date || !completion?.date) return false;
-  if (shift.date > completion.date) return true;
-  if (shift.date < completion.date) return false;
-  const shiftStart = minutesFromTime(shift.start);
-  const completionEnd = minutesFromTime(completion.end);
-  return shiftStart != null && completionEnd != null && shiftStart >= completionEnd;
+  return shift.date > completion.date;
 }
 
 function trainingTestForShift(shift) {
