@@ -145,7 +145,10 @@ function run() {
   includes(app, "const flexSourcePenalty", "training proposals must prefer regular trainer shifts over flex sources");
   includes(app, "trainingShiftTimingForSlot(slot, trainerShift)", "final training proposal filtering must use the actual shared trainer and trainee overlap");
   includes(app, "Math.max(overlapStart, period.startMinutes)", "meal-specific training candidates must count only the overlap inside the selected meal period");
-  includes(index, "shiftbay-20260915-training-meal-overlap", "the meal-overlap correction must receive a fresh browser asset version");
+  includes(app, "FIRST_TRAINING_PAPERWORK_LEAD_MINUTES", "the first training shift must reserve time for paperwork before training begins");
+  includes(app, "onboardingLeadMinutes", "first-day paperwork must be explicitly permitted before the trainer begins");
+  includes(app, "function scrollScheduleGridToRole", "role jumps must scroll the schedule grid itself to the chosen section");
+  includes(index, "shiftbay-20260915-training-paperwork-and-jumps", "the paperwork and role-jump correction must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");

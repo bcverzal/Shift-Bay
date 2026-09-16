@@ -63,6 +63,7 @@ const TRAINING_SETUP_TRANSFER_APP = "shift-bay-training-setup";
 const TRAINING_SETUP_TRANSFER_VERSION = 1;
 const DEPARTMENTS = ["FOH", "BOH", "Exec"];
 const MIN_REST_AFTER_CLOSE_HOURS = 10;
+const FIRST_TRAINING_PAPERWORK_LEAD_MINUTES = 30;
 const OPENING_SHIFT_CUTOFF_MINUTES = 10 * 60;
 const CLOSING_SHIFT_CUTOFF_MINUTES = 9 * 60 + 30;
 const FLOOR_PLAN_NOTE_LIMIT = 30;
@@ -3150,7 +3151,11 @@ function trainerSourceCoversTrainingShift(trainingShift, trainerShift) {
   const trainingRange = getCoverageRange(trainingShift);
   const trainerRange = getCoverageRange(trainerShift);
   if (trainingRange.start == null || trainingRange.end == null || trainerRange.start == null || trainerRange.end == null) return false;
-  return trainerRange.start <= trainingRange.start && trainerRange.end >= trainingRange.end;
+  const paperworkLead = Math.max(0, Math.min(
+    FIRST_TRAINING_PAPERWORK_LEAD_MINUTES,
+    Number(trainingShift.training?.onboardingLeadMinutes) || 0
+  ));
+  return trainerRange.start <= trainingRange.start + paperworkLead && trainerRange.end >= trainingRange.end;
 }
 
 function getMealCoverageRange(shift) {
@@ -7255,15 +7260,23 @@ function renderRoleJumpStrip(selectedRoleId = "") {
         collapsedScheduleRoleGroups.delete(roleId);
         saveCollapsedScheduleRoleGroups();
         renderSchedule();
-        window.requestAnimationFrame(() => {
-          document.querySelector(`[data-role-group="${roleId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-        });
+        window.requestAnimationFrame(() => scrollScheduleGridToRole(roleId));
         return;
       }
-      const target = document.querySelector(`[data-role-group="${roleId}"]`);
-      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrollScheduleGridToRole(roleId);
     };
   });
+}
+
+function scrollScheduleGridToRole(roleId) {
+  const grid = $("scheduleGrid");
+  const target = grid?.querySelector(`[data-role-group="${roleId}"]`);
+  if (!grid || !target) return;
+  const gridRect = grid.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const targetTop = grid.scrollTop + targetRect.top - gridRect.top - 8;
+  const maxTop = Math.max(0, grid.scrollHeight - grid.clientHeight);
+  grid.scrollTo({ top: Math.max(0, Math.min(targetTop, maxTop)), behavior: "smooth" });
 }
 
 function scheduleRoleGroupKeysForEmployees(employees, selectedRoleId = "") {
@@ -15102,7 +15115,8 @@ function trainingProposalTimingMessage(proposal) {
     return `${trainerName} only overlaps the trainee's availability${proposal.planMeal ? ` and ${proposal.planMeal}` : ""} from ${timeFromMinutes(bounds.start)} to ${timeFromMinutes(bounds.end)} (${formatHours(sharedMinutes / 60)} hours). Training requires at least ${trainingMinimumDurationLabel()}; choose a trainer scheduled through the requested end time, then build a new proposal.`;
   }
   if (end - start < trainingMinimumShiftMinutes()) return `Training shifts must be at least ${trainingMinimumDurationLabel()}.`;
-  if (start < bounds.start || end > bounds.end) {
+  const paperworkLead = Math.max(0, Math.min(FIRST_TRAINING_PAPERWORK_LEAD_MINUTES, Number(proposal.training?.onboardingLeadMinutes) || 0));
+  if (start < bounds.start - paperworkLead || end > bounds.end) {
     return `Keep this trainee shift between ${timeFromMinutes(bounds.start)} and ${timeFromMinutes(bounds.end)} so it overlaps the trainer, trainee availability, and selected meal.`;
   }
   return "";
@@ -15266,6 +15280,22 @@ function generateTrainingPlan() {
     planMeals: meals,
     planMeal: shift.planMeal
   }));
+  const hasExistingTraining = state.shifts.some((shift) => (
+    isTraineeTrainingShift(shift, traineeId) &&
+    shift.roleId === roleId &&
+    shift.training?.outcome !== "noShow"
+  ));
+  if (!hasExistingTraining && trainingPlanSuggestions.length) {
+    const firstShift = trainingPlanSuggestions
+      .slice()
+      .sort((left, right) => `${left.date} ${left.start}`.localeCompare(`${right.date} ${right.start}`))[0];
+    const start = minutesFromTime(firstShift.start);
+    if (start != null && start >= FIRST_TRAINING_PAPERWORK_LEAD_MINUTES) {
+      firstShift.start = timeFromMinutes(start - FIRST_TRAINING_PAPERWORK_LEAD_MINUTES);
+      firstShift.training.onboardingLeadMinutes = FIRST_TRAINING_PAPERWORK_LEAD_MINUTES;
+      firstShift.notes = "Training | First-day paperwork";
+    }
+  }
   trainingPlanSuggestions.meta = { traineeId, roleId, meals, slots, availabilitySlots, needed, required, requirements, noTrainerSlots, candidateDiagnostics };
   renderTrainingPlanResults();
   setTrainingPlanStage("review");
