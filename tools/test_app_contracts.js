@@ -96,6 +96,7 @@ function run() {
   includes(app, "Duplicate row found on another page in the same PDF", "RO import counts must deduplicate repeated report rows within each PDF");
   includes(app, "repeated request${parserDuplicates", "RO import feedback must describe only repeated PDF rows");
   includes(app, "function trainingMinimumShiftHours", "training settings must define a configurable minimum shift duration");
+  includes(app, "recoveredFromScheduledShifts", "training shifts without a saved plan must recover their training state");
   includes(app, "data-training-minimum-hours", "training settings must expose the minimum training-shift duration");
   includes(app, "overlapEnd - overlapStart < trainingMinimumShiftMinutes()", "training proposals must reject trainer overlap shorter than the configured minimum");
   includes(app, "Training shifts must be at least", "manual training-shift edits must enforce the configured minimum");
@@ -150,7 +151,7 @@ function run() {
   includes(app, "FIRST_TRAINING_PAPERWORK_LEAD_MINUTES", "the first training shift must reserve time for paperwork before training begins");
   includes(app, "onboardingLeadMinutes", "first-day paperwork must be explicitly permitted before the trainer begins");
   includes(app, "function scrollScheduleGridToRole", "role jumps must scroll the schedule grid itself to the chosen section");
-  includes(index, "shiftbay-20260915-next-day-menu-test", "the next-day menu-test correction must receive a fresh browser asset version");
+  includes(index, "shiftbay-20260915-recover-training-plans", "training-plan recovery must receive a fresh browser asset version");
   includes(app, "shift.training?.outcome !== \"noShow\"", "missed training shifts must not count toward projected qualification");
   includes(app, "trainerId: selectedTrainerSource.employeeId", "the selected trainer must be assigned before generic shift validation runs");
   includes(app, "source.employeeId === employeeId && (!dateKey || source.date === dateKey)", "dropping a shift back into its original cell must remain a no-op");
@@ -183,7 +184,7 @@ function run() {
   includes(app, "function saveTrainingSlotsAsLiveAvailability", "training planning must be able to create a dated live availability from entered times");
   includes(app, "function trainingProgressSections", "training progress must report completion by training section");
   includes(app, "function mealForShiftWithSettings", "legacy training plans must recover their selected meal from existing training shifts");
-  includes(app, "Early training plans did not persist the meals chosen in the planner.", "legacy meal-plan repair must avoid expanding a single-meal plan to every configured meal");
+  includes(app, "never expand them to every", "legacy meal-plan repair must avoid expanding a single-meal plan to every configured meal");
   includes(app, "excludedSourceShiftIds", "declined training proposals must not be proposed again");
   includes(app, 'data-open-training-plan', "employee training progress must provide a persistent entry point to the training planner");
   includes(app, 'data-print-training-plan', "employee training progress must provide a printable trainee schedule");

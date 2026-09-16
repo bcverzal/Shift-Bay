@@ -702,27 +702,49 @@ function migrateState(loadedState, parsed = {}) {
       planMeal: training.planMeal || traineeShift.planMeal || ""
     };
   });
-  // Early training plans did not persist the meals chosen in the planner.
-  // Recover that narrow missing detail from each trainee-side shift instead of
-  // treating a Dinner-only plan as training for every configured meal.
+  // Some manually created and early planner training shifts did not retain a
+  // matching employee training plan. Rebuild only the missing plan details
+  // from the trainee-side shifts so completion, availability, and menu tests
+  // continue to use the same training record. Early training plans did not
+  // persist the meals chosen in the planner, so never expand them to every
+  // configured meal.
   loadedState.employees = loadedState.employees.map((employee) => {
     const trainingPlans = { ...(employee.trainingPlans || {}) };
-    Object.entries(trainingPlans).forEach(([roleId, plan]) => {
+    const trainingRoleIds = new Set([
+      ...Object.keys(trainingPlans),
+      ...loadedState.shifts
+        .filter((shift) => isTraineeTrainingShift(shift, employee.id))
+        .map((shift) => shift.roleId)
+        .filter(Boolean)
+    ]);
+    trainingRoleIds.forEach((roleId) => {
+      const plan = trainingPlans[roleId] || {};
+      const traineeShifts = loadedState.shifts
+        .filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === roleId)
+        .sort((left, right) => `${left.date} ${left.start} ${left.id}`.localeCompare(`${right.date} ${right.start} ${right.id}`));
+      if (!traineeShifts.length) return;
       const role = loadedState.roles.find((item) => item.id === roleId);
       const configured = loadedState.settings.trainingRequirements?.[roleId] || {};
       const mealDependent = configured.mode
         ? configured.mode === "meal"
         : configured.mealDependent || /server|bartender|line\s*cook/i.test(role?.name || "");
       const savedMeals = Array.isArray(plan?.meals) ? plan.meals.filter((meal) => MEALS.includes(meal)) : [];
-      if (!mealDependent || savedMeals.length) return;
-      const inferredMeals = [...new Set(loadedState.shifts
-        .filter((shift) => isTraineeTrainingShift(shift, employee.id) && shift.roleId === roleId)
+      const inferredMeals = [...new Set(traineeShifts
         .map((shift) => mealForShiftWithSettings(shift, loadedState.settings))
         .filter((meal) => MEALS.includes(meal)))];
-      if (!inferredMeals.length) return;
-      trainingPlans[roleId] = { ...plan, meals: inferredMeals };
-      loadedState.shifts.forEach((shift) => {
-        if (!isTraineeTrainingShift(shift, employee.id) || shift.roleId !== roleId) return;
+      const shouldRecoverPlan = !trainingPlans[roleId];
+      if (shouldRecoverPlan || (mealDependent && !savedMeals.length && inferredMeals.length)) {
+        trainingPlans[roleId] = {
+          ...plan,
+          status: plan.status || "scheduled",
+          meals: mealDependent ? (savedMeals.length ? savedMeals : inferredMeals) : savedMeals,
+          possibleDates: plan.possibleDates || [...new Set(traineeShifts.map((shift) => shift.date))],
+          projectedCompletionDate: plan.projectedCompletionDate || traineeShifts.at(-1)?.date || "",
+          plannedShiftIds: [...new Set([...(plan.plannedShiftIds || []), ...traineeShifts.map((shift) => shift.id)])],
+          recoveredFromScheduledShifts: shouldRecoverPlan || Boolean(plan.recoveredFromScheduledShifts)
+        };
+      }
+      traineeShifts.forEach((shift) => {
         if (MEALS.includes(shift.training?.planMeal || shift.planMeal)) return;
         const meal = mealForShiftWithSettings(shift, loadedState.settings);
         if (meal) shift.training = { ...shift.training, planMeal: meal };
