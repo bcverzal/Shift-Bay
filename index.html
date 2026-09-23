@@ -78,14 +78,15 @@
               </div>
               <div class="open-shifts-button-stack">
                 <button id="autoAssignCleanBayBtn" class="bay-primary-action" type="button">Auto Assign Clean</button>
-                <div class="bay-action-pair">
+                <details class="toolbar-menu bay-actions-menu">
+                  <summary>Schedule actions</summary>
+                  <div class="menu-panel">
                   <button id="addTemplateToTrayBtn" type="button">Add Weekly Template</button>
                   <button id="addWeekMissingCoverageBtn" type="button">Add Missing Coverage</button>
-                </div>
-                <div class="bay-action-pair bay-action-pair-utility">
                   <button id="addOpenShiftBtn" type="button">Add Shift</button>
                   <button id="clearOpenShiftBayBtn" class="small-button danger" type="button">Clear Bay</button>
-                </div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>
@@ -105,8 +106,8 @@
 
       <div id="scheduleRail" class="schedule-rail" aria-label="Schedule tools">
         <div id="scheduleViewToggle" class="schedule-view-toggle" aria-label="Schedule view mode">
-          <button id="weekViewBtn" type="button">Week</button>
-          <button id="dayViewBtn" type="button">Day</button>
+          <button id="weekViewBtn" type="button" title="Week View — Build week" aria-label="Week View — Build week">Build week</button>
+          <button id="dayViewBtn" type="button" title="Day View — Run day" aria-label="Day View — Run day">Run day</button>
         </div>
         <div id="printFilters" class="filters"></div>
         <div id="dayFocusToolRail" class="day-focus-tool-rail" hidden></div>

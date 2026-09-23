@@ -383,6 +383,11 @@ function run() {
   includes(index, "id=\"scheduleGrid\"", "weekly schedule grid must remain present");
   includes(index, "id=\"floorPlanDate\"", "floor-plan date control must remain present");
   includes(index, "id=\"unassignedShiftTray\"", "Shift Bay tray must remain present");
+  includes(index, "class=\"toolbar-menu bay-actions-menu\"", "Shift Bay secondary actions must be progressively disclosed");
+  includes(index, ">Schedule actions</summary>", "Shift Bay overflow must have a clear action label");
+  includes(index, ">Build week</button>", "Week View must state its build-week purpose");
+  includes(index, ">Run day</button>", "Day View must state its run-day purpose");
+  includes(app, "Run day for", "Day View must retain a date-specific accessible label");
   includes(index, "id=\"stagedShiftDateLabel\" class=\"shift-dialog-date-control\"", "unassigned shift dates must be a prominent top-level control");
   includes(index, "This determines where the open shift appears in Shift Bay.", "unassigned shift dates must explain their scheduling effect");
   includes(app, "Choose the shift date before setting its role and times.", "unassigned shift creation must foreground the date before shift details");

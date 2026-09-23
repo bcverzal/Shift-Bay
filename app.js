@@ -4463,7 +4463,12 @@ function updateScheduleViewToggle() {
   toggle.hidden = document.body.classList.contains("compact-preview");
   $("weekViewBtn")?.classList.toggle("active", !focusedDateKey);
   $("dayViewBtn")?.classList.toggle("active", Boolean(focusedDateKey));
-  if ($("dayViewBtn")) $("dayViewBtn").title = `Open Day View for ${displayDate(parseDateKey(selectedCell?.date || formatDateKey(currentDate)))}`;
+  const dayViewButton = $("dayViewBtn");
+  if (dayViewButton) {
+    const label = `Run day for ${displayDate(parseDateKey(selectedCell?.date || formatDateKey(currentDate)))}`;
+    dayViewButton.title = label;
+    dayViewButton.setAttribute("aria-label", label);
+  }
 }
 
 function scheduleRailWidgetElements() {

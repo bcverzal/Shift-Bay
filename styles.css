@@ -1170,7 +1170,7 @@ body:has(#schedule.panel.active):not(.compact-preview) #scheduleRail > * {
 
 body:has(#schedule.panel.active):not(.compact-preview) .schedule-view-toggle {
   display: inline-grid;
-  width: 46px;
+  width: 86px;
   margin: 0;
   gap: 5px;
   padding: 6px 5px;
@@ -1191,9 +1191,9 @@ body:has(#schedule.panel.active):not(.compact-preview) .schedule-view-toggle {
 }
 
 body:has(#schedule.panel.active):not(.compact-preview) .schedule-view-toggle button {
-  width: 34px;
+  width: 74px;
   min-height: 26px;
-  padding: 3px 0;
+  padding: 3px 4px;
   font-size: 10px;
   line-height: 1;
 }
@@ -1304,18 +1304,17 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
 }
 
 .open-shifts-button-stack {
-  display: grid;
-  grid-template-columns: minmax(124px, 1fr) minmax(128px, 1fr) minmax(82px, 0.7fr);
-  gap: 4px;
+  display: flex;
   align-items: center;
-  min-width: min(360px, 42vw);
+  gap: 6px;
+  min-width: max-content;
 }
 
 .open-shifts-button-stack button {
-  min-height: 25px;
-  padding: 4px 6px;
+  min-height: 32px;
+  padding: 5px 8px;
   border-radius: 7px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 850;
   line-height: 1.1;
   white-space: normal;
@@ -1323,17 +1322,35 @@ body:has(#schedule.panel.active):not(.compact-preview) #printFilters:has(.filter
 
 .bay-primary-action {
   align-self: center;
-  min-height: 54px !important;
+  min-height: 36px !important;
   justify-self: stretch;
+  white-space: nowrap !important;
 }
 
-.bay-action-pair {
-  display: grid;
-  gap: 4px;
+.bay-actions-menu {
+  flex: 0 0 auto;
 }
 
-.bay-action-pair-utility {
-  min-width: 82px;
+.bay-actions-menu summary {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bay-actions-menu .menu-panel {
+  min-width: 196px;
+}
+
+.bay-actions-menu .menu-panel button {
+  min-height: 32px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.open-shifts-wrap:has(.bay-actions-menu[open]) {
+  overflow: visible;
+  z-index: 56;
 }
 
 #addWeekMissingCoverageBtn {
@@ -1736,9 +1753,7 @@ body.dragging-open-shift .open-shifts-title .open-bay-icon::after {
     justify-items: center;
   }
 
-  .open-shifts-button-stack {
-    min-width: min(360px, 100%);
-  }
+  .open-shifts-button-stack { min-width: max-content; }
 }
 
 .unassigned-shift-tray.drag-target {
